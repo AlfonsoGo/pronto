@@ -7,6 +7,7 @@ import 'package:window_manager/window_manager.dart';
 import '../features/home/home_screen.dart';
 import '../features/overlay/overlay_pill_screen.dart';
 import '../features/overlay/window_mode_controller.dart';
+import '../features/update/update_controller.dart';
 import 'theme.dart';
 
 class ProntoApp extends ConsumerWidget {
@@ -40,6 +41,11 @@ class _RootState extends ConsumerState<_Root> with TrayListener, WindowListener 
     windowManager.addListener(this);
     _setupTray();
     _maybeOpenPanelOnFirstRun();
+    // Instancia el auto-actualizador al arrancar, SIEMPRE (aunque empieces en el
+    // panel y no en la píldora): su build() programa la comprobación inicial y
+    // el re-chequeo periódico. Antes solo se creaba al observarlo la píldora, así
+    // que si arrancabas en el panel el aviso (punto morado) no aparecía solo.
+    ref.read(updateProvider.notifier);
   }
 
   /// La primera vez que se abre la app mostramos el PANEL (no la píldora) para

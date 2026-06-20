@@ -77,15 +77,30 @@ final updateProvider =
 /// Busca releases nuevas en GitHub, avisa y, a petición, descarga el instalador
 /// y lo lanza en silencio para actualizar la app (y reiniciarla).
 class UpdateController extends Notifier<UpdateState> {
+  Timer? _periodic;
+
   @override
   UpdateState build() {
-    // Comprobación automática al arrancar, con un margen para no competir con
-    // el arranque del modelo/atajo.
-    Future.delayed(const Duration(seconds: 6), () {
+    ref.onDispose(() {
+      _periodic?.cancel();
+      _periodic = null;
+    });
+
+    // Primer chequeo poco después de arrancar, con un margen para no competir
+    // con el arranque del modelo/atajo y para dar tiempo a que la red esté lista.
+    Future.delayed(const Duration(seconds: 5), () {
       if (state.status == UpdateStatus.idle) {
         unawaited(checkForUpdate());
       }
     });
+
+    // Re-chequeo periódico: detecta una release nueva sin tener que reiniciar la
+    // app y, sobre todo, REINTENTA si el primer chequeo falló (red no lista,
+    // límite de la API de GitHub, etc.) en vez de quedarse callado para siempre.
+    _periodic = Timer.periodic(const Duration(hours: 2), (_) {
+      if (!state.isWorking) unawaited(checkForUpdate());
+    });
+
     return const UpdateState();
   }
 
@@ -110,9 +125,11 @@ class UpdateController extends Notifier<UpdateState> {
       ).timeout(const Duration(seconds: 15));
 
       if (res.statusCode != 200) {
-        // 404 = repo privado o sin releases: lo tratamos como "sin novedades".
+        // 404 (sin releases / repo privado), 403 (límite de la API) u otro: no
+        // es un "estás al día" fiable. En manual lo mostramos como al día; en
+        // automático dejamos 'idle' para que el chequeo periódico reintente.
         state = state.copyWith(
-          status: UpdateStatus.upToDate,
+          status: manual ? UpdateStatus.upToDate : UpdateStatus.idle,
           currentVersion: current,
         );
         return;
@@ -151,10 +168,17 @@ class UpdateController extends Notifier<UpdateState> {
       );
     } catch (e) {
       debugPrint('[Pronto] comprobar actualización falló: $e');
-      state = state.copyWith(
-        status: manual ? UpdateStatus.error : UpdateStatus.upToDate,
-        error: manual ? 'No se pudo comprobar: $e' : null,
-      );
+      if (manual) {
+        state = state.copyWith(
+          status: UpdateStatus.error,
+          error: 'No se pudo comprobar: $e',
+        );
+      } else if (state.status != UpdateStatus.available) {
+        // Fallo silencioso de un chequeo automático: NO afirmamos "al día"
+        // (sería engañoso). Volvemos a 'idle' y el chequeo periódico reintenta.
+        // Si ya habíamos detectado una versión nueva, la conservamos.
+        state = state.copyWith(status: UpdateStatus.idle, error: null);
+      }
     }
   }
 
