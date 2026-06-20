@@ -1,0 +1,366 @@
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../platform/global_hotkey_service.dart';
+import '../../platform/text_injector.dart';
+import '../update/update_controller.dart';
+import 'hotkey_recorder.dart';
+import 'settings_controller.dart';
+
+/// Pantalla de ajustes de Pronto (Material 3).
+///
+/// Lee y escribe el estado a través de [settingsProvider]. Cada control
+/// invoca el actualizador correspondiente del [SettingsController], que ya
+/// persiste el cambio.
+class SettingsScreen extends ConsumerWidget {
+  const SettingsScreen({super.key});
+
+  /// Modelos Whisper disponibles para elegir.
+  static const List<({String file, String label})> _models = [
+    (file: 'ggml-small.bin', label: 'Small (rápido, equilibrado)'),
+    (
+      file: 'ggml-large-v3-turbo.bin',
+      label: 'Large v3 Turbo (máxima calidad)'
+    ),
+  ];
+
+  /// Idiomas disponibles (código -> etiqueta).
+  static const List<({String code, String label})> _languages = [
+    (code: 'es', label: 'Español'),
+    (code: 'en', label: 'Inglés'),
+    (code: 'auto', label: 'Automático'),
+  ];
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final settings = ref.watch(settingsProvider);
+    final controller = ref.read(settingsProvider.notifier);
+    final theme = Theme.of(context);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Ajustes'),
+        leading: BackButton(onPressed: () => Navigator.of(context).maybePop()),
+      ),
+      body: ListView(
+        padding: const EdgeInsets.symmetric(vertical: 8),
+        children: [
+          // --- Transcripción ---
+          _SectionHeader('Transcripción', theme: theme),
+
+          ListTile(
+            title: const Text('Modelo Whisper'),
+            subtitle: const Text('Modelo on-device usado para transcribir'),
+            trailing: DropdownButton<String>(
+              value: _models.any((m) => m.file == settings.modelFile)
+                  ? settings.modelFile
+                  : _models.first.file,
+              onChanged: (value) {
+                if (value != null) controller.setModelFile(value);
+              },
+              items: [
+                for (final m in _models)
+                  DropdownMenuItem(value: m.file, child: Text(m.label)),
+              ],
+            ),
+          ),
+
+          ListTile(
+            title: const Text('Idioma'),
+            subtitle: const Text('Idioma del dictado'),
+            trailing: DropdownButton<String>(
+              value: _languages.any((l) => l.code == settings.language)
+                  ? settings.language
+                  : _languages.first.code,
+              onChanged: (value) {
+                if (value != null) controller.setLanguage(value);
+              },
+              items: [
+                for (final l in _languages)
+                  DropdownMenuItem(value: l.code, child: Text(l.label)),
+              ],
+            ),
+          ),
+
+          const Divider(height: 24),
+
+          // --- Inserción y disparo ---
+          _SectionHeader('Inserción y disparo', theme: theme),
+
+          ListTile(
+            title: const Text('Modo de inserción'),
+            subtitle: const Text('Cómo se escribe el texto en la app activa'),
+            trailing: DropdownButton<InjectionMode>(
+              value: settings.injectionMode,
+              onChanged: (value) {
+                if (value != null) controller.setInjectionMode(value);
+              },
+              items: const [
+                DropdownMenuItem(
+                  value: InjectionMode.clipboardPaste,
+                  child: Text('Pegar (portapapeles)'),
+                ),
+                DropdownMenuItem(
+                  value: InjectionMode.unicodeSendInput,
+                  child: Text('Tecleo Unicode'),
+                ),
+              ],
+            ),
+          ),
+
+          ListTile(
+            title: const Text('Modo de disparo'),
+            subtitle: const Text('Cómo se inicia y detiene el dictado'),
+            trailing: DropdownButton<TriggerMode>(
+              value: settings.triggerMode,
+              onChanged: (value) {
+                if (value != null) controller.setTriggerMode(value);
+              },
+              items: const [
+                DropdownMenuItem(
+                  value: TriggerMode.hold,
+                  child: Text('Mantener pulsado'),
+                ),
+                DropdownMenuItem(
+                  value: TriggerMode.toggle,
+                  child: Text('Alternar'),
+                ),
+              ],
+            ),
+          ),
+
+          ListTile(
+            title: const Text('Atajo para dictar'),
+            subtitle: const Text('Pulsa el botón y teclea tu combinación'),
+            trailing: HotkeyRecorderField(
+              value: settings.hotkey,
+              onChanged: controller.setHotkey,
+            ),
+          ),
+
+          const Divider(height: 24),
+
+          // --- Sistema ---
+          _SectionHeader('Sistema', theme: theme),
+
+          SwitchListTile(
+            title: const Text('Iniciar con el sistema'),
+            subtitle: const Text('Abrir Pronto al arrancar Windows'),
+            value: settings.autostart,
+            onChanged: controller.setAutostart,
+          ),
+
+          const _UpdateTile(),
+
+          const Divider(height: 24),
+
+          // --- Post-corrección LLM ---
+          _SectionHeader('Post-corrección LLM (opcional)', theme: theme),
+
+          SwitchListTile(
+            title: const Text('Activar post-corrección LLM'),
+            subtitle: const Text(
+              'Mejora el texto con un modelo de lenguaje local o en la nube',
+            ),
+            value: settings.llmEnabled,
+            onChanged: controller.setLlmEnabled,
+          ),
+
+          // Campos de configuración del LLM (solo activos si está habilitado).
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: _LlmTextField(
+              key: const ValueKey('llmBaseUrl'),
+              label: 'URL base',
+              hint: 'http://localhost:11434',
+              initialValue: settings.llmBaseUrl,
+              enabled: settings.llmEnabled,
+              keyboardType: TextInputType.url,
+              onSubmitted: controller.setLlmBaseUrl,
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+            child: _LlmTextField(
+              key: const ValueKey('llmModel'),
+              label: 'Modelo',
+              hint: 'qwen3:4b',
+              initialValue: settings.llmModel,
+              enabled: settings.llmEnabled,
+              onSubmitted: controller.setLlmModel,
+            ),
+          ),
+
+          const Divider(height: 24),
+
+          // --- Aprendizaje ---
+          _SectionHeader('Aprendizaje', theme: theme),
+
+          SwitchListTile(
+            title: const Text('Aprender de ediciones externas'),
+            subtitle: const Text(
+              'Si corriges el texto en otra app y lo copias, Pronto lo aprende',
+            ),
+            value: settings.captureExternalEdits,
+            onChanged: controller.setCaptureExternalEdits,
+          ),
+
+          const SizedBox(height: 24),
+        ],
+      ),
+    );
+  }
+}
+
+/// Cabecera de sección reutilizable.
+class _SectionHeader extends StatelessWidget {
+  final String title;
+  final ThemeData theme;
+
+  const _SectionHeader(this.title, {required this.theme});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+      child: Text(
+        title,
+        style: theme.textTheme.titleSmall?.copyWith(
+          color: theme.colorScheme.primary,
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+  }
+}
+
+/// Campo de texto del LLM: guarda al perder el foco o al pulsar Enter.
+///
+/// Mantiene su propio [TextEditingController] para no reconstruir el texto
+/// en cada pulsación (lo que movería el cursor); se sincroniza con el valor
+/// persistido solo cuando cambia desde fuera.
+class _LlmTextField extends StatefulWidget {
+  final String label;
+  final String hint;
+  final String initialValue;
+  final bool enabled;
+  final TextInputType? keyboardType;
+  final ValueChanged<String> onSubmitted;
+
+  const _LlmTextField({
+    super.key,
+    required this.label,
+    required this.hint,
+    required this.initialValue,
+    required this.enabled,
+    required this.onSubmitted,
+    this.keyboardType,
+  });
+
+  @override
+  State<_LlmTextField> createState() => _LlmTextFieldState();
+}
+
+class _LlmTextFieldState extends State<_LlmTextField> {
+  late final TextEditingController _ctrl;
+  late final FocusNode _focus;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: widget.initialValue);
+    _focus = FocusNode();
+    // Al perder el foco, persistimos si hubo cambios.
+    _focus.addListener(() {
+      if (!_focus.hasFocus) _commit();
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _LlmTextField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Sincroniza solo si el valor cambió externamente y el campo no se edita.
+    if (widget.initialValue != _ctrl.text && !_focus.hasFocus) {
+      _ctrl.text = widget.initialValue;
+    }
+  }
+
+  void _commit() {
+    final value = _ctrl.text.trim();
+    if (value.isNotEmpty && value != widget.initialValue) {
+      widget.onSubmitted(value);
+    }
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: _ctrl,
+      focusNode: _focus,
+      enabled: widget.enabled,
+      keyboardType: widget.keyboardType,
+      textInputAction: TextInputAction.done,
+      onSubmitted: (_) => _commit(),
+      decoration: InputDecoration(
+        labelText: widget.label,
+        hintText: widget.hint,
+        border: const OutlineInputBorder(),
+      ),
+    );
+  }
+}
+
+/// Fila de "Buscar actualizaciones" en Ajustes: comprueba manualmente y muestra
+/// el estado. La descarga/instalación se ofrece desde el aviso del panel.
+class _UpdateTile extends ConsumerWidget {
+  const _UpdateTile();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final upd = ref.watch(updateProvider);
+    final checking = upd.status == UpdateStatus.checking;
+
+    final String subtitle;
+    switch (upd.status) {
+      case UpdateStatus.available:
+        subtitle = 'Disponible: v${upd.latestVersion} (toca el aviso del panel para instalar)';
+      case UpdateStatus.downloading:
+        subtitle = 'Descargando…';
+      case UpdateStatus.installing:
+        subtitle = 'Instalando…';
+      case UpdateStatus.checking:
+        subtitle = 'Comprobando…';
+      case UpdateStatus.error:
+        subtitle = upd.error ?? 'No se pudo comprobar';
+      case UpdateStatus.upToDate:
+        subtitle = upd.currentVersion != null
+            ? 'Estás en la última versión (v${upd.currentVersion})'
+            : 'Estás en la última versión';
+      case UpdateStatus.idle:
+        subtitle = 'Pulsa para comprobar si hay versión nueva';
+    }
+
+    return ListTile(
+      title: const Text('Buscar actualizaciones'),
+      subtitle: Text(subtitle),
+      trailing: checking
+          ? const SizedBox(
+              width: 18,
+              height: 18,
+              child: CircularProgressIndicator(strokeWidth: 2),
+            )
+          : const Icon(Icons.refresh_rounded),
+      onTap: upd.isWorking
+          ? null
+          : () =>
+              ref.read(updateProvider.notifier).checkForUpdate(manual: true),
+    );
+  }
+}

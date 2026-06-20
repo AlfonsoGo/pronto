@@ -1,0 +1,47 @@
+# Flutter / Dart
+.dart_tool/
+.packages
+.pub-cache/
+.pub/
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.iml
+.idea/
+.vscode/
+*.log
+
+# Flutter ephemeral: contiene rutas absolutas de la máquina del desarrollador
+**/flutter/ephemeral/
+
+# Generated platform folders (se generan con `flutter create .`)
+# Descomenta si NO quieres versionar las carpetas de plataforma generadas:
+# /windows/
+# /macos/
+# /linux/
+# /android/
+# /ios/
+
+# Clon de whisper.cpp: lo descarga build_whisper.ps1, NO se versiona
+/native/whisper/whisper.cpp/
+
+# Instaladores generados (se publican como Release assets, no en el repo)
+/dist/
+
+# Artefacto basura de Windows (nombre de dispositivo reservado)
+/nul
+
+# Modelos y binarios nativos pesados (no versionar)
+/native/whisper/bin/
+/native/whisper/models/
+/native/whisper/build/
+*.dll
+*.so
+*.dylib
+*.bin
+*.gguf
+*.ggml
+
+# Misc
+.DS_Store
+Thumbs.db

@@ -1,0 +1,15 @@
+include: package:flutter_lints/flutter.yaml
+
+analyzer:
+  errors:
+    # El código FFI a veces usa nombres que no siguen lowerCamelCase (constantes Win32).
+    constant_identifier_names: ignore
+  exclude:
+    - "**/*.g.dart"
+    - "build/**"
+
+linter:
+  rules:
+    prefer_const_constructors: true
+    avoid_print: false # usamos print/debugPrint en logging temprano del MVP
+    require_trailing_commas: true
