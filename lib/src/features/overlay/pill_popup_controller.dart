@@ -71,6 +71,17 @@ class PillPopupController extends Notifier<PillPopup> {
     _timer = Timer(_visibleFor, hide);
   }
 
+  /// Pausa el auto-ocultado: mientras el ratón está encima de la caja leyendo,
+  /// no debe desaparecer.
+  void pauseAutoHide() => _timer?.cancel();
+
+  /// Reanuda el auto-ocultado: reinicia la cuenta atrás si la caja sigue
+  /// visible (p. ej. al apartar el ratón de la caja).
+  void resumeAutoHide() {
+    _timer?.cancel();
+    if (state.visible) _timer = Timer(_visibleFor, hide);
+  }
+
   void hide() {
     _timer?.cancel();
     if (state.visible) state = state.copyWith(visible: false);

@@ -13,9 +13,15 @@ enum WindowMode { pill, panel }
 const Size kPillIdle = Size(50, 50);
 
 /// Píldora EXPANDIDA: cuando aparece la caja con la transcripción a la derecha
-/// del punto. Crece SOLO hacia la derecha (la esquina superior-izquierda no se
-/// mueve), así el punto se queda en su sitio y la caja se despliega a su lado.
+/// del punto. Crece hacia la derecha; la esquina INFERIOR-izquierda no se mueve,
+/// así el punto se queda en su sitio y la caja se despliega a su lado.
 const Size kPillExpanded = Size(330, 50);
+
+/// Píldora en modo LECTURA: al pasar el ratón por encima de la caja, se amplía
+/// para leer toda la transcripción (multilínea, con scroll si es larga). Crece
+/// hacia ARRIBA y a la derecha, anclada por la esquina inferior-izquierda, para
+/// no salirse por debajo de la pantalla (la píldora vive abajo).
+const Size kPillReading = Size(380, 240);
 
 /// Tamaño del panel completo.
 const Size kPanelSize = Size(440, 680);

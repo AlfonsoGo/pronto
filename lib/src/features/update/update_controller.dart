@@ -241,18 +241,43 @@ class UpdateController extends Notifier<UpdateState> {
     final exe = Platform.resolvedExecutable;
     final tmpDir = await getTemporaryDirectory();
     final ps1Path = p.join(tmpDir.path, 'pronto_update.ps1');
+    final logPath = p.join(tmpDir.path, 'pronto_update.log');
 
+    // Ayudante robusto:
+    //  1) espera a que Pronto cierre y, si no lo hace, lo FUERZA (así el
+    //     instalador no choca con el AppMutex y aborta en silencio);
+    //  2) instala en silencio y espera a que TERMINE de verdad;
+    //  3) reabre Pronto CON REINTENTOS hasta confirmar que el proceso está en
+    //     marcha — antes hacía un único intento y, si fallaba (p. ej. el .exe
+    //     recién escrito aún bloqueado), la app se quedaba cerrada.
+    // Deja un log en %TEMP%\pronto_update.log por si hay que diagnosticar.
     final script = "\$ErrorActionPreference = 'SilentlyContinue'\r\n"
-        "# Espera (máx ~60s) a que Pronto se cierre para liberar el .exe.\r\n"
-        "for (\$i = 0; \$i -lt 90; \$i++) {\r\n"
+        "\$log = '$logPath'\r\n"
+        "function Log(\$m) { ((Get-Date -Format o) + '  ' + \$m) | Out-File -FilePath \$log -Append -Encoding utf8 }\r\n"
+        "Log 'helper iniciado'\r\n"
+        "# 1) Esperar (max ~45s) a que Pronto se cierre; si no, forzarlo.\r\n"
+        "for (\$i = 0; \$i -lt 64; \$i++) {\r\n"
         "  if (-not (Get-Process -Name pronto -ErrorAction SilentlyContinue)) { break }\r\n"
         "  Start-Sleep -Milliseconds 700\r\n"
         "}\r\n"
-        "Start-Sleep -Milliseconds 600\r\n"
+        "if (Get-Process -Name pronto -ErrorAction SilentlyContinue) {\r\n"
+        "  Log 'Pronto seguia abierto; forzando cierre'\r\n"
+        "  Stop-Process -Name pronto -Force -ErrorAction SilentlyContinue\r\n"
+        "  Start-Sleep -Milliseconds 1200\r\n"
+        "}\r\n"
+        "Log 'instalando'\r\n"
+        "# 2) Instalar en silencio y esperar a que termine del todo.\r\n"
         "Unblock-File -Path '$installerPath' -ErrorAction SilentlyContinue\r\n"
-        "Start-Process -FilePath '$installerPath' -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait\r\n"
-        "Start-Sleep -Milliseconds 400\r\n"
-        "Start-Process -FilePath '$exe'\r\n";
+        "\$inst = Start-Process -FilePath '$installerPath' -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART','/NOCANCEL' -PassThru -Wait\r\n"
+        "Log ('instalador exit: ' + \$inst.ExitCode)\r\n"
+        "Start-Sleep -Milliseconds 900\r\n"
+        "# 3) Reabrir Pronto con reintentos hasta confirmar que arranca.\r\n"
+        "for (\$i = 0; \$i -lt 10; \$i++) {\r\n"
+        "  if (Get-Process -Name pronto -ErrorAction SilentlyContinue) { break }\r\n"
+        "  if (Test-Path '$exe') { Log ('lanzando intento ' + \$i); Start-Process -FilePath '$exe' }\r\n"
+        "  Start-Sleep -Milliseconds 1200\r\n"
+        "}\r\n"
+        "if (Get-Process -Name pronto -ErrorAction SilentlyContinue) { Log 'OK Pronto en marcha' } else { Log 'FALLO Pronto no arranco' }\r\n";
 
     await File(ps1Path).writeAsString(script);
 

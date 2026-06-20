@@ -48,14 +48,55 @@ class OverlayPillScreen extends ConsumerStatefulWidget {
 }
 
 class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
+  /// El ratón está sobre la caja (modo lectura: se amplía y no se auto-oculta).
+  bool _hovered = false;
+
   @override
   void initState() {
     super.initState();
     // Si al entrar en píldora ya hay una caja visible, ajusta el tamaño.
     if (ref.read(pillPopupProvider).visible) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        windowManager.setSize(kPillExpanded);
+        _applyWindowSize(kPillExpanded);
       });
+    }
+  }
+
+  /// El ratón entra/sale de la caja: amplía o colapsa, y pausa/reanuda el
+  /// auto-ocultado para poder leer con calma.
+  void _setHovered(bool value) {
+    if (_hovered == value) return;
+    setState(() => _hovered = value);
+    final popup = ref.read(pillPopupProvider.notifier);
+    if (value) {
+      popup.pauseAutoHide();
+    } else {
+      popup.resumeAutoHide();
+    }
+    _syncWindowSize(ref.read(pillPopupProvider).visible);
+  }
+
+  /// Tamaño de ventana según el estado: sin caja → punto; con caja → expandida;
+  /// con caja y ratón encima → lectura (más grande).
+  void _syncWindowSize(bool visible) {
+    final target =
+        !visible ? kPillIdle : (_hovered ? kPillReading : kPillExpanded);
+    _applyWindowSize(target);
+  }
+
+  /// Aplica el tamaño anclando la esquina INFERIOR-IZQUIERDA: al crecer en alto
+  /// la ventana se expande hacia arriba (no hacia abajo, fuera de la pantalla)
+  /// y el punto se queda clavado donde estaba.
+  Future<void> _applyWindowSize(Size size) async {
+    try {
+      final b = await windowManager.getBounds();
+      await windowManager.setBounds(
+        Rect.fromLTWH(b.left, b.bottom - size.height, size.width, size.height),
+      );
+    } catch (_) {
+      try {
+        await windowManager.setSize(size);
+      } catch (_) {}
     }
   }
 
@@ -68,19 +109,21 @@ class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
         ref.watch(updateProvider.select((u) => u.isAvailable));
     final scale = ref.watch(settingsProvider.select((s) => s.pillScale));
 
-    // Expande/colapsa la ventana según haya o no caja. Crece SOLO hacia la
-    // derecha (la esquina superior-izquierda no se mueve): el punto se queda en
-    // su sitio y la caja se despliega a su lado.
+    // Expande/colapsa la ventana según haya o no caja (ver _applyWindowSize).
     ref.listen<bool>(pillPopupProvider.select((p) => p.visible), (_, visible) {
-      windowManager.setSize(visible ? kPillExpanded : kPillIdle);
+      if (!visible && _hovered) _hovered = false;
+      _syncWindowSize(visible);
     });
 
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Align(
-        alignment: Alignment.centerLeft,
+        // Inferior-izquierda: el punto se ancla abajo y la caja crece hacia
+        // arriba al ampliarse, igual que la ventana.
+        alignment: Alignment.bottomLeft,
         child: Row(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             SizedBox(
               width: 50,
@@ -99,13 +142,18 @@ class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
               ),
             ),
             if (popup.visible)
-              _PopupBox(
-                key: ValueKey(popup.seq),
-                text: popup.text,
-                copied: popup.copied,
-                onCopy: () => ref
-                    .read(dictationControllerProvider.notifier)
-                    .copyLastTranscription(),
+              MouseRegion(
+                onEnter: (_) => _setHovered(true),
+                onExit: (_) => _setHovered(false),
+                child: _PopupBox(
+                  key: ValueKey(popup.seq),
+                  text: popup.text,
+                  copied: popup.copied,
+                  expanded: _hovered,
+                  onCopy: () => ref
+                      .read(dictationControllerProvider.notifier)
+                      .copyLastTranscription(),
+                ),
               ),
           ],
         ),
@@ -280,21 +328,30 @@ class _UpdateDot extends StatelessWidget {
 /// Cajita minimalista con la transcripción, a la derecha del punto. Entra con
 /// una animación de aparición (desliza desde la izquierda + fundido). Si aún no
 /// se ha copiado, al tocarla copia el texto al portapapeles.
+///
+/// Al pasar el ratón por encima ([expanded] == true) se amplía y muestra TODA
+/// la transcripción en varias líneas (con scroll si es muy larga) para poder
+/// leerla con calma.
 class _PopupBox extends StatelessWidget {
   final String text;
   final bool copied;
+  final bool expanded;
   final VoidCallback onCopy;
 
   const _PopupBox({
     super.key,
     required this.text,
     required this.copied,
+    required this.expanded,
     required this.onCopy,
   });
 
+  static const _accent = Color(0xFF7800E3);
+  static const _hint = Color(0xFFB98CFF);
+  static const _textColor = Color(0xFFEDEAF5);
+
   @override
   Widget build(BuildContext context) {
-    const accent = Color(0xFF7800E3);
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
       duration: const Duration(milliseconds: 260),
@@ -307,17 +364,21 @@ class _PopupBox extends StatelessWidget {
         ),
       ),
       child: Padding(
-        padding: const EdgeInsets.only(left: 8),
+        padding: const EdgeInsets.only(left: 8, bottom: 3),
         child: GestureDetector(
           onTap: copied ? null : onCopy,
-          child: Container(
-            width: 264,
-            constraints: const BoxConstraints(maxHeight: 44),
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            curve: Curves.easeOut,
+            width: expanded ? 312 : 264,
+            constraints: BoxConstraints(maxHeight: expanded ? 200 : 44),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               color: const Color(0xF21B1A20),
               borderRadius: BorderRadius.circular(13),
-              border: Border.all(color: accent.withValues(alpha: 0.45)),
+              border: Border.all(
+                color: _accent.withValues(alpha: expanded ? 0.7 : 0.45),
+              ),
               boxShadow: [
                 BoxShadow(
                   color: Colors.black.withValues(alpha: 0.38),
@@ -326,34 +387,80 @@ class _PopupBox extends StatelessWidget {
                 ),
               ],
             ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  copied
-                      ? Icons.check_circle_rounded
-                      : Icons.content_copy_rounded,
-                  size: 15,
-                  color: const Color(0xFFB98CFF),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: Text(
-                    text,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Color(0xFFEDEAF5),
-                      fontSize: 12.5,
-                      height: 1.1,
-                    ),
-                  ),
-                ),
-              ],
-            ),
+            child: expanded ? _expanded() : _compact(),
           ),
         ),
       ),
+    );
+  }
+
+  /// Vista compacta: una sola línea con elipsis.
+  Widget _compact() {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(
+          copied ? Icons.check_circle_rounded : Icons.content_copy_rounded,
+          size: 15,
+          color: _hint,
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: _textColor,
+              fontSize: 12.5,
+              height: 1.1,
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Vista ampliada (ratón encima): etiqueta + texto completo desplazable.
+  Widget _expanded() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              copied ? Icons.check_circle_rounded : Icons.content_copy_rounded,
+              size: 14,
+              color: _hint,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              copied ? 'Copiado' : 'Toca para copiar',
+              style: const TextStyle(
+                color: _hint,
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 162),
+          child: SingleChildScrollView(
+            child: Text(
+              text,
+              style: const TextStyle(
+                color: _textColor,
+                fontSize: 13,
+                height: 1.3,
+              ),
+            ),
+          ),
+        ),
+      ],
     );
   }
 }
