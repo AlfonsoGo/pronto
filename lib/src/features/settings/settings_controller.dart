@@ -53,6 +53,10 @@ class AppSettings {
   /// Atajo global para dictar (push-to-talk).
   final HotkeyCombo hotkey;
 
+  /// Escala del punto flotante (1.0 = tamaño por defecto). Ajustable con un
+  /// slider en Ajustes.
+  final double pillScale;
+
   const AppSettings({
     required this.modelFile,
     required this.language,
@@ -64,6 +68,7 @@ class AppSettings {
     required this.llmModel,
     required this.captureExternalEdits,
     required this.hotkey,
+    this.pillScale = 1.0,
   });
 
   /// Valores por defecto, tomados de [AppConfig] cuando existen.
@@ -93,6 +98,7 @@ class AppSettings {
     String? llmModel,
     bool? captureExternalEdits,
     HotkeyCombo? hotkey,
+    double? pillScale,
   }) {
     return AppSettings(
       modelFile: modelFile ?? this.modelFile,
@@ -105,6 +111,7 @@ class AppSettings {
       llmModel: llmModel ?? this.llmModel,
       captureExternalEdits: captureExternalEdits ?? this.captureExternalEdits,
       hotkey: hotkey ?? this.hotkey,
+      pillScale: pillScale ?? this.pillScale,
     );
   }
 
@@ -119,6 +126,7 @@ class AppSettings {
         'llmModel': llmModel,
         'captureExternalEdits': captureExternalEdits,
         'hotkey': hotkey.toJson(),
+        'pillScale': pillScale,
       };
 
   /// Reconstruye desde JSON tolerando claves ausentes o valores inválidos:
@@ -141,6 +149,7 @@ class AppSettings {
       hotkey: j['hotkey'] is Map
           ? HotkeyCombo.fromJson(Map<String, dynamic>.from(j['hotkey'] as Map))
           : d.hotkey,
+      pillScale: (j['pillScale'] as num?)?.toDouble() ?? d.pillScale,
     );
   }
 
@@ -172,7 +181,8 @@ class AppSettings {
       other.llmBaseUrl == llmBaseUrl &&
       other.llmModel == llmModel &&
       other.captureExternalEdits == captureExternalEdits &&
-      other.hotkey == hotkey;
+      other.hotkey == hotkey &&
+      other.pillScale == pillScale;
 
   @override
   int get hashCode => Object.hash(
@@ -186,6 +196,7 @@ class AppSettings {
         llmModel,
         captureExternalEdits,
         hotkey,
+        pillScale,
       );
 }
 
@@ -280,6 +291,18 @@ class SettingsController extends Notifier<AppSettings> {
 
   Future<void> setHotkey(HotkeyCombo value) async {
     state = state.copyWith(hotkey: value);
+    await _save();
+  }
+
+  /// Vista previa en vivo del tamaño del punto (sin persistir; se usa mientras
+  /// se arrastra el slider).
+  void previewPillScale(double value) {
+    state = state.copyWith(pillScale: value);
+  }
+
+  /// Fija y persiste el tamaño del punto flotante.
+  Future<void> setPillScale(double value) async {
+    state = state.copyWith(pillScale: value);
     await _save();
   }
 

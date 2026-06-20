@@ -140,6 +140,12 @@ class SettingsScreen extends ConsumerWidget {
 
           const Divider(height: 24),
 
+          // --- Apariencia ---
+          _SectionHeader('Apariencia', theme: theme),
+          const _PillSizeTile(),
+
+          const Divider(height: 24),
+
           // --- Sistema ---
           _SectionHeader('Sistema', theme: theme),
 
@@ -361,6 +367,45 @@ class _UpdateTile extends ConsumerWidget {
           ? null
           : () =>
               ref.read(updateProvider.notifier).checkForUpdate(manual: true),
+    );
+  }
+}
+
+/// Slider para hacer el punto flotante más grande o más pequeño (en vivo).
+class _PillSizeTile extends ConsumerWidget {
+  const _PillSizeTile();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final scale = ref.watch(settingsProvider.select((s) => s.pillScale));
+    final ctrl = ref.read(settingsProvider.notifier);
+    final scheme = Theme.of(context).colorScheme;
+
+    return ListTile(
+      title: const Text('Tamaño del punto flotante'),
+      subtitle: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Haz el punto más grande o más pequeño'),
+          Row(
+            children: [
+              Icon(Icons.circle, size: 8, color: scheme.onSurfaceVariant),
+              Expanded(
+                child: Slider(
+                  value: scale.clamp(0.7, 2.0),
+                  min: 0.7,
+                  max: 2.0,
+                  divisions: 13,
+                  label: '${(scale * 100).round()}%',
+                  onChanged: (v) => ctrl.previewPillScale(v),
+                  onChangeEnd: (v) => ctrl.setPillScale(v),
+                ),
+              ),
+              Icon(Icons.circle, size: 18, color: scheme.onSurfaceVariant),
+            ],
+          ),
+        ],
+      ),
     );
   }
 }

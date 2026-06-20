@@ -6,6 +6,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../dictation/dictation_controller.dart';
 import '../dictation/dictation_state.dart';
+import '../settings/settings_controller.dart';
 import '../update/update_controller.dart';
 import 'pill_popup_controller.dart';
 import 'window_mode_controller.dart';
@@ -65,6 +66,7 @@ class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
     final popup = ref.watch(pillPopupProvider);
     final updateAvailable =
         ref.watch(updateProvider.select((u) => u.isAvailable));
+    final scale = ref.watch(settingsProvider.select((s) => s.pillScale));
 
     // Expande/colapsa la ventana según haya o no caja. Crece SOLO hacia la
     // derecha (la esquina superior-izquierda no se mueve): el punto se queda en
@@ -87,6 +89,7 @@ class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
                 children: [
                   _StatusLight(
                     status: status,
+                    scale: scale,
                     onOpenPanel: () =>
                         ref.read(windowModeProvider.notifier).toPanel(),
                   ),
@@ -113,9 +116,14 @@ class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
 
 class _StatusLight extends StatefulWidget {
   final DictationStatus status;
+  final double scale;
   final VoidCallback onOpenPanel;
 
-  const _StatusLight({required this.status, required this.onOpenPanel});
+  const _StatusLight({
+    required this.status,
+    required this.scale,
+    required this.onOpenPanel,
+  });
 
   @override
   State<_StatusLight> createState() => _StatusLightState();
@@ -151,8 +159,13 @@ class _StatusLightState extends State<_StatusLight>
       onPanStart: (_) => windowManager.startDragging(),
       child: Center(
         child: _thinking(status)
-            ? _ThinkingRing(color: color)
-            : _Dot(color: color, animation: _anim, glowing: _animated(status)),
+            ? _ThinkingRing(color: color, scale: widget.scale)
+            : _Dot(
+                color: color,
+                animation: _anim,
+                glowing: _animated(status),
+                scale: widget.scale,
+              ),
       ),
     );
   }
@@ -163,11 +176,13 @@ class _Dot extends StatelessWidget {
   final Color color;
   final Animation<double> animation;
   final bool glowing;
+  final double scale;
 
   const _Dot({
     required this.color,
     required this.animation,
     required this.glowing,
+    required this.scale,
   });
 
   @override
@@ -177,7 +192,7 @@ class _Dot extends StatelessWidget {
       builder: (context, _) {
         final pulse =
             glowing ? (0.5 + 0.5 * math.sin(animation.value * 2 * math.pi)) : 0.0;
-        final size = glowing ? (15 + 3 * pulse) : 13.0;
+        final size = (glowing ? (15 + 3 * pulse) : 13.0) * scale;
         return Container(
           width: size,
           height: size,
@@ -208,21 +223,25 @@ class _Dot extends StatelessWidget {
 /// "pensando/escribiendo".
 class _ThinkingRing extends StatelessWidget {
   final Color color;
+  final double scale;
 
-  const _ThinkingRing({required this.color});
+  const _ThinkingRing({required this.color, required this.scale});
 
   @override
   Widget build(BuildContext context) {
+    // Cap a 46 para que quepa en la ventana de la píldora (50px) a escalas altas.
+    final ring = (30.0 * scale).clamp(20.0, 46.0);
+    final inner = (11.0 * scale).clamp(7.0, 17.0);
     return SizedBox(
-      width: 30,
-      height: 30,
+      width: ring,
+      height: ring,
       child: Stack(
         alignment: Alignment.center,
         children: [
           // El aro indeterminado gira solo (loading).
           SizedBox(
-            width: 30,
-            height: 30,
+            width: ring,
+            height: ring,
             child: CircularProgressIndicator(
               strokeWidth: 2.6,
               valueColor: AlwaysStoppedAnimation(color),
@@ -230,8 +249,8 @@ class _ThinkingRing extends StatelessWidget {
             ),
           ),
           Container(
-            width: 11,
-            height: 11,
+            width: inner,
+            height: inner,
             decoration: BoxDecoration(shape: BoxShape.circle, color: color),
           ),
         ],
