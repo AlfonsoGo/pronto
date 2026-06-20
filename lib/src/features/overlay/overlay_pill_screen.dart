@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -51,6 +52,18 @@ class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
   /// El ratón está sobre la caja (modo lectura: se amplía y no se auto-oculta).
   bool _hovered = false;
 
+  /// Debounce del colapso: al ampliar, la ventana se redimensiona bajo el
+  /// cursor y eso dispara un onExit/onEnter espurio. Si el ratón vuelve antes
+  /// de que salte este timer, cancelamos el colapso → no parpadea.
+  Timer? _collapseTimer;
+
+  /// Ancla (esquina inferior-izquierda, en coords de pantalla) que se fija al
+  /// aparecer la caja. Todas las redimensiones de hover usan ESTE punto, en vez
+  /// de releer getBounds() a mitad de un resize (lo que causaba jitter y, con
+  /// el MouseRegion, parpadeo). Se recalcula cada vez que aparece la caja (por
+  /// si moviste la píldora) y se borra al ocultarse.
+  Offset? _pillAnchor;
+
   @override
   void initState() {
     super.initState();
@@ -62,36 +75,60 @@ class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
     }
   }
 
-  /// El ratón entra/sale de la caja: amplía o colapsa, y pausa/reanuda el
-  /// auto-ocultado para poder leer con calma.
-  void _setHovered(bool value) {
-    if (_hovered == value) return;
-    setState(() => _hovered = value);
-    final popup = ref.read(pillPopupProvider.notifier);
-    if (value) {
-      popup.pauseAutoHide();
-    } else {
-      popup.resumeAutoHide();
-    }
+  @override
+  void dispose() {
+    _collapseTimer?.cancel();
+    super.dispose();
+  }
+
+  /// El ratón entra en la caja: amplía YA (cancela cualquier colapso pendiente).
+  void _onBoxEnter() {
+    _collapseTimer?.cancel();
+    _collapseTimer = null;
+    if (_hovered) return;
+    setState(() => _hovered = true);
+    ref.read(pillPopupProvider.notifier).pauseAutoHide();
     _syncWindowSize(ref.read(pillPopupProvider).visible);
   }
 
+  /// El ratón sale de la caja: colapsa, pero con un pequeño retardo para
+  /// absorber los onExit espurios que provoca el propio redimensionado.
+  void _onBoxExit() {
+    _collapseTimer?.cancel();
+    _collapseTimer = Timer(const Duration(milliseconds: 240), () {
+      if (!mounted || !_hovered) return;
+      setState(() => _hovered = false);
+      ref.read(pillPopupProvider.notifier).resumeAutoHide();
+      _syncWindowSize(ref.read(pillPopupProvider).visible);
+    });
+  }
+
   /// Tamaño de ventana según el estado: sin caja → punto; con caja → expandida;
-  /// con caja y ratón encima → lectura (más grande).
+  /// con caja y ratón encima → lectura (más grande). Al ocultarse la caja se
+  /// borra el ancla para recalcularla la próxima vez.
   void _syncWindowSize(bool visible) {
-    final target =
-        !visible ? kPillIdle : (_hovered ? kPillReading : kPillExpanded);
-    _applyWindowSize(target);
+    if (!visible) {
+      _applyWindowSize(kPillIdle);
+      _pillAnchor = null;
+      return;
+    }
+    _applyWindowSize(_hovered ? kPillReading : kPillExpanded);
   }
 
   /// Aplica el tamaño anclando la esquina INFERIOR-IZQUIERDA: al crecer en alto
   /// la ventana se expande hacia arriba (no hacia abajo, fuera de la pantalla)
-  /// y el punto se queda clavado donde estaba.
-  Future<void> _applyWindowSize(Size size) async {
+  /// y el punto se queda clavado donde estaba. Usa un ancla CACHEADA para no
+  /// releer getBounds() a mitad de un resize (lo que provocaba jitter/parpadeo);
+  /// [refreshAnchor] la recalcula (al aparecer la caja, por si moviste la píldora).
+  Future<void> _applyWindowSize(Size size, {bool refreshAnchor = false}) async {
     try {
-      final b = await windowManager.getBounds();
+      if (refreshAnchor || _pillAnchor == null) {
+        final b = await windowManager.getBounds();
+        _pillAnchor = Offset(b.left, b.bottom);
+      }
+      final a = _pillAnchor!;
       await windowManager.setBounds(
-        Rect.fromLTWH(b.left, b.bottom - size.height, size.width, size.height),
+        Rect.fromLTWH(a.dx, a.dy - size.height, size.width, size.height),
       );
     } catch (_) {
       try {
@@ -111,8 +148,15 @@ class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
 
     // Expande/colapsa la ventana según haya o no caja (ver _applyWindowSize).
     ref.listen<bool>(pillPopupProvider.select((p) => p.visible), (_, visible) {
-      if (!visible && _hovered) _hovered = false;
-      _syncWindowSize(visible);
+      if (visible) {
+        // Nueva caja: fija el ancla aquí (por si moviste la píldora) y expande.
+        _collapseTimer?.cancel();
+        _applyWindowSize(kPillExpanded, refreshAnchor: true);
+      } else {
+        _collapseTimer?.cancel();
+        if (_hovered) _hovered = false;
+        _syncWindowSize(false);
+      }
     });
 
     return Scaffold(
@@ -143,8 +187,8 @@ class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
             ),
             if (popup.visible)
               MouseRegion(
-                onEnter: (_) => _setHovered(true),
-                onExit: (_) => _setHovered(false),
+                onEnter: (_) => _onBoxEnter(),
+                onExit: (_) => _onBoxExit(),
                 child: _PopupBox(
                   key: ValueKey(popup.seq),
                   text: popup.text,
