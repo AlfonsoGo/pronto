@@ -13,10 +13,24 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
     CreateAndAttachConsole();
   }
 
-  // Mutex con nombre: permite que el instalador (Inno Setup, AppMutex) detecte
-  // una instancia en ejecución y la cierre antes de actualizar, evitando que
-  // pronto.exe quede bloqueado al instalar una versión nueva sobre la anterior.
+  // Mutex con nombre, con DOBLE función:
+  //  1) El instalador (Inno Setup, AppMutex) detecta una instancia en ejecución
+  //     antes de actualizar, evitando que pronto.exe quede bloqueado.
+  //  2) INSTANCIA ÚNICA: si Pronto ya está abierto (p. ej. minimizado en la
+  //     bandeja como píldora), NO abrimos un segundo proceso. En su lugar
+  //     traemos al frente la ventana existente y salimos. Antes no se comprobaba
+  //     y se podían tener "dos Pronto" a la vez (dos iconos, panel fantasma…).
   ::CreateMutexW(nullptr, FALSE, L"ProntoAppMutex");
+  if (::GetLastError() == ERROR_ALREADY_EXISTS) {
+    HWND existing = ::FindWindowW(nullptr, L"Pronto");
+    if (existing != nullptr) {
+      if (::IsIconic(existing)) {
+        ::ShowWindow(existing, SW_RESTORE);
+      }
+      ::SetForegroundWindow(existing);
+    }
+    return EXIT_SUCCESS;
+  }
 
   // Initialize COM, so that it is available for use in the library and/or
   // plugins.

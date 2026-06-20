@@ -1,22 +1,24 @@
 // Implementación de [WhisperEngine] sobre whisper.cpp vía dart:ffi.
 //
-// whisper_full es CPU-intensiva (segundos en CPU). Para no bloquear la UI la
-// ejecutamos dentro de un isolate con `Isolate.run`.
+// whisper_full es CPU-intensiva (segundos en CPU). Para no bloquear la UI se
+// ejecuta dentro de un isolate.
 //
-// PROBLEMA: los punteros nativos (el `whisper_context*` y los bindings) NO
-// cruzan isolates: un Pointer obtenido en el isolate principal no es válido en
-// otro isolate, y DynamicLibrary debe abrirse en el isolate que la usa. Hay dos
-// estrategias:
-//   (a) [MVP, elegida] Cargar el modelo DENTRO del isolate en cada transcripción.
-//       Sencillo y robusto; coste: relee el .bin del disco y reconstruye el ctx
-//       cada vez (cientos de ms a ~1-2 s según el modelo; ggml-small es asumible).
-//   (b) [Optimización futura] Un isolate de larga vida que mantenga el ctx vivo
-//       y reciba PCM por un puerto; evita reLeer el modelo. Más complejo
-//       (gestión del ciclo de vida del isolate, backpressure, errores).
-// Ver 'todos': migrar a (b) para modelos grandes / dictado intensivo.
+// Los punteros nativos (el `whisper_context*` y los bindings) NO cruzan
+// isolates. Estrategia usada aquí (ISOLATE DE LARGA VIDA):
+//   - Al cargar (load), se lanza UN isolate que abre la DLL e inicializa el
+//     contexto del modelo UNA sola vez, y se queda esperando peticiones.
+//   - Cada transcripción envía solo el audio (PCM, datos planos) por un puerto;
+//     el isolate reutiliza el MISMO contexto y devuelve el texto.
+//   - Así NO se relee el modelo (cientos de MB) del disco en cada dictado:
+//     el primer dictado tras arrancar es instantáneo en cuanto a carga, y los
+//     siguientes no pagan ningún coste de recarga.
+// Coste: el modelo queda residente en memoria mientras la app vive (lo normal
+// en dictado por voz). Antes (estrategia MVP) se cargaba y liberaba en cada
+// transcripción: simple pero lento.
 //
 // Este fichero usa imports RELATIVOS dentro de lib/ (regla del proyecto).
 
+import 'dart:async';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:isolate';
@@ -29,13 +31,20 @@ import '../../core/config.dart';
 import '../../platform/whisper_engine.dart';
 import 'whisper_bindings.dart';
 
-/// Motor Whisper on-device basado en whisper.cpp (dart:ffi).
+/// Motor Whisper on-device basado en whisper.cpp (dart:ffi), con el contexto
+/// del modelo residente en un isolate de larga vida.
 class WhisperEngineFfi implements WhisperEngine {
-  String? _modelPath;
-  bool _loaded = false;
-
   /// Audio esperado por whisper.cpp: PCM mono a 16 kHz.
   static const int _sampleRate = 16000;
+
+  Isolate? _isolate;
+  SendPort? _toIsolate; // puerto para enviar peticiones al isolate
+  ReceivePort? _fromIsolate; // puerto por el que llegan las respuestas
+  StreamSubscription<dynamic>? _sub;
+  bool _loaded = false;
+
+  int _nextId = 0;
+  final Map<int, Completer<_TranscribeResult>> _pending = {};
 
   @override
   bool get isLoaded => _loaded;
@@ -51,14 +60,59 @@ class WhisperEngineFfi implements WhisperEngine {
       );
     }
 
-    // Validación temprana de la DLL: abrir los bindings aquí (en el isolate
-    // principal) para fallar rápido y con un mensaje claro si falta whisper.dll,
-    // en lugar de descubrirlo dentro del primer isolate de transcripción.
-    // (La carga real para transcribir se rehace dentro del isolate.)
+    // Validación temprana de la DLL en el isolate principal: falla rápido y con
+    // un mensaje claro si falta whisper.dll, antes de lanzar el isolate.
     WhisperBindings.open();
 
-    _modelPath = modelPath;
+    // Idempotente: si ya hay un isolate cargado, no respawneamos.
+    if (_loaded) return;
+
+    final ready = ReceivePort();
+    final fromIsolate = ReceivePort();
+    _fromIsolate = fromIsolate;
+
+    _isolate = await Isolate.spawn(
+      _isolateMain,
+      _InitMsg(
+        modelPath: modelPath,
+        readyPort: ready.sendPort,
+        responsePort: fromIsolate.sendPort,
+      ),
+      debugName: 'whisper',
+      errorsAreFatal: true,
+    );
+
+    // La primera respuesta por [ready] es el SendPort de entrada (OK) o un
+    // String con el error de inicialización del modelo.
+    final first = await ready.first;
+    ready.close();
+    if (first is! SendPort) {
+      await _shutdown();
+      throw StateError('No se pudo cargar el modelo Whisper: $first');
+    }
+    _toIsolate = first;
+    _sub = fromIsolate.listen(_onResponse);
     _loaded = true;
+  }
+
+  void _onResponse(dynamic msg) {
+    final list = msg as List;
+    final id = list[0] as int;
+    final completer = _pending.remove(id);
+    if (completer == null) return;
+    final ok = list[1] as bool;
+    if (ok) {
+      completer.complete(
+        _TranscribeResult(
+          text: list[2] as String,
+          avgLogProb: list[3] as double,
+          language: list[4] as String,
+          audioMs: list[5] as int,
+        ),
+      );
+    } else {
+      completer.completeError(StateError(list[2] as String));
+    }
   }
 
   @override
@@ -68,15 +122,14 @@ class WhisperEngineFfi implements WhisperEngine {
     String? initialPrompt,
     int? threads,
   }) async {
-    if (!_loaded || _modelPath == null) {
+    final port = _toIsolate;
+    if (!_loaded || port == null) {
       throw StateError(
         'WhisperEngineFfi no está cargado. Llama a load(modelPath) primero.',
       );
     }
 
-    final audioMs =
-        ((pcm16kMonoF32.length / _sampleRate) * 1000).round();
-
+    final audioMs = ((pcm16kMonoF32.length / _sampleRate) * 1000).round();
     if (pcm16kMonoF32.isEmpty) {
       return TranscriptResult(
         text: '',
@@ -86,21 +139,21 @@ class WhisperEngineFfi implements WhisperEngine {
       );
     }
 
-    final req = _TranscribeRequest(
-      modelPath: _modelPath!,
-      pcm: pcm16kMonoF32,
-      language: language,
-      initialPrompt: initialPrompt,
-      // 0 = auto (whisper usará un valor por defecto sensato).
-      threads: threads ?? AppConfig.defaultThreads,
-      sampleRate: _sampleRate,
-      audioMs: audioMs,
-    );
+    final id = _nextId++;
+    final completer = Completer<_TranscribeResult>();
+    _pending[id] = completer;
 
-    // Toda la parte nativa (cargar modelo + whisper_full + leer segmentos +
-    // liberar) ocurre dentro del isolate. Cruzamos solo datos planos.
-    final out = await Isolate.run(() => _runInIsolate(req));
+    // Solo viajan datos planos; el contexto nativo se queda en el isolate.
+    port.send([
+      id,
+      pcm16kMonoF32,
+      language,
+      initialPrompt,
+      threads ?? AppConfig.defaultThreads,
+      audioMs,
+    ]);
 
+    final out = await completer.future;
     return TranscriptResult(
       text: out.text,
       avgLogProb: out.avgLogProb,
@@ -110,48 +163,52 @@ class WhisperEngineFfi implements WhisperEngine {
   }
 
   @override
-  Future<void> dispose() async {
-    // Con la estrategia (a) no mantenemos un ctx vivo entre llamadas: cada
-    // transcripción crea y libera su propio contexto dentro del isolate. Aquí
-    // solo invalidamos el estado lógico.
+  Future<void> dispose() async => _shutdown();
+
+  Future<void> _shutdown() async {
     _loaded = false;
-    _modelPath = null;
+    try {
+      _toIsolate?.send(const ['shutdown']);
+    } catch (_) {}
+    _toIsolate = null;
+    await _sub?.cancel();
+    _sub = null;
+    _fromIsolate?.close();
+    _fromIsolate = null;
+    for (final c in _pending.values) {
+      if (!c.isCompleted) c.completeError(StateError('Motor Whisper cerrado.'));
+    }
+    _pending.clear();
+    // Da un instante al isolate para liberar el ctx; luego lo matamos por si
+    // se quedó bloqueado en un whisper_full.
+    _isolate?.kill(priority: Isolate.beforeNextEvent);
+    _isolate = null;
   }
 }
 
 // ===========================================================================
-// Código que se ejecuta DENTRO del isolate (sin acceso al estado de la clase).
+// Código que se ejecuta DENTRO del isolate de larga vida.
 // Solo recibe/devuelve datos serializables por SendPort.
 // ===========================================================================
 
-/// Datos de entrada para el isolate (todos serializables).
-class _TranscribeRequest {
+/// Mensaje de arranque del isolate (sendable: String + SendPorts).
+class _InitMsg {
   final String modelPath;
-  final Float32List pcm;
-  final String language;
-  final String? initialPrompt;
-  final int threads;
-  final int sampleRate;
-  final int audioMs;
-
-  const _TranscribeRequest({
+  final SendPort readyPort;
+  final SendPort responsePort;
+  const _InitMsg({
     required this.modelPath,
-    required this.pcm,
-    required this.language,
-    required this.initialPrompt,
-    required this.threads,
-    required this.sampleRate,
-    required this.audioMs,
+    required this.readyPort,
+    required this.responsePort,
   });
 }
 
-/// Resultado plano devuelto por el isolate.
+/// Resultado plano de una transcripción.
 class _TranscribeResult {
   final String text;
   final double avgLogProb;
   final String language;
   final int audioMs;
-
   const _TranscribeResult({
     required this.text,
     required this.avgLogProb,
@@ -160,98 +217,130 @@ class _TranscribeResult {
   });
 }
 
-/// Punto de entrada de la transcripción dentro del isolate.
-///
-/// Abre la DLL, inicializa el contexto desde el modelo, ejecuta whisper_full,
-/// agrega el texto de los segmentos y estima el avgLogProb, y libera todo.
-_TranscribeResult _runInIsolate(_TranscribeRequest req) {
-  final bindings = WhisperBindings.open();
-
-  // --- Inicializar el contexto desde el modelo ---
-  final pathPtr = req.modelPath.toNativeUtf8();
+/// Punto de entrada del isolate: abre la DLL, inicializa el contexto del modelo
+/// UNA vez y atiende peticiones de transcripción reutilizándolo.
+void _isolateMain(_InitMsg init) {
+  final WhisperBindings bindings;
   final Pointer<Void> ctx;
   try {
-    ctx = bindings.initFromFile(pathPtr);
-  } finally {
-    calloc.free(pathPtr);
+    bindings = WhisperBindings.open();
+    final pathPtr = init.modelPath.toNativeUtf8();
+    try {
+      ctx = bindings.initFromFile(pathPtr);
+    } finally {
+      calloc.free(pathPtr);
+    }
+    if (ctx == nullptr) {
+      init.readyPort.send(
+        'whisper_init_from_file devolvió NULL para "${init.modelPath}". '
+        '¿El fichero es un modelo GGML válido y compatible con esta whisper.dll?',
+      );
+      return;
+    }
+  } catch (e) {
+    init.readyPort.send('$e');
+    return;
   }
 
-  if (ctx == nullptr) {
-    throw StateError(
-      'whisper_init_from_file devolvió NULL para "${req.modelPath}". '
-      '¿El fichero es un modelo GGML válido y compatible con esta whisper.dll?',
-    );
-  }
+  final inbox = ReceivePort();
+  // Listo: enviamos el puerto por el que recibiremos peticiones.
+  init.readyPort.send(inbox.sendPort);
 
-  // Punteros que hay que liberar pase lo que pase.
+  inbox.listen((msg) {
+    final list = msg as List;
+    // Mensaje de cierre: liberar el contexto y terminar.
+    if (list.isNotEmpty && list[0] == 'shutdown') {
+      bindings.free(ctx);
+      inbox.close();
+      return;
+    }
+
+    final id = list[0] as int;
+    final pcm = list[1] as Float32List;
+    final language = list[2] as String;
+    final initialPrompt = list[3] as String?;
+    final threads = list[4] as int;
+    final audioMs = list[5] as int;
+
+    try {
+      final r = _transcribeOnCtx(
+        bindings,
+        ctx,
+        pcm,
+        language,
+        initialPrompt,
+        threads,
+        audioMs,
+      );
+      init.responsePort
+          .send([id, true, r.text, r.avgLogProb, r.language, r.audioMs]);
+    } catch (e) {
+      init.responsePort.send([id, false, '$e']);
+    }
+  });
+}
+
+/// Ejecuta whisper_full sobre un contexto YA inicializado (no lo crea ni lo
+/// libera: el contexto vive entre llamadas). Libera solo la memoria nativa
+/// temporal de esta llamada.
+_TranscribeResult _transcribeOnCtx(
+  WhisperBindings b,
+  Pointer<Void> ctx,
+  Float32List pcm,
+  String language,
+  String? initialPrompt,
+  int threads,
+  int audioMs,
+) {
   Pointer<Float> samplesPtr = nullptr;
   Pointer<Utf8> langPtr = nullptr;
   Pointer<Utf8> promptPtr = nullptr;
 
   try {
-    // --- Marshaling Float32List -> Pointer<Float> ---
-    final n = req.pcm.length;
+    final n = pcm.length;
     samplesPtr = calloc<Float>(n);
-    // Copia eficiente a través de la vista tipada del bloque nativo.
-    samplesPtr.asTypedList(n).setAll(0, req.pcm);
+    samplesPtr.asTypedList(n).setAll(0, pcm);
 
-    // --- Parámetros: partir de los defaults y tocar solo lo necesario ---
-    // whisper_full_default_params devuelve la struct POR VALOR con todos los
-    // campos ya inicializados (incluidos callbacks=nullptr, gramáticas, VAD…).
-    final params =
-        bindings.fullDefaultParams(WhisperSamplingStrategy.greedy);
+    final params = b.fullDefaultParams(WhisperSamplingStrategy.greedy);
 
-    // Idioma (ISO 639-1). Puntero que debe sobrevivir hasta tras whisper_full.
-    langPtr = req.language.toNativeUtf8();
+    langPtr = language.toNativeUtf8();
     params.language = langPtr;
     params.detectLanguage = false;
 
-    // Hilos (0 = dejar el valor por defecto que ya trae la struct = auto).
-    if (req.threads > 0) {
-      params.nThreads = req.threads;
+    if (threads > 0) {
+      params.nThreads = threads;
     }
 
-    // Silenciar toda la salida por stdout/stderr de la librería.
     params.printProgress = false;
     params.printRealtime = false;
     params.printTimestamps = false;
     params.printSpecial = false;
-
-    // No necesitamos timestamps por token para el caso de uso de dictado.
     params.noTimestamps = true;
     params.translate = false;
 
-    // initial_prompt para sesgar vocabulario (nombres propios, jerga).
-    final prompt = req.initialPrompt;
-    if (prompt != null && prompt.trim().isNotEmpty) {
-      promptPtr = prompt.toNativeUtf8();
+    if (initialPrompt != null && initialPrompt.trim().isNotEmpty) {
+      promptPtr = initialPrompt.toNativeUtf8();
       params.initialPrompt = promptPtr;
     }
 
-    // --- Ejecutar la transcripción ---
-    final rc = bindings.full(ctx, params, samplesPtr, n);
+    final rc = b.full(ctx, params, samplesPtr, n);
     if (rc != 0) {
       throw StateError('whisper_full falló con código $rc.');
     }
 
-    // --- Leer segmentos + estimar confianza ---
-    final nSeg = bindings.fullNSegments(ctx);
+    final nSeg = b.fullNSegments(ctx);
     final buffer = StringBuffer();
     double sumLogProb = 0;
     int tokenCount = 0;
 
     for (var i = 0; i < nSeg; i++) {
-      final segTextPtr = bindings.fullGetSegmentText(ctx, i);
+      final segTextPtr = b.fullGetSegmentText(ctx, i);
       if (segTextPtr != nullptr) {
         buffer.write(segTextPtr.toDartString());
       }
-
-      // avgLogProb: whisper expone p (prob) por token; aproximamos el log-prob
-      // medio como mean(ln(p_token)). Si por alguna razón no hay tokens,
-      // dejamos 0.0 (= "muy seguro", no dispara post-corrección).
-      final nTok = bindings.fullNTokens(ctx, i);
+      final nTok = b.fullNTokens(ctx, i);
       for (var t = 0; t < nTok; t++) {
-        final pTok = bindings.fullGetTokenP(ctx, i, t);
+        final pTok = b.fullGetTokenP(ctx, i, t);
         if (pTok > 0) {
           sumLogProb += math.log(pTok);
           tokenCount++;
@@ -260,17 +349,13 @@ _TranscribeResult _runInIsolate(_TranscribeRequest req) {
     }
 
     final avgLogProb = tokenCount > 0 ? sumLogProb / tokenCount : 0.0;
-    final text = buffer.toString().trim();
-
     return _TranscribeResult(
-      text: text,
+      text: buffer.toString().trim(),
       avgLogProb: avgLogProb,
-      language: req.language,
-      audioMs: req.audioMs,
+      language: language,
+      audioMs: audioMs,
     );
   } finally {
-    // Liberar SIEMPRE el contexto y la memoria nativa, también ante excepción.
-    bindings.free(ctx);
     if (samplesPtr != nullptr) calloc.free(samplesPtr);
     if (langPtr != nullptr) calloc.free(langPtr);
     if (promptPtr != nullptr) calloc.free(promptPtr);
