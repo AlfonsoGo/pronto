@@ -206,38 +206,50 @@ class UpdateController extends Notifier<UpdateState> {
     }
   }
 
-  /// Escribe un pequeño script que espera a que Pronto se cierre, ejecuta el
-  /// instalador en silencio (actualiza en sitio) y vuelve a abrir la app; luego
-  /// cerramos la app para liberar el ejecutable.
+  /// Lanza un ayudante (PowerShell, en VENTANA OCULTA) que espera a que Pronto
+  /// se cierre, instala la nueva versión en silencio (actualiza en sitio) y
+  /// reabre la app; luego cerramos la app para liberar el ejecutable.
+  ///
+  /// Se usa PowerShell con `-WindowStyle Hidden` en vez de un `.cmd` para evitar
+  /// las ventanas de consola que asomaban, y `Start-Process` para un reinicio
+  /// fiable.
   Future<void> _launchSilentInstallerAndQuit(String installerPath) async {
     final exe = Platform.resolvedExecutable;
     final tmpDir = await getTemporaryDirectory();
-    final cmdPath = p.join(tmpDir.path, 'pronto_update.cmd');
+    final ps1Path = p.join(tmpDir.path, 'pronto_update.ps1');
 
-    // ping como "sleep" porque el proceso va detached (sin consola) y `timeout`
-    // necesita consola. tasklist/find detectan cuándo Pronto se ha cerrado.
-    final script = '@echo off\r\n'
-        'ping -n 3 127.0.0.1 >nul\r\n'
-        ':waitloop\r\n'
-        'tasklist /FI "IMAGENAME eq pronto.exe" 2>nul | find /I "pronto.exe" >nul\r\n'
-        'if not errorlevel 1 (\r\n'
-        '  ping -n 2 127.0.0.1 >nul\r\n'
-        '  goto waitloop\r\n'
-        ')\r\n'
-        '"$installerPath" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART\r\n'
-        'start "" "$exe"\r\n';
+    final script = "\$ErrorActionPreference = 'SilentlyContinue'\r\n"
+        "# Espera (máx ~60s) a que Pronto se cierre para liberar el .exe.\r\n"
+        "for (\$i = 0; \$i -lt 90; \$i++) {\r\n"
+        "  if (-not (Get-Process -Name pronto -ErrorAction SilentlyContinue)) { break }\r\n"
+        "  Start-Sleep -Milliseconds 700\r\n"
+        "}\r\n"
+        "Start-Sleep -Milliseconds 600\r\n"
+        "Unblock-File -Path '$installerPath' -ErrorAction SilentlyContinue\r\n"
+        "Start-Process -FilePath '$installerPath' -ArgumentList '/VERYSILENT','/SUPPRESSMSGBOXES','/NORESTART' -Wait\r\n"
+        "Start-Sleep -Milliseconds 400\r\n"
+        "Start-Process -FilePath '$exe'\r\n";
 
-    await File(cmdPath).writeAsString(script);
+    await File(ps1Path).writeAsString(script);
+
+    // Lanzamos el PowerShell vía un VBScript con wscript: así NO aparece NINGUNA
+    // ventana de consola (ni un parpadeo). wscript no muestra ventana propia y
+    // el Run con estilo 0 mantiene el PowerShell oculto.
+    final vbsPath = p.join(tmpDir.path, 'pronto_update.vbs');
+    final vbs = 'CreateObject("WScript.Shell").Run '
+        '"powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass '
+        '-WindowStyle Hidden -File ""$ps1Path""", 0, False\r\n';
+    await File(vbsPath).writeAsString(vbs);
 
     await Process.start(
-      'cmd.exe',
-      ['/c', cmdPath],
+      'wscript.exe',
+      [vbsPath],
       mode: ProcessStartMode.detached,
     );
 
-    // Damos un instante a que el proceso detached arranque y salimos del todo
-    // (libera el .exe y el mutex para que el instalador pueda reemplazarlo).
-    await Future<void>.delayed(const Duration(milliseconds: 400));
+    // Un instante para que arranque el ayudante y salimos del todo (libera el
+    // .exe y el mutex para que el instalador pueda reemplazarlo).
+    await Future<void>.delayed(const Duration(milliseconds: 500));
     exit(0);
   }
 
