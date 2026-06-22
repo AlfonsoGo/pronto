@@ -21,7 +21,8 @@ $iscc = (Get-Command ISCC -ErrorAction Ignore).Source
 if (-not $iscc) { $iscc = Join-Path $env:LOCALAPPDATA 'InnoSetup6\ISCC.exe' }
 $cmakeBin = Join-Path $env:USERPROFILE 'dev\cmake\bin'
 $rel   = Join-Path $proj 'build\windows\x64\runner\Release'
-$parakeetSrc = Join-Path $proj 'native\parakeet'  # modelo por defecto (va en el instalador)
+$parakeetSrc  = Join-Path $proj 'native\parakeet'                       # motor por defecto
+$whisperModel = Join-Path $proj 'native\whisper\models\ggml-small.bin'  # motor alternativo
 
 $env:Path = "$(Split-Path $flutter);$cmakeBin;" + $env:Path
 
@@ -29,20 +30,19 @@ Write-Host "== 1/4  flutter build windows --release ==" -ForegroundColor Cyan
 & $flutter build windows --release
 if ($LASTEXITCODE -ne 0) { throw "flutter build fallo" }
 
-Write-Host "== 2/4  copiar modelo Parakeet (motor por defecto) junto al exe ==" -ForegroundColor Cyan
+Write-Host "== 2/4  copiar AMBOS modelos junto al exe (todo offline, sin descargas) ==" -ForegroundColor Cyan
 $models = Join-Path $rel 'models'
-# Limpia modelos viejos (p. ej. un ggml-small.bin de un build anterior): flutter
-# build NO limpia models/, y Whisper ya NO se empaqueta (se descarga aparte).
-if (Test-Path $models) {
-    Get-ChildItem $models -Filter '*.bin' -ErrorAction SilentlyContinue | Remove-Item -Force
-}
+if (-not (Test-Path $models)) { New-Item -ItemType Directory $models | Out-Null }
+# Parakeet (motor por defecto)
 $parakeetDst = Join-Path $models 'parakeet'
 if (-not (Test-Path (Join-Path $parakeetSrc 'tokens.txt'))) {
     throw "Falta el modelo Parakeet en native\parakeet (encoder/decoder/joiner/tokens.txt)."
 }
 if (-not (Test-Path $parakeetDst)) { New-Item -ItemType Directory $parakeetDst -Force | Out-Null }
 Copy-Item (Join-Path $parakeetSrc '*') $parakeetDst -Recurse -Force
-# Whisper NO se empaqueta: se descarga bajo demanda desde Ajustes (motor opcional).
+# Whisper (motor alternativo) — TAMBIEN empaquetado: el usuario NO descarga nada.
+if (-not (Test-Path $whisperModel)) { throw "Falta el modelo Whisper en native\whisper\models\ggml-small.bin" }
+Copy-Item $whisperModel (Join-Path $models 'ggml-small.bin') -Force
 
 # Runtime de Visual C++ junto al .exe: sin esto la app instala pero NO arranca
 # en un PC limpio (sin VS / sin el redistribuible). App-local = sin admin.
