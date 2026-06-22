@@ -111,7 +111,17 @@ $cmakeArgs = @(
     '-DCMAKE_BUILD_TYPE=Release',
     # No compilamos ejemplos/tests: solo necesitamos las librerias.
     '-DWHISPER_BUILD_EXAMPLES=OFF',
-    '-DWHISPER_BUILD_TESTS=OFF'
+    '-DWHISPER_BUILD_TESTS=OFF',
+    # PORTABILIDAD (CRITICO): sin esto, GGML_NATIVE=ON (el default de ggml)
+    # compila con las instrucciones de ESTA CPU. En una maquina con AVX-512
+    # (p.ej. Ryzen AI/Zen5) generaria un binario que CRASHEA por "instruccion
+    # ilegal" en cualquier PC sin AVX-512. Fijamos un baseline AVX2 (Haswell
+    # 2013+), que cubre practicamente cualquier PC moderno.
+    '-DGGML_NATIVE=OFF',
+    '-DGGML_AVX=ON',
+    '-DGGML_AVX2=ON',
+    '-DGGML_FMA=ON',
+    '-DGGML_F16C=ON'
 )
 
 # --- ACELERACION GPU (Vulkan) -------------------------------------------------

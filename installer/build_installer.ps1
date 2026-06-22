@@ -36,9 +36,11 @@ Copy-Item $model (Join-Path $models 'ggml-small.bin') -Force
 
 # Runtime de Visual C++ junto al .exe: sin esto la app instala pero NO arranca
 # en un PC limpio (sin VS / sin el redistribuible). App-local = sin admin.
+# Incluye vcomp140.dll (OpenMP): ggml-cpu.dll/ggml-base.dll dependen de ella;
+# sin ella whisper NO carga en un PC limpio.
 # ponytail: copiadas de System32 (presentes en la maquina de build); si algun
 # dia compilas en una sin ellas, apunta a VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT.
-foreach ($d in 'msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll') {
+foreach ($d in 'msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll','vcomp140.dll') {
     $src = Join-Path $env:WINDIR "System32\$d"
     if (Test-Path $src) { Copy-Item $src (Join-Path $rel $d) -Force; Write-Host "   + $d" }
     else { throw "Falta $d en System32: el instalador no arrancaria en PCs limpios" }

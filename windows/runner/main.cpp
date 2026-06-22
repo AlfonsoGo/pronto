@@ -2,11 +2,43 @@
 #include <flutter/flutter_view_controller.h>
 #include <windows.h>
 
+#include <cstdio>
+#include <cwchar>
+
 #include "flutter_window.h"
 #include "utils.h"
 
+// Registra en %TEMP%\pronto_crash.log cualquier crash nativo no controlado.
+// Lo importante: EXCEPTION_ILLEGAL_INSTRUCTION (0xC000001D) significa que una
+// DLL usa instrucciones de CPU que el equipo no soporta (p. ej. ggml compilado
+// con AVX-512 corriendo en una CPU sin AVX-512). Convierte un "se cierra sin
+// decir nada" en un diagnostico claro que el usuario nos puede mandar.
+static LONG WINAPI ProntoCrashHandler(EXCEPTION_POINTERS *info) {
+  wchar_t path[MAX_PATH] = {0};
+  ::GetTempPathW(MAX_PATH, path);
+  ::wcsncat_s(path, MAX_PATH, L"pronto_crash.log", _TRUNCATE);
+  HANDLE h = ::CreateFileW(path, FILE_APPEND_DATA, FILE_SHARE_READ, nullptr,
+                           OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+  if (h != INVALID_HANDLE_VALUE) {
+    char buf[160];
+    int len = ::sprintf_s(buf, "Pronto crash: code=0x%08lX addr=0x%p\r\n",
+                          info->ExceptionRecord->ExceptionCode,
+                          info->ExceptionRecord->ExceptionAddress);
+    if (len > 0) {
+      DWORD written = 0;
+      ::SetFilePointer(h, 0, nullptr, FILE_END);
+      ::WriteFile(h, buf, static_cast<DWORD>(len), &written, nullptr);
+    }
+    ::CloseHandle(h);
+  }
+  return EXCEPTION_EXECUTE_HANDLER;
+}
+
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
+  // Lo primero: capturar crashes nativos a un log (ver ProntoCrashHandler).
+  ::SetUnhandledExceptionFilter(ProntoCrashHandler);
+
   // Attach to console when present (e.g., 'flutter run') or create a
   // new console when running with a debugger.
   if (!::AttachConsole(ATTACH_PARENT_PROCESS) && ::IsDebuggerPresent()) {
