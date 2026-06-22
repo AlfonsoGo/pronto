@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
@@ -25,7 +26,9 @@ final dictationControllerProvider =
 /// hotkey down -> grabar -> hotkey up -> transcribir (en isolate) ->
 /// diccionario aprendido -> [LLM opcional] -> insertar -> registrar.
 class DictationController extends Notifier<DictationState> {
-  late final WhisperEngine _engine;
+  // Motor de voz activo (Parakeet o Whisper). Se elige en initialize(), tras
+  // cargar los ajustes persistidos; nulo hasta entonces.
+  WhisperEngine? _engine;
   late final AudioCapture _audio;
   late final TextInjector _injector;
   late final GlobalHotkeyService _hotkeys;
@@ -36,7 +39,6 @@ class DictationController extends Notifier<DictationState> {
 
   @override
   DictationState build() {
-    _engine = ref.read(whisperEngineProvider);
     _audio = ref.read(audioCaptureProvider);
     _injector = ref.read(textInjectorProvider);
     _hotkeys = ref.read(hotkeyServiceProvider);
@@ -68,16 +70,25 @@ class DictationController extends Notifier<DictationState> {
     try {
       await _learning.refresh();
 
+      // Espera a los ajustes persistidos para elegir el motor correcto
+      // (Parakeet por defecto). whisperEngineProvider devuelve ese motor.
+      await ref.read(settingsProvider.notifier).loaded;
+      final engine = ref.read(whisperEngineProvider);
+      _engine = engine;
+
       final path = modelPath ?? await _resolveModelPath();
       if (path != null) {
-        await _engine.load(path);
+        await engine.load(path);
       }
+      _logEngine('engine=${engine.runtimeType} loaded=${engine.isLoaded} '
+          'path=$path');
 
       _levelSub = _audio.amplitude.listen((lvl) {
         state = state.copyWith(level: lvl);
       });
     } catch (e) {
       debugPrint('[TF] init ERROR (modelo/aprendizaje): $e');
+      _logEngine('INIT ERROR: $e');
       state = state.copyWith(
         status: DictationStatus.error,
         error: 'No se pudo inicializar: $e',
@@ -102,8 +113,9 @@ class DictationController extends Notifier<DictationState> {
     }
 
     state = state.copyWith(
-      status:
-          _engine.isLoaded ? DictationStatus.idle : DictationStatus.uninitialized,
+      status: (_engine?.isLoaded ?? false)
+          ? DictationStatus.idle
+          : DictationStatus.uninitialized,
     );
     debugPrint('[TF] init done -> status=${state.status.name}');
   }
@@ -121,7 +133,7 @@ class DictationController extends Notifier<DictationState> {
   }
 
   Future<void> startRecording() async {
-    if (state.isBusy || !_engine.isLoaded) return;
+    if (state.isBusy || !(_engine?.isLoaded ?? false)) return;
     try {
       if (!await _audio.hasPermission()) {
         state = state.copyWith(
@@ -151,8 +163,13 @@ class DictationController extends Notifier<DictationState> {
 
       state = state.copyWith(status: DictationStatus.transcribing, level: 0);
 
+      final engine = _engine;
+      if (engine == null) {
+        state = state.copyWith(status: DictationStatus.idle);
+        return;
+      }
       final initialPrompt = _learning.buildInitialPrompt();
-      final result = await _engine.transcribe(
+      final result = await engine.transcribe(
         pcm,
         language: AppConfig.defaultLanguage,
         initialPrompt: initialPrompt.isEmpty ? null : initialPrompt,
@@ -242,5 +259,19 @@ class DictationController extends Notifier<DictationState> {
       debugPrint('No se pudo resolver la ruta del modelo: $e');
       return null;
     }
+  }
+
+  /// Diagnóstico: registra el resultado de cargar el motor en
+  /// `%TEMP%\pronto_engine.log` (como los logs de crash/update). Útil para
+  /// verificar qué motor cargó sin ver la UI.
+  void _logEngine(String msg) {
+    try {
+      final f = File('${Directory.systemTemp.path}/pronto_engine.log');
+      f.writeAsStringSync(
+        '${DateTime.now().toIso8601String()}  $msg\n',
+        mode: FileMode.append,
+        flush: true,
+      );
+    } catch (_) {}
   }
 }

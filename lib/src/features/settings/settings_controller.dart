@@ -16,6 +16,12 @@ final settingsProvider = NotifierProvider<SettingsController, AppSettings>(
   SettingsController.new,
 );
 
+/// Motor de reconocimiento de voz seleccionable en Ajustes.
+/// - [parakeet]: NVIDIA Parakeet (transducer) vía sherpa-onnx. Rápido, puntúa
+///   solo, mejor con jerga/nombres propios. POR DEFECTO.
+/// - [whisper]: whisper.cpp (modelo small). Acepta biasing por initial_prompt.
+enum SpeechEngine { parakeet, whisper }
+
 /// Modelo inmutable con todos los ajustes persistentes de Pronto.
 ///
 /// Se serializa a una única clave JSON en [SharedPreferences] para mantener
@@ -57,6 +63,9 @@ class AppSettings {
   /// slider en Ajustes.
   final double pillScale;
 
+  /// Motor de voz a usar. Parakeet por defecto.
+  final SpeechEngine engine;
+
   const AppSettings({
     required this.modelFile,
     required this.language,
@@ -69,6 +78,7 @@ class AppSettings {
     required this.captureExternalEdits,
     required this.hotkey,
     this.pillScale = 1.0,
+    this.engine = SpeechEngine.parakeet,
   });
 
   /// Valores por defecto, tomados de [AppConfig] cuando existen.
@@ -99,6 +109,7 @@ class AppSettings {
     bool? captureExternalEdits,
     HotkeyCombo? hotkey,
     double? pillScale,
+    SpeechEngine? engine,
   }) {
     return AppSettings(
       modelFile: modelFile ?? this.modelFile,
@@ -112,6 +123,7 @@ class AppSettings {
       captureExternalEdits: captureExternalEdits ?? this.captureExternalEdits,
       hotkey: hotkey ?? this.hotkey,
       pillScale: pillScale ?? this.pillScale,
+      engine: engine ?? this.engine,
     );
   }
 
@@ -127,6 +139,7 @@ class AppSettings {
         'captureExternalEdits': captureExternalEdits,
         'hotkey': hotkey.toJson(),
         'pillScale': pillScale,
+        'engine': engine.name,
       };
 
   /// Reconstruye desde JSON tolerando claves ausentes o valores inválidos:
@@ -150,7 +163,16 @@ class AppSettings {
           ? HotkeyCombo.fromJson(Map<String, dynamic>.from(j['hotkey'] as Map))
           : d.hotkey,
       pillScale: (j['pillScale'] as num?)?.toDouble() ?? d.pillScale,
+      engine: _engineFromName(j['engine'] as String?) ?? d.engine,
     );
+  }
+
+  static SpeechEngine? _engineFromName(String? name) {
+    if (name == null) return null;
+    for (final v in SpeechEngine.values) {
+      if (v.name == name) return v;
+    }
+    return null;
   }
 
   static InjectionMode? _injectionFromName(String? name) {
@@ -182,7 +204,8 @@ class AppSettings {
       other.llmModel == llmModel &&
       other.captureExternalEdits == captureExternalEdits &&
       other.hotkey == hotkey &&
-      other.pillScale == pillScale;
+      other.pillScale == pillScale &&
+      other.engine == engine;
 
   @override
   int get hashCode => Object.hash(
@@ -197,6 +220,7 @@ class AppSettings {
         captureExternalEdits,
         hotkey,
         pillScale,
+        engine,
       );
 }
 
@@ -208,6 +232,13 @@ class AppSettings {
 class SettingsController extends Notifier<AppSettings> {
   /// Clave única bajo la que se serializa todo el JSON de ajustes.
   static const String _prefsKey = 'app_settings';
+
+  final Completer<void> _loadedCompleter = Completer<void>();
+
+  /// Se completa cuando los ajustes PERSISTIDOS ya se han cargado (o han
+  /// fallado). Útil para que el arranque (p. ej. elegir motor de voz) espere al
+  /// valor real en vez de quedarse con el defecto.
+  Future<void> get loaded => _loadedCompleter.future;
 
   @override
   AppSettings build() {
@@ -228,6 +259,8 @@ class SettingsController extends Notifier<AppSettings> {
     } catch (e) {
       debugPrint('No se pudieron cargar los ajustes: $e');
       // Mantenemos los valores por defecto ya presentes en [state].
+    } finally {
+      if (!_loadedCompleter.isCompleted) _loadedCompleter.complete();
     }
   }
 
@@ -291,6 +324,13 @@ class SettingsController extends Notifier<AppSettings> {
 
   Future<void> setHotkey(HotkeyCombo value) async {
     state = state.copyWith(hotkey: value);
+    await _save();
+  }
+
+  /// Cambia el motor de voz (Parakeet / Whisper). Surte efecto al reiniciar la
+  /// app (el motor se carga al arrancar y queda residente).
+  Future<void> setEngine(SpeechEngine value) async {
+    state = state.copyWith(engine: value);
     await _save();
   }
 

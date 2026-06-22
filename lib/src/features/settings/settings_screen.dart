@@ -1,6 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:http/http.dart' as http;
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
 
+import '../../core/config.dart';
 import '../../platform/global_hotkey_service.dart';
 import '../../platform/text_injector.dart';
 import '../update/update_controller.dart';
@@ -45,6 +51,13 @@ class SettingsScreen extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.symmetric(vertical: 8),
         children: [
+          // --- Motor de voz ---
+          _SectionHeader('Motor de voz', theme: theme),
+          const _EngineTile(),
+          const _WhisperModelTile(),
+
+          const Divider(height: 24),
+
           // --- Transcripción ---
           _SectionHeader('Transcripción', theme: theme),
 
@@ -406,6 +419,167 @@ class _PillSizeTile extends ConsumerWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// Selector del motor de voz (Parakeet / Whisper).
+class _EngineTile extends ConsumerWidget {
+  const _EngineTile();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final engine = ref.watch(settingsProvider.select((s) => s.engine));
+    final ctrl = ref.read(settingsProvider.notifier);
+    return ListTile(
+      title: const Text('Motor de reconocimiento'),
+      subtitle: const Text(
+        'Parakeet: rápido, puntúa solo y entiende mejor la jerga (recomendado).\n'
+        'Cambiar de motor se aplica al reiniciar Pronto.',
+      ),
+      isThreeLine: true,
+      trailing: DropdownButton<SpeechEngine>(
+        value: engine,
+        onChanged: (v) {
+          if (v != null) ctrl.setEngine(v);
+        },
+        items: const [
+          DropdownMenuItem(
+            value: SpeechEngine.parakeet,
+            child: Text('Parakeet'),
+          ),
+          DropdownMenuItem(value: SpeechEngine.whisper, child: Text('Whisper')),
+        ],
+      ),
+    );
+  }
+}
+
+/// Estado/descarga del modelo Whisper. Solo aparece si el motor elegido es
+/// Whisper; como Whisper NO va en el instalador, se descarga aquí bajo demanda
+/// a la carpeta de datos de la app.
+class _WhisperModelTile extends ConsumerStatefulWidget {
+  const _WhisperModelTile();
+
+  @override
+  ConsumerState<_WhisperModelTile> createState() => _WhisperModelTileState();
+}
+
+class _WhisperModelTileState extends ConsumerState<_WhisperModelTile> {
+  bool _present = false;
+  bool _checking = true;
+  bool _downloading = false;
+  double _progress = 0;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _check();
+  }
+
+  Future<String?> _existingPath() async {
+    const file = AppConfig.defaultModelFile;
+    final beside =
+        p.join(p.dirname(Platform.resolvedExecutable), 'models', file);
+    if (File(beside).existsSync()) return beside;
+    final dir = await getApplicationSupportDirectory();
+    final inSupport = p.join(dir.path, 'models', file);
+    if (File(inSupport).existsSync()) return inSupport;
+    return null;
+  }
+
+  Future<void> _check() async {
+    final path = await _existingPath();
+    if (!mounted) return;
+    setState(() {
+      _present = path != null;
+      _checking = false;
+    });
+  }
+
+  Future<void> _download() async {
+    setState(() {
+      _downloading = true;
+      _progress = 0;
+      _error = null;
+    });
+    try {
+      final dir = await getApplicationSupportDirectory();
+      final modelsDir = Directory(p.join(dir.path, 'models'));
+      if (!modelsDir.existsSync()) modelsDir.createSync(recursive: true);
+      final out = File(p.join(modelsDir.path, AppConfig.defaultModelFile));
+      final tmp = File('${out.path}.part');
+
+      final req = http.Request('GET', Uri.parse(AppConfig.whisperModelUrl));
+      final resp = await http.Client().send(req);
+      if (resp.statusCode != 200) throw 'HTTP ${resp.statusCode}';
+      final total = resp.contentLength ?? 0;
+      var received = 0;
+      final sink = tmp.openWrite();
+      await for (final chunk in resp.stream) {
+        sink.add(chunk);
+        received += chunk.length;
+        if (total > 0 && mounted) {
+          setState(() => _progress = received / total);
+        }
+      }
+      await sink.flush();
+      await sink.close();
+      if (out.existsSync()) out.deleteSync();
+      tmp.renameSync(out.path);
+      if (!mounted) return;
+      setState(() {
+        _downloading = false;
+        _present = true;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _downloading = false;
+        _error = 'No se pudo descargar: $e';
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final engine = ref.watch(settingsProvider.select((s) => s.engine));
+    if (engine != SpeechEngine.whisper) return const SizedBox.shrink();
+
+    if (_checking) {
+      return const ListTile(
+        leading: SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+        title: Text('Comprobando modelo Whisper…'),
+      );
+    }
+    if (_downloading) {
+      return ListTile(
+        title: const Text('Descargando modelo Whisper…'),
+        subtitle: LinearProgressIndicator(
+          value: _progress == 0 ? null : _progress,
+        ),
+        trailing: Text('${(_progress * 100).round()}%'),
+      );
+    }
+    if (_present) {
+      return const ListTile(
+        leading: Icon(Icons.check_circle_rounded, color: Color(0xFF34C759)),
+        title: Text('Modelo Whisper listo'),
+        subtitle: Text('Reinicia Pronto para usar Whisper.'),
+      );
+    }
+    return ListTile(
+      leading: const Icon(Icons.download_rounded),
+      title: const Text('Descargar modelo Whisper (~465 MB)'),
+      subtitle: Text(
+        _error ?? 'Whisper no viene incluido; descárgalo para poder usarlo.',
+      ),
+      onTap: _download,
     );
   }
 }

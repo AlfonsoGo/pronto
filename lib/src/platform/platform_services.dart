@@ -11,6 +11,7 @@ import '../features/learning/external_edit_capture.dart';
 import '../features/learning/learning_repository.dart';
 import '../features/learning/learning_service.dart';
 import '../features/settings/settings_controller.dart';
+import '../features/transcription/parakeet_engine.dart';
 import '../features/transcription/whisper_engine_ffi.dart';
 import 'audio_capture.dart';
 import 'clipboard_watcher.dart';
@@ -25,10 +26,15 @@ import 'windows/windows_text_injector.dart';
 /// (ver ROADMAP.md) se añaden las ramas macOS/Linux/Android/iOS aquí, detrás
 /// de las mismas interfaces.
 
+/// Motor de voz activo, según el ajuste [AppSettings.engine]. Se lee como
+/// SNAPSHOT (no reactivo): cambiar de motor surte efecto al REINICIAR, porque
+/// el modelo queda residente desde el arranque. Léelo tras `settings.loaded`.
 final whisperEngineProvider = Provider<WhisperEngine>((ref) {
-  final engine = WhisperEngineFfi();
-  ref.onDispose(engine.dispose);
-  return engine;
+  final engine = ref.read(settingsProvider).engine;
+  final WhisperEngine impl =
+      engine == SpeechEngine.whisper ? WhisperEngineFfi() : ParakeetEngine();
+  ref.onDispose(impl.dispose);
+  return impl;
 });
 
 final textInjectorProvider = Provider<TextInjector>((ref) {
@@ -89,19 +95,26 @@ final appSupportDirProvider = FutureProvider<Directory>((ref) async {
   return dir;
 });
 
-/// Ruta absoluta del modelo Whisper, o null si aún no existe. Busca, por orden:
-///   1) `models/<modelo>` junto al ejecutable (desarrollo y distribución).
-///   2) `models/<modelo>` en la carpeta de datos de la app.
+/// Ruta del modelo del motor ACTIVO, o null si aún no existe. Para Parakeet es
+/// la CARPETA del modelo; para Whisper, el fichero ggml. Busca, por orden:
+///   1) `models/...` junto al ejecutable (distribución).
+///   2) `models/...` en la carpeta de datos de la app (descarga bajo demanda).
 final modelPathResolverProvider = FutureProvider<String?>((ref) async {
-  const file = AppConfig.defaultModelFile;
+  final engine = ref.read(settingsProvider).engine;
+  final exeDir = p.dirname(Platform.resolvedExecutable);
+  final support = await ref.watch(appSupportDirProvider.future);
 
-  final besideExe =
-      p.join(p.dirname(Platform.resolvedExecutable), 'models', file);
-  if (File(besideExe).existsSync()) return besideExe;
+  if (engine == SpeechEngine.parakeet) {
+    for (final base in [exeDir, support.path]) {
+      final dir = p.join(base, 'models', AppConfig.parakeetModelDir);
+      if (File(p.join(dir, ParakeetEngine.tokensFile)).existsSync()) return dir;
+    }
+    return null;
+  }
 
-  final dir = await ref.watch(appSupportDirProvider.future);
-  final inSupport = p.join(dir.path, 'models', file);
-  if (File(inSupport).existsSync()) return inSupport;
-
+  for (final base in [exeDir, support.path]) {
+    final f = p.join(base, 'models', AppConfig.defaultModelFile);
+    if (File(f).existsSync()) return f;
+  }
   return null;
 });

@@ -21,6 +21,16 @@ class AppConfig {
   /// Hilos por defecto para whisper.cpp (0 = auto = núcleos disponibles).
   static const int defaultThreads = 0;
 
+  /// URL de descarga del modelo Whisper (bajo demanda, si el usuario elige el
+  /// motor Whisper y no está empaquetado). Mirror oficial en Hugging Face.
+  static const String whisperModelUrl =
+      'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin';
+
+  // --- Parakeet (motor alternativo, sherpa-onnx) ---
+  /// Subcarpeta dentro de `models/` donde vive el modelo Parakeet (encoder/
+  /// decoder/joiner/tokens). Es el motor POR DEFECTO y va en el instalador.
+  static const String parakeetModelDir = 'parakeet';
+
   // --- Automejora ---
   /// Frecuencia mínima para que un par de corrección se active (anti-ruido).
   static const int minCorrectionFreq = 3;

@@ -35,12 +35,15 @@ build/
 /native/whisper/bin/
 /native/whisper/models/
 /native/whisper/build/
+# Modelo Parakeet (sherpa-onnx, ~640 MB): se copia a native/parakeet/ aparte.
+/native/parakeet/
 *.dll
 *.so
 *.dylib
 *.bin
 *.gguf
 *.ggml
+*.onnx
 
 # Misc
 .DS_Store
