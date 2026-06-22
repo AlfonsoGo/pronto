@@ -34,6 +34,16 @@ $models = Join-Path $rel 'models'
 if (-not (Test-Path $models)) { New-Item -ItemType Directory $models | Out-Null }
 Copy-Item $model (Join-Path $models 'ggml-small.bin') -Force
 
+# Runtime de Visual C++ junto al .exe: sin esto la app instala pero NO arranca
+# en un PC limpio (sin VS / sin el redistribuible). App-local = sin admin.
+# ponytail: copiadas de System32 (presentes en la maquina de build); si algun
+# dia compilas en una sin ellas, apunta a VC\Redist\MSVC\*\x64\Microsoft.VC*.CRT.
+foreach ($d in 'msvcp140.dll','vcruntime140.dll','vcruntime140_1.dll') {
+    $src = Join-Path $env:WINDIR "System32\$d"
+    if (Test-Path $src) { Copy-Item $src (Join-Path $rel $d) -Force; Write-Host "   + $d" }
+    else { throw "Falta $d en System32: el instalador no arrancaria en PCs limpios" }
+}
+
 Write-Host "== 3/4  scrub de privacidad (usuario -> mascara) ==" -ForegroundColor Cyan
 # El AOT de Dart y las DLLs de whisper embeben rutas de build con tu usuario.
 # Las reemplazamos byte a byte por una mascara de la MISMA longitud (sin recompilar).
