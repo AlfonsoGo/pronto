@@ -17,6 +17,10 @@ const Size kPillIdle = Size(50, 50);
 /// así el punto se queda en su sitio y la caja se despliega a su lado.
 const Size kPillExpanded = Size(330, 50);
 
+/// Píldora GRABANDO: algo más ancha que en reposo para que quepa el waveform
+/// (más barritas). Crece hacia la derecha, anclada abajo-izquierda.
+const Size kPillRecording = Size(96, 50);
+
 /// Píldora en modo LECTURA: al pasar el ratón por encima de la caja, se amplía
 /// para leer toda la transcripción (multilínea, con scroll si es larga). Crece
 /// hacia ARRIBA y a la derecha, anclada por la esquina inferior-izquierda, para

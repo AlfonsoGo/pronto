@@ -64,6 +64,9 @@ class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
   /// si moviste la píldora) y se borra al ocultarse.
   Offset? _pillAnchor;
 
+  /// ¿Grabando ahora? Mientras graba, la ventana se ensancha para el waveform.
+  bool _isRecording = false;
+
   @override
   void initState() {
     super.initState();
@@ -107,12 +110,13 @@ class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
   /// con caja y ratón encima → lectura (más grande). Al ocultarse la caja se
   /// borra el ancla para recalcularla la próxima vez.
   void _syncWindowSize(bool visible) {
-    if (!visible) {
-      _applyWindowSize(kPillIdle);
-      _pillAnchor = null;
+    if (visible) {
+      _applyWindowSize(_hovered ? kPillReading : kPillExpanded);
       return;
     }
-    _applyWindowSize(_hovered ? kPillReading : kPillExpanded);
+    // Sin caja: grabando = un poco más ancha (waveform); en reposo = el punto.
+    _applyWindowSize(_isRecording ? kPillRecording : kPillIdle);
+    if (!_isRecording) _pillAnchor = null;
   }
 
   /// Aplica el tamaño anclando la esquina INFERIOR-IZQUIERDA: al crecer en alto
@@ -147,6 +151,7 @@ class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
     final scale = ref.watch(settingsProvider.select((s) => s.pillScale));
     // Nivel de audio real (0-1): alimenta el waveform mientras grabas.
     final level = ref.watch(dictationControllerProvider.select((s) => s.level));
+    final recording = status == DictationStatus.recording;
 
     // Expande/colapsa la ventana según haya o no caja (ver _applyWindowSize).
     ref.listen<bool>(pillPopupProvider.select((p) => p.visible), (_, visible) {
@@ -161,6 +166,16 @@ class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
       }
     });
 
+    // Al empezar/parar de grabar, ensancha/encoge la ventana para el waveform.
+    ref.listen<bool>(
+      dictationControllerProvider
+          .select((s) => s.status == DictationStatus.recording),
+      (_, rec) {
+        _isRecording = rec;
+        if (!ref.read(pillPopupProvider).visible) _syncWindowSize(false);
+      },
+    );
+
     return Scaffold(
       backgroundColor: Colors.transparent,
       body: Align(
@@ -172,7 +187,8 @@ class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             SizedBox(
-              width: 50,
+              // Al grabar, ensancha la zona para que quepa el waveform largo.
+              width: recording ? kPillRecording.width : 50,
               height: 50,
               child: Stack(
                 children: [
@@ -336,36 +352,38 @@ class _RecordingBars extends StatelessWidget {
     required this.scale,
   });
 
+  static const int _count = 9;
+
   @override
   Widget build(BuildContext context) {
     const color = Color(0xFFFF3B30); // rojo · grabando
-    final box = (26.0 * scale).clamp(18.0, 46.0);
-    final lvl = level.clamp(0.0, 1.0);
-    // La voz (RMS) suele venir baja (~0.05-0.25): la amplificamos para que las
-    // barras respondan de verdad a lo que dices.
-    // ponytail: ganancia fija ~5.5; súbela si tu micro va bajo, bájala si satura.
-    final voice = (lvl * 5.5).clamp(0.0, 1.0);
-    // Forma de onda: barras centrales más altas que las de los bordes.
-    const shape = [0.5, 0.78, 1.0, 0.78, 0.5];
+    // Área del waveform: largo fijo y cómodo; el alto sí sigue al slider del punto.
+    const w = 84.0;
+    final h = (34.0 * scale).clamp(24.0, 46.0);
+    // La voz (RMS) viene baja (~0.05-0.25): la amplificamos bastante para que se
+    // NOTE mucho al hablar. ponytail: ganancia 6.5; súbela/bájala a gusto.
+    final voice = (level.clamp(0.0, 1.0) * 6.5).clamp(0.0, 1.0);
     return SizedBox(
-      width: box,
-      height: box,
+      width: w,
+      height: h,
       child: AnimatedBuilder(
         animation: animation,
         builder: (context, _) {
           return Row(
             mainAxisAlignment: MainAxisAlignment.center,
-            children: List.generate(5, (i) {
-              // Micro-movimiento para que no quede plano en silencio; tu voz
-              // (voice * forma) es lo que domina la altura.
-              final phase = animation.value * 2 * math.pi + i * 1.1;
-              final idle = 0.05 * (0.5 + 0.5 * math.sin(phase));
-              final h =
-                  (box * (0.14 + idle + voice * shape[i] * 0.82)).clamp(3.0, box);
+            children: List.generate(_count, (i) {
+              // Forma de campana: las del centro más altas que las de los bordes.
+              final t = (i / (_count - 1)) * 2 - 1; // -1..1
+              final bell = 1.0 - 0.55 * (t * t); // 0.45 (bordes) .. 1 (centro)
+              // Micro-vida en silencio para que no quede plano.
+              final phase = animation.value * 2 * math.pi + i * 0.8;
+              final idle = 0.04 * (0.5 + 0.5 * math.sin(phase));
+              // En silencio MUY bajitas; al hablar casi llenan la altura.
+              final f = (0.10 + idle + voice * bell * 0.90).clamp(0.06, 1.0);
               return Container(
-                width: 2.6 * scale,
-                height: h,
-                margin: EdgeInsets.symmetric(horizontal: 1.0 * scale),
+                width: 4,
+                height: (h * f).clamp(3.0, h),
+                margin: const EdgeInsets.symmetric(horizontal: 2.5),
                 decoration: BoxDecoration(
                   color: color,
                   borderRadius: BorderRadius.circular(2),
