@@ -1,11 +1,11 @@
-name: pronto
+﻿name: pronto
 description: >-
-  Pronto — dictado de voz por IA, open source, para escribir más rápido.
-  Whisper on-device (whisper.cpp), español primero y luego multilingüe,
-  dictado global en cualquier aplicación, con sistema de automejora que
+  Pronto â€” dictado de voz por IA, open source, para escribir mÃ¡s rÃ¡pido.
+  Whisper on-device (whisper.cpp), espaÃ±ol primero y luego multilingÃ¼e,
+  dictado global en cualquier aplicaciÃ³n, con sistema de automejora que
   aprende de tus correcciones.
 publish_to: "none"
-version: 0.5.1+16
+version: 0.6.0+17
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -23,13 +23,13 @@ dependencies:
   # Estado
   flutter_riverpod: ^2.5.1
 
-  # FFI / Win32 (atajo global + inyección de texto)
+  # FFI / Win32 (atajo global + inyecciÃ³n de texto)
   ffi: ^2.1.3
   win32: ^5.5.4
 
   # Captura de audio (PCM16 16 kHz mono en stream).
-  # 7.x usa la federación 2.x (record_linux/record_windows/interface alineados);
-  # las 5.x/6.x tenían record_linux desfasado que rompía la compilación.
+  # 7.x usa la federaciÃ³n 2.x (record_linux/record_windows/interface alineados);
+  # las 5.x/6.x tenÃ­an record_linux desfasado que rompÃ­a la compilaciÃ³n.
   record: ^7.0.0
 
   # Persistencia (SQLite sin codegen) + utilidades de ruta
@@ -44,15 +44,15 @@ dependencies:
   tray_manager: ^0.3.0
   launch_at_startup: ^0.3.0
 
-  # LLM de post-corrección opcional (Ollama local o nube)
+  # LLM de post-correcciÃ³n opcional (Ollama local o nube)
   http: ^1.2.2
 
-  # Versión actual de la app (para el auto-actualizador desde GitHub Releases).
+  # VersiÃ³n actual de la app (para el auto-actualizador desde GitHub Releases).
   package_info_plus: ^8.0.0
 
-  # Motor de voz ALTERNATIVO: NVIDIA Parakeet (transducer) vía sherpa-onnx.
+  # Motor de voz ALTERNATIVO: NVIDIA Parakeet (transducer) vÃ­a sherpa-onnx.
   # Trae las DLLs nativas de Windows prebuilt (dep transitiva sherpa_onnx_windows),
-  # así el build de Flutter las empaqueta solo. Seleccionable en Ajustes.
+  # asÃ­ el build de Flutter las empaqueta solo. Seleccionable en Ajustes.
   sherpa_onnx: ^1.13.3
 
 dev_dependencies:
