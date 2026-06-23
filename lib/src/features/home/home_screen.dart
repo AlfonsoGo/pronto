@@ -70,9 +70,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(dictationControllerProvider);
+    final version = ref.watch(appVersionProvider).valueOrNull;
 
     // Sincroniza el campo editable cuando hay transcripción nueva.
     _syncFieldWithLastText(state);
+
+    final scheme = Theme.of(context).colorScheme;
 
     return Scaffold(
       appBar: AppBar(
@@ -90,6 +93,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               'Pronto',
               style: TextStyle(fontWeight: FontWeight.w700, letterSpacing: 0.2),
             ),
+            if (version != null) ...[
+              const SizedBox(width: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: scheme.primary.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  'v$version',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
+                    color: scheme.primary,
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
         actions: [

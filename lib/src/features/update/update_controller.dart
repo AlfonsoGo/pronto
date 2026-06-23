@@ -74,6 +74,12 @@ class UpdateState {
 final updateProvider =
     NotifierProvider<UpdateController, UpdateState>(UpdateController.new);
 
+/// Versión actual de la app (p. ej. "0.5.0"). Para mostrarla en la cabecera.
+final appVersionProvider = FutureProvider<String>((ref) async {
+  final info = await PackageInfo.fromPlatform();
+  return info.version;
+});
+
 /// Busca releases nuevas en GitHub, avisa y, a petición, descarga el instalador
 /// y lo lanza en silencio para actualizar la app (y reiniciarla).
 class UpdateController extends Notifier<UpdateState> {
