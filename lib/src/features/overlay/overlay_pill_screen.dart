@@ -341,6 +341,12 @@ class _RecordingBars extends StatelessWidget {
     const color = Color(0xFFFF3B30); // rojo · grabando
     final box = (26.0 * scale).clamp(18.0, 46.0);
     final lvl = level.clamp(0.0, 1.0);
+    // La voz (RMS) suele venir baja (~0.05-0.25): la amplificamos para que las
+    // barras respondan de verdad a lo que dices.
+    // ponytail: ganancia fija ~5.5; súbela si tu micro va bajo, bájala si satura.
+    final voice = (lvl * 5.5).clamp(0.0, 1.0);
+    // Forma de onda: barras centrales más altas que las de los bordes.
+    const shape = [0.5, 0.78, 1.0, 0.78, 0.5];
     return SizedBox(
       width: box,
       height: box,
@@ -350,10 +356,12 @@ class _RecordingBars extends StatelessWidget {
           return Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: List.generate(5, (i) {
-              final phase = animation.value * 2 * math.pi + i * 0.9;
-              final wobble = 0.45 + 0.55 * (0.5 + 0.5 * math.sin(phase));
-              final amp = (0.16 + lvl * 0.95) * wobble;
-              final h = (box * (0.16 + amp)).clamp(3.0, box);
+              // Micro-movimiento para que no quede plano en silencio; tu voz
+              // (voice * forma) es lo que domina la altura.
+              final phase = animation.value * 2 * math.pi + i * 1.1;
+              final idle = 0.05 * (0.5 + 0.5 * math.sin(phase));
+              final h =
+                  (box * (0.14 + idle + voice * shape[i] * 0.82)).clamp(3.0, box);
               return Container(
                 width: 2.6 * scale,
                 height: h,
