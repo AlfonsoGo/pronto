@@ -145,6 +145,8 @@ class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
     final updateAvailable =
         ref.watch(updateProvider.select((u) => u.isAvailable));
     final scale = ref.watch(settingsProvider.select((s) => s.pillScale));
+    // Nivel de audio real (0-1): alimenta el waveform mientras grabas.
+    final level = ref.watch(dictationControllerProvider.select((s) => s.level));
 
     // Expande/colapsa la ventana según haya o no caja (ver _applyWindowSize).
     ref.listen<bool>(pillPopupProvider.select((p) => p.visible), (_, visible) {
@@ -177,6 +179,7 @@ class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
                   _StatusLight(
                     status: status,
                     scale: scale,
+                    level: level,
                     onOpenPanel: () =>
                         ref.read(windowModeProvider.notifier).toPanel(),
                   ),
@@ -209,11 +212,13 @@ class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
 class _StatusLight extends StatefulWidget {
   final DictationStatus status;
   final double scale;
+  final double level;
   final VoidCallback onOpenPanel;
 
   const _StatusLight({
     required this.status,
     required this.scale,
+    required this.level,
     required this.onOpenPanel,
   });
 
@@ -250,14 +255,20 @@ class _StatusLightState extends State<_StatusLight>
       onTap: widget.onOpenPanel,
       onPanStart: (_) => windowManager.startDragging(),
       child: Center(
-        child: _thinking(status)
-            ? _ThinkingRing(color: color, scale: widget.scale)
-            : _Dot(
-                color: color,
+        child: status == DictationStatus.recording
+            ? _RecordingBars(
+                level: widget.level,
                 animation: _anim,
-                glowing: _animated(status),
                 scale: widget.scale,
-              ),
+              )
+            : _thinking(status)
+                ? _ThinkingRing(color: color, scale: widget.scale)
+                : _Dot(
+                    color: color,
+                    animation: _anim,
+                    glowing: _animated(status),
+                    scale: widget.scale,
+                  ),
       ),
     );
   }
@@ -307,6 +318,55 @@ class _Dot extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// Mini-waveform (5 barras) mientras se graba: las barras crecen con el NIVEL
+/// de audio real ([level], 0-1) y se mueven con una onda para dar vida. Sustituye
+/// al pulso decorativo: ahora ves de un vistazo que el micro te capta.
+class _RecordingBars extends StatelessWidget {
+  final double level;
+  final Animation<double> animation;
+  final double scale;
+
+  const _RecordingBars({
+    required this.level,
+    required this.animation,
+    required this.scale,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    const color = Color(0xFFFF3B30); // rojo · grabando
+    final box = (26.0 * scale).clamp(18.0, 46.0);
+    final lvl = level.clamp(0.0, 1.0);
+    return SizedBox(
+      width: box,
+      height: box,
+      child: AnimatedBuilder(
+        animation: animation,
+        builder: (context, _) {
+          return Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: List.generate(5, (i) {
+              final phase = animation.value * 2 * math.pi + i * 0.9;
+              final wobble = 0.45 + 0.55 * (0.5 + 0.5 * math.sin(phase));
+              final amp = (0.16 + lvl * 0.95) * wobble;
+              final h = (box * (0.16 + amp)).clamp(3.0, box);
+              return Container(
+                width: 2.6 * scale,
+                height: h,
+                margin: EdgeInsets.symmetric(horizontal: 1.0 * scale),
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              );
+            }),
+          );
+        },
+      ),
     );
   }
 }

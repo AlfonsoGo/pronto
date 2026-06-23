@@ -44,18 +44,18 @@ class WindowsTextInjector implements TextInjector {
   static const Duration _pasteSettleDelay = Duration(milliseconds: 150);
 
   @override
-  Future<void> insert(
+  Future<InjectionResult> insert(
     String text, {
     InjectionMode mode = InjectionMode.clipboardPaste,
   }) async {
     // Nada que insertar: evitamos tocar el portapapeles o el teclado.
-    if (text.isEmpty) return;
+    if (text.isEmpty) return InjectionResult.ok;
 
     switch (mode) {
       case InjectionMode.clipboardPaste:
-        await _insertViaClipboard(text);
+        return _insertViaClipboard(text);
       case InjectionMode.unicodeSendInput:
-        _insertViaUnicodeSendInput(text);
+        return _insertViaUnicodeSendInput(text);
     }
   }
 
@@ -65,34 +65,32 @@ class WindowsTextInjector implements TextInjector {
 
   /// Coloca [text] en el portapapeles, simula Ctrl+V y restaura el contenido
   /// anterior del portapapeles (solo texto Unicode, CF_UNICODETEXT).
-  Future<void> _insertViaClipboard(String text) async {
-    // 1) Leemos y guardamos el texto que hubiera en el portapapeles para luego
-    //    restaurarlo. Puede ser null si no había texto Unicode (p. ej. una
-    //    imagen, o el portapapeles vacío); en ese caso no restauramos nada.
+  Future<InjectionResult> _insertViaClipboard(String text) async {
+    // 1) Leemos y guardamos el texto previo para restaurarlo si todo va bien.
     final String? portapapelesPrevio = _leerTextoDelPortapapeles();
 
     // 2) Escribimos nuestro texto en el portapapeles.
-    final bool escrito = _escribirTextoEnPortapapeles(text);
-    if (!escrito) {
-      throw const TextInjectionException(
-        'No se pudo escribir el texto en el portapapeles de Windows.',
-      );
+    if (!_escribirTextoEnPortapapeles(text)) {
+      // Otra app tiene el portapapeles bloqueado. El llamador dejará el texto
+      // por la vía de Flutter y avisará (fallback "copiado, pulsa Ctrl+V").
+      return InjectionResult.blocked;
     }
 
-    // 3) Simulamos Ctrl+V para pegar en la app con foco.
-    //    Si esto falla en silencio, la causa más probable es UIPI (ver aviso
-    //    de cabecera): la app de destino corre elevada.
-    _enviarCtrlV();
+    // 3) Ctrl+V en la app con foco. Si SendInput no mete los 4 eventos, lo más
+    //    probable es UIPI (app de destino elevada): NO restauramos el
+    //    portapapeles, así nuestro texto se queda para pegar a mano.
+    if (!_enviarCtrlV()) {
+      return InjectionResult.blocked;
+    }
 
-    // 4) Esperamos a que la app procese el pegado antes de restaurar.
+    // 4) Damos margen a que la app procese el pegado antes de restaurar.
     await Future<void>.delayed(_pasteSettleDelay);
 
-    // 5) Restauramos el portapapeles previo (si lo había). Si no lo había,
-    //    dejamos nuestro texto: vaciar el portapapeles aquí podría sorprender
-    //    al usuario más que conservar el último texto pegado.
+    // 5) Restauramos el portapapeles previo (si lo había).
     if (portapapelesPrevio != null) {
       _escribirTextoEnPortapapeles(portapapelesPrevio);
     }
+    return InjectionResult.ok;
   }
 
   /// Lee el texto (CF_UNICODETEXT) actual del portapapeles, o `null` si no hay.
@@ -188,8 +186,9 @@ class WindowsTextInjector implements TextInjector {
   }
 
   /// Simula la combinación Ctrl+V mediante SendInput (4 eventos:
-  /// Ctrl abajo, V abajo, V arriba, Ctrl arriba).
-  void _enviarCtrlV() {
+  /// Ctrl abajo, V abajo, V arriba, Ctrl arriba). Devuelve `true` si se
+  /// inyectaron los 4 eventos; `false` indica bloqueo (UIPI / app elevada).
+  bool _enviarCtrlV() {
     const int vKey = 0x56; // Código virtual de la tecla 'V'.
 
     // Reservamos 4 estructuras INPUT contiguas.
@@ -215,18 +214,7 @@ class WindowsTextInjector implements TextInjector {
 
       // cbSize debe ser exactamente sizeOf<INPUT>() o SendInput falla.
       final int enviados = SendInput(4, inputs, sizeOf<INPUT>());
-      // Si enviados != 4 lo más probable es UIPI (app elevada). No lanzamos:
-      // dejamos que el usuario lo perciba; lanzar interrumpiría el flujo de
-      // restauración del portapapeles que ya hicimos en el llamador.
-      if (enviados != 4) {
-        // Diagnóstico no fatal; el bloqueo por UIPI no se refleja en
-        // GetLastError, así que solo informamos del recuento.
-        // ignore: avoid_print
-        print(
-          'Pronto: SendInput(Ctrl+V) insertó $enviados/4 eventos. '
-          'Posible bloqueo UIPI (app con foco elevada).',
-        );
-      }
+      return enviados == 4;
     } finally {
       calloc.free(inputs);
     }
@@ -244,7 +232,7 @@ class WindowsTextInjector implements TextInjector {
   /// por lo que se envían como dos unidades consecutivas, tal y como espera
   /// Windows. Los saltos de línea se envían como VK_RETURN (no como U+000A,
   /// que muchas apps ignorarían).
-  void _insertViaUnicodeSendInput(String text) {
+  InjectionResult _insertViaUnicodeSendInput(String text) {
     // Construimos la lista de eventos: 2 por unidad de código (down/up).
     // Para '\n' usamos VK_RETURN (2 eventos) en lugar de KEYEVENTF_UNICODE.
     // '\r' se omite para no duplicar saltos en secuencias "\r\n".
@@ -256,7 +244,7 @@ class WindowsTextInjector implements TextInjector {
       if (cu == 0x0D) continue; // '\r' ignorado.
       eventCount += 2; // down + up (sea Unicode o VK_RETURN).
     }
-    if (eventCount == 0) return;
+    if (eventCount == 0) return InjectionResult.ok;
 
     final Pointer<INPUT> inputs = calloc<INPUT>(eventCount);
     try {
@@ -290,14 +278,9 @@ class WindowsTextInjector implements TextInjector {
       }
 
       final int enviados = SendInput(eventCount, inputs, sizeOf<INPUT>());
-      if (enviados != eventCount) {
-        // Igual que en Ctrl+V: el fallo silencioso suele ser UIPI.
-        // ignore: avoid_print
-        print(
-          'Pronto: SendInput(Unicode) insertó $enviados/$eventCount eventos. '
-          'Posible bloqueo UIPI (app con foco elevada).',
-        );
-      }
+      return enviados == eventCount
+          ? InjectionResult.ok
+          : InjectionResult.blocked;
     } finally {
       calloc.free(inputs);
     }

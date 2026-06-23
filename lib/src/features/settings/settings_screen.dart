@@ -95,6 +95,16 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ),
 
+          SwitchListTile(
+            title: const Text('Pulir el texto automáticamente'),
+            subtitle: const Text(
+              'Puntuación dictada ("coma", "nueva línea"), signos ¿ ¡, '
+              'mayúsculas y números a dígitos (25 %).',
+            ),
+            value: settings.textPolish,
+            onChanged: controller.setTextPolish,
+          ),
+
           const Divider(height: 24),
 
           // --- Inserción y disparo ---
@@ -156,6 +166,15 @@ class SettingsScreen extends ConsumerWidget {
           // --- Apariencia ---
           _SectionHeader('Apariencia', theme: theme),
           const _PillSizeTile(),
+
+          SwitchListTile(
+            title: const Text('Sonidos al grabar'),
+            subtitle: const Text(
+              'Un tono al empezar y otro al parar de dictar',
+            ),
+            value: settings.sounds,
+            onChanged: controller.setSounds,
+          ),
 
           const Divider(height: 24),
 

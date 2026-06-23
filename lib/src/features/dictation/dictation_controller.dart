@@ -6,9 +6,11 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/config.dart';
+import '../../core/text_polish.dart';
 import '../../platform/audio_capture.dart';
 import '../../platform/global_hotkey_service.dart';
 import '../../platform/platform_services.dart';
+import '../../platform/sounds.dart';
 import '../../platform/text_injector.dart';
 import '../../platform/whisper_engine.dart';
 import '../learning/learning_service.dart';
@@ -144,6 +146,7 @@ class DictationController extends Notifier<DictationState> {
       }
       await _audio.start();
       state = state.copyWith(status: DictationStatus.recording);
+      if (ref.read(settingsProvider).sounds) Sounds.recordStart();
     } catch (e) {
       state = state.copyWith(
         status: DictationStatus.error,
@@ -154,6 +157,7 @@ class DictationController extends Notifier<DictationState> {
 
   Future<void> stopAndProcess() async {
     if (state.status != DictationStatus.recording) return;
+    if (ref.read(settingsProvider).sounds) Sounds.recordStop();
     try {
       final pcm = await _audio.stop();
       if (pcm.isEmpty) {
@@ -184,6 +188,12 @@ class DictationController extends Notifier<DictationState> {
       //    fijar nombres propios antes de que el LLM "normalice" el texto.
       var finalText = _learning.applyDictionary(result.text);
 
+      // 1b) Pulido determinista: puntuación dictada, ortografía ES (¿¡, espacios,
+      //     mayúsculas) y números a dígitos. Para AMBOS motores; conmutable.
+      if (ref.read(settingsProvider).textPolish) {
+        finalText = TextPolish.apply(finalText);
+      }
+
       // 2) Post-corrección LLM (opcional). Hace passthrough si está desactivada
       //    o si la confianza es alta; ante error devuelve el texto sin tocar.
       finalText = await ref
@@ -192,7 +202,7 @@ class DictationController extends Notifier<DictationState> {
 
       // 3) Insertar en la app con foco.
       state = state.copyWith(status: DictationStatus.injecting);
-      await _injector.insert(finalText);
+      final injected = await _injector.insert(finalText);
 
       state = state.copyWith(
         status: DictationStatus.idle,
@@ -200,8 +210,15 @@ class DictationController extends Notifier<DictationState> {
         lastText: finalText,
       );
 
-      // Muestra la cajita con la transcripción a la derecha del punto (píldora).
-      ref.read(pillPopupProvider.notifier).showTranscription(finalText);
+      // Píldora: si la inserción quedó bloqueada (app elevada/foco perdido),
+      // dejamos el texto en el portapapeles y avisamos para pegarlo a mano; si
+      // fue bien, mostramos la transcripción normal.
+      if (injected == InjectionResult.blocked) {
+        await Clipboard.setData(ClipboardData(text: finalText));
+        ref.read(pillPopupProvider.notifier).showCopied(finalText);
+      } else {
+        ref.read(pillPopupProvider.notifier).showTranscription(finalText);
+      }
 
       // Arma la captura de ediciones externas: si el usuario corrige el texto
       // en su app y lo copia, lo aprenderemos (no-op si está desactivada).

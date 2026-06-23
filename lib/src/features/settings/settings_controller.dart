@@ -66,6 +66,13 @@ class AppSettings {
   /// Motor de voz a usar. Parakeet por defecto.
   final SpeechEngine engine;
 
+  /// Pulir el texto dictado: puntuación dictada, ortografía ES (¿¡, espacios,
+  /// mayúsculas) y números a dígitos. Determinista, para ambos motores.
+  final bool textPolish;
+
+  /// Reproducir un sonido corto al empezar y parar de grabar.
+  final bool sounds;
+
   const AppSettings({
     required this.modelFile,
     required this.language,
@@ -79,6 +86,8 @@ class AppSettings {
     required this.hotkey,
     this.pillScale = 1.0,
     this.engine = SpeechEngine.parakeet,
+    this.textPolish = true,
+    this.sounds = true,
   });
 
   /// Valores por defecto, tomados de [AppConfig] cuando existen.
@@ -110,6 +119,8 @@ class AppSettings {
     HotkeyCombo? hotkey,
     double? pillScale,
     SpeechEngine? engine,
+    bool? textPolish,
+    bool? sounds,
   }) {
     return AppSettings(
       modelFile: modelFile ?? this.modelFile,
@@ -124,6 +135,8 @@ class AppSettings {
       hotkey: hotkey ?? this.hotkey,
       pillScale: pillScale ?? this.pillScale,
       engine: engine ?? this.engine,
+      textPolish: textPolish ?? this.textPolish,
+      sounds: sounds ?? this.sounds,
     );
   }
 
@@ -140,6 +153,8 @@ class AppSettings {
         'hotkey': hotkey.toJson(),
         'pillScale': pillScale,
         'engine': engine.name,
+        'textPolish': textPolish,
+        'sounds': sounds,
       };
 
   /// Reconstruye desde JSON tolerando claves ausentes o valores inválidos:
@@ -164,6 +179,8 @@ class AppSettings {
           : d.hotkey,
       pillScale: (j['pillScale'] as num?)?.toDouble() ?? d.pillScale,
       engine: _engineFromName(j['engine'] as String?) ?? d.engine,
+      textPolish: j['textPolish'] as bool? ?? d.textPolish,
+      sounds: j['sounds'] as bool? ?? d.sounds,
     );
   }
 
@@ -205,7 +222,9 @@ class AppSettings {
       other.captureExternalEdits == captureExternalEdits &&
       other.hotkey == hotkey &&
       other.pillScale == pillScale &&
-      other.engine == engine;
+      other.engine == engine &&
+      other.textPolish == textPolish &&
+      other.sounds == sounds;
 
   @override
   int get hashCode => Object.hash(
@@ -221,6 +240,8 @@ class AppSettings {
         hotkey,
         pillScale,
         engine,
+        textPolish,
+        sounds,
       );
 }
 
@@ -331,6 +352,16 @@ class SettingsController extends Notifier<AppSettings> {
   /// app (el motor se carga al arrancar y queda residente).
   Future<void> setEngine(SpeechEngine value) async {
     state = state.copyWith(engine: value);
+    await _save();
+  }
+
+  Future<void> setTextPolish(bool value) async {
+    state = state.copyWith(textPolish: value);
+    await _save();
+  }
+
+  Future<void> setSounds(bool value) async {
+    state = state.copyWith(sounds: value);
     await _save();
   }
 
