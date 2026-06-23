@@ -278,7 +278,7 @@ class _StatusLightState extends State<_StatusLight>
                 scale: widget.scale,
               )
             : _thinking(status)
-                ? _ThinkingRing(color: color, scale: widget.scale)
+                ? _ThinkingRing(scale: widget.scale)
                 : _Dot(
                     color: color,
                     animation: _anim,
@@ -309,9 +309,9 @@ class _Dot extends StatelessWidget {
     return AnimatedBuilder(
       animation: animation,
       builder: (context, _) {
-        final pulse =
-            glowing ? (0.5 + 0.5 * math.sin(animation.value * 2 * math.pi)) : 0.0;
-        final size = (glowing ? (15 + 3 * pulse) : 13.0) * scale;
+        // El punto siempre respira; fuerte cuando hay actividad, suave en reposo.
+        final pulse = 0.5 + 0.5 * math.sin(animation.value * 2 * math.pi);
+        final size = (glowing ? (15 + 3 * pulse) : (12.5 + 1.0 * pulse)) * scale;
         return Container(
           width: size,
           height: size,
@@ -322,15 +322,15 @@ class _Dot extends StatelessWidget {
               color: Colors.white.withValues(alpha: 0.28),
               width: 1,
             ),
-            boxShadow: glowing
-                ? [
-                    BoxShadow(
-                      color: color.withValues(alpha: 0.35 + 0.4 * pulse),
-                      blurRadius: 6 + 6 * pulse,
-                      spreadRadius: 1 + 1.5 * pulse,
-                    ),
-                  ]
-                : null,
+            boxShadow: [
+              BoxShadow(
+                color: color.withValues(
+                  alpha: glowing ? (0.35 + 0.4 * pulse) : (0.18 + 0.14 * pulse),
+                ),
+                blurRadius: glowing ? (6 + 6 * pulse) : (4 + 3 * pulse),
+                spreadRadius: glowing ? (1 + 1.5 * pulse) : 0.5,
+              ),
+            ],
           ),
         );
       },
@@ -352,41 +352,60 @@ class _RecordingBars extends StatelessWidget {
     required this.scale,
   });
 
-  static const int _count = 9;
+  static const int _count = 17;
 
   @override
   Widget build(BuildContext context) {
-    const color = Color(0xFFFF3B30); // rojo · grabando
     // Área del waveform: largo fijo y cómodo; el alto sí sigue al slider del punto.
     const w = 84.0;
     final h = (34.0 * scale).clamp(24.0, 46.0);
-    // La voz (RMS) viene baja (~0.05-0.25): la amplificamos bastante para que se
-    // NOTE mucho al hablar. ponytail: ganancia 6.5; súbela/bájala a gusto.
-    final voice = (level.clamp(0.0, 1.0) * 6.5).clamp(0.0, 1.0);
+    // La voz (RMS) viene baja (~0.05-0.25): la amplificamos bastante para que las
+    // ondas SE MUEVAN mucho al hablar. ponytail: ganancia 7.5; ajústala a gusto.
+    final voice = (level.clamp(0.0, 1.0) * 7.5).clamp(0.0, 1.0);
     return SizedBox(
       width: w,
       height: h,
       child: AnimatedBuilder(
         animation: animation,
         builder: (context, _) {
+          // Tiempo cíclico (0..2π): el bucle de la animación no da saltos.
+          final t = animation.value * 2 * math.pi;
           return Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: List.generate(_count, (i) {
-              // Forma de campana: las del centro más altas que las de los bordes.
-              final t = (i / (_count - 1)) * 2 - 1; // -1..1
-              final bell = 1.0 - 0.55 * (t * t); // 0.45 (bordes) .. 1 (centro)
-              // Micro-vida en silencio para que no quede plano.
-              final phase = animation.value * 2 * math.pi + i * 0.8;
-              final idle = 0.04 * (0.5 + 0.5 * math.sin(phase));
-              // En silencio MUY bajitas; al hablar casi llenan la altura.
-              final f = (0.10 + idle + voice * bell * 0.90).clamp(0.06, 1.0);
+              final frac = i / (_count - 1);
+              // Campana: las del centro más altas que las de los bordes.
+              final bell = 0.55 + 0.45 * math.sin(frac * math.pi);
+              // Movimiento multi-frecuencia (varias ondas superpuestas) = vida
+              // orgánica, como el Voice Wave. Fases enteras → bucle sin costuras.
+              final phase = i * 0.45;
+              final a = math.sin(2 * t + phase);
+              final b = math.sin(3 * t + phase * 1.7 + 1.3);
+              final c = math.sin(1 * t + phase * 0.6);
+              final motion = (a * 0.5 + b * 0.3 + c * 0.4 + 1.2) / 2.4; // 0..1
+              // Silencio: leve parpadeo bajito. Al hablar: la voz amplía altura
+              // Y energía del movimiento, así las ondas se mueven mucho más.
+              final idle = 0.06 + 0.05 * motion;
+              final f = (idle + voice * bell * (0.25 + 0.75 * motion))
+                  .clamp(0.05, 1.0);
+              // Degradado rojo→morado a lo largo de la fila (estilo Voice Wave).
+              final hue = 350.0 - frac * 60.0; // 350 (rojo) → 290 (morado)
+              final light = (0.52 + f * 0.14).clamp(0.0, 1.0);
+              final color = HSLColor.fromAHSL(1, hue, 0.88, light).toColor();
               return Container(
-                width: 4,
-                height: (h * f).clamp(3.0, h),
-                margin: const EdgeInsets.symmetric(horizontal: 2.5),
+                width: 2.6,
+                height: (h * f).clamp(2.5, h),
+                margin: const EdgeInsets.symmetric(horizontal: 1.1),
                 decoration: BoxDecoration(
                   color: color,
-                  borderRadius: BorderRadius.circular(2),
+                  borderRadius: BorderRadius.circular(999),
+                  // Resplandor que crece con la voz (estilo neón del Voice Wave).
+                  boxShadow: [
+                    BoxShadow(
+                      color: color.withValues(alpha: 0.35 + f * 0.35),
+                      blurRadius: 2 + f * 4,
+                    ),
+                  ],
                 ),
               );
             }),
@@ -397,39 +416,52 @@ class _RecordingBars extends StatelessWidget {
   }
 }
 
-/// Aro giratorio (estilo loading) alrededor de un punto, para el estado
-/// "pensando/escribiendo".
+/// Doble aro giratorio (amarillo + morado) para el estado "pensando/escribiendo".
 class _ThinkingRing extends StatelessWidget {
-  final Color color;
   final double scale;
 
-  const _ThinkingRing({required this.color, required this.scale});
+  const _ThinkingRing({required this.scale});
+
+  static const _yellow = Color(0xFFFDE047);
+  static const _violet = Color(0xFFA78BFA);
 
   @override
   Widget build(BuildContext context) {
     // Cap a 46 para que quepa en la ventana de la píldora (50px) a escalas altas.
     final ring = (30.0 * scale).clamp(20.0, 46.0);
-    final inner = (11.0 * scale).clamp(7.0, 17.0);
+    final inner = (10.0 * scale).clamp(6.0, 15.0);
     return SizedBox(
       width: ring,
       height: ring,
       child: Stack(
         alignment: Alignment.center,
         children: [
-          // El aro indeterminado gira solo (loading).
+          // Aro exterior amarillo.
           SizedBox(
             width: ring,
             height: ring,
             child: CircularProgressIndicator(
               strokeWidth: 2.6,
-              valueColor: AlwaysStoppedAnimation(color),
-              backgroundColor: color.withValues(alpha: 0.15),
+              valueColor: const AlwaysStoppedAnimation(_yellow),
+              backgroundColor: _yellow.withValues(alpha: 0.12),
+            ),
+          ),
+          // Aro interior morado.
+          SizedBox(
+            width: ring - 8,
+            height: ring - 8,
+            child: const CircularProgressIndicator(
+              strokeWidth: 2.4,
+              valueColor: AlwaysStoppedAnimation(_violet),
             ),
           ),
           Container(
             width: inner,
             height: inner,
-            decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+            decoration: const BoxDecoration(
+              shape: BoxShape.circle,
+              color: _violet,
+            ),
           ),
         ],
       ),

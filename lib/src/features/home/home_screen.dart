@@ -309,12 +309,27 @@ class _BotonProbarDictado extends ConsumerWidget {
         duration: const Duration(milliseconds: 200),
         height: 56,
         decoration: BoxDecoration(
+          // Gradiente morado del diseño cuando está activo; rojo al grabar.
+          gradient: habilitado && !grabando
+              ? const LinearGradient(
+                  colors: [Color(0xFF8B5CF6), Color(0xFF6D28D9)],
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                )
+              : null,
           color: grabando
               ? const Color(0xFFE5484D)
-              : (habilitado
-                  ? scheme.primaryContainer
-                  : scheme.surfaceContainerHighest),
+              : (habilitado ? null : scheme.surfaceContainerHighest),
           borderRadius: BorderRadius.circular(14),
+          boxShadow: habilitado && !grabando
+              ? [
+                  BoxShadow(
+                    color: const Color(0xFF6D28D9).withValues(alpha: 0.4),
+                    blurRadius: 18,
+                    offset: const Offset(0, 6),
+                  ),
+                ]
+              : null,
         ),
         alignment: Alignment.center,
         child: Row(
