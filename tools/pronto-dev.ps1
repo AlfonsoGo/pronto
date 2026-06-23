@@ -20,6 +20,12 @@ $whisperModel = Join-Path $proj 'native\whisper\models\ggml-small.bin'
 $sha = (& git -C $proj rev-parse --short HEAD 2>$null)
 $buildId = if ($sha) { "$sha".Trim() } else { (Get-Date -Format 'HHmm') }
 
+# Cierra cualquier Pronto en marcha (prod o un DEV anterior) ANTES de compilar:
+# si no, bloquea pronto.exe/DLLs del Release y la copia o el build fallan
+# (instancia única).
+Get-Process pronto -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Start-Sleep -Milliseconds 500
+
 Write-Host "== Compilando Pronto DEV ($buildId) ==" -ForegroundColor Cyan
 & $flutter build windows --release "--dart-define=PRONTO_CHANNEL=dev" "--dart-define=PRONTO_BUILD_ID=$buildId"
 if ($LASTEXITCODE -ne 0) { throw "flutter build fallo" }
