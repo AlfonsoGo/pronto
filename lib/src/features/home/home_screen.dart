@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../common/dictation_pill.dart';
+import '../../core/build_channel.dart';
 import '../../platform/global_hotkey_service.dart';
 import '../dictation/dictation_controller.dart';
 import '../dictation/dictation_state.dart';
@@ -107,6 +108,26 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     fontSize: 12.5,
                     fontWeight: FontWeight.w600,
                     color: scheme.primary,
+                  ),
+                ),
+              ),
+            ],
+            // Badge solo en builds locales de pruebas (PRONTO_CHANNEL=dev).
+            if (kIsDev) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFF9500),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  kBuildId.isEmpty ? 'DEV' : 'DEV · $kBuildId',
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.white,
+                    letterSpacing: 0.5,
                   ),
                 ),
               ),
