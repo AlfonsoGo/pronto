@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../dictation/dictation_controller.dart';
+import '../dictation/dictation_state.dart';
 import '../overlay/window_mode_controller.dart';
 import 'parakeet_model_downloader.dart';
 
@@ -9,22 +12,32 @@ import 'parakeet_model_downloader.dart';
 /// marca, el mensaje y la barra de progreso, centrado en pantalla.
 const Size _kSplashSize = Size(440, 320);
 
-/// Se pone en `true` cuando el modelo ya está listo (presente o descargado) y
-/// la app puede continuar al arranque normal (píldora/panel).
+/// Pref que marca que el motor ya se preparó con éxito al menos una vez. A
+/// partir de ahí, los arranques normales NO muestran el splash (el motor carga
+/// en segundo plano en unos segundos). Solo se re-muestra si falta el modelo
+/// (p. ej. reinstalación o datos borrados).
+const String _kReadyOnceKey = 'pronto_engine_ready_once';
+
+/// Se pone en `true` cuando Pronto está LISTO para dictar: modelo descargado Y
+/// motor cargado en memoria. Gatea el cierre del splash.
 final modelReadyProvider = StateProvider<bool>((ref) => false);
 
-/// Comprobación de arranque: ¿está el modelo Parakeet completo en disco? Se
-/// resuelve una vez al abrir la app y gatea el splash. Mientras carga (o si
-/// falla la comprobación) asumimos "presente" para NO tapar la app con el
-/// splash por error.
-final modelPresentProvider = FutureProvider<bool>((ref) async {
-  return (await ParakeetModelDownloader.resolveModelDir()) != null;
+/// ¿Debe mostrarse el splash al arrancar? Sí cuando falta el modelo (hay que
+/// descargarlo) o en el primer arranque logrado (para cubrir la precarga del
+/// motor con una pantalla de espera en vez de una píldora gris). Mientras se
+/// resuelve devuelve null → no se decide aún (evita parpadeo).
+final shouldSplashProvider = FutureProvider<bool>((ref) async {
+  final present = (await ParakeetModelDownloader.resolveModelDir()) != null;
+  if (!present) return true; // falta el modelo → descarga obligatoria
+  final prefs = await SharedPreferences.getInstance();
+  return !(prefs.getBool(_kReadyOnceKey) ?? false);
 });
 
-/// Pantalla de carga de primer arranque, on-brand. Aparece SOLO cuando falta el
-/// modelo de voz: agranda y opaca la ventana (que en marcha normal es una
-/// píldora transparente sin marco), descarga el modelo mostrando una barra de
-/// progreso MORADA y, al terminar, restaura la píldora y deja seguir a la app.
+/// Pantalla de carga on-brand de instalación/primer arranque. La app NO se abre
+/// hasta que TODO está listo: descarga el modelo si falta y LUEGO precarga el
+/// motor (lo carga en memoria). Agranda y opaca la ventana (que en marcha normal
+/// es una píldora transparente sin marco), muestra una barra de progreso MORADA
+/// y, al terminar, restaura la píldora y deja seguir a la app.
 class SplashScreen extends ConsumerStatefulWidget {
   const SplashScreen({super.key});
 
@@ -33,14 +46,17 @@ class SplashScreen extends ConsumerStatefulWidget {
 }
 
 class _SplashScreenState extends ConsumerState<SplashScreen> {
+  /// Fase visible: false = descargando el modelo; true = precargando el motor.
+  bool _precargando = false;
+
   @override
   void initState() {
     super.initState();
-    // Preparamos la ventana para el splash y arrancamos la descarga tras el
-    // primer frame (necesitamos el árbol montado para navegar/leer providers).
+    // Preparamos la ventana y arrancamos el flujo tras el primer frame
+    // (necesitamos el árbol montado para leer providers / navegar).
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       await _prepararVentana();
-      await _descargar();
+      await _flujo();
     });
   }
 
@@ -62,22 +78,49 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
     }
   }
 
-  Future<void> _descargar() async {
-    await ref.read(parakeetDownloaderProvider.notifier).ensureModel();
-    if (!mounted) return;
-    final state = ref.read(parakeetDownloaderProvider);
-    if (state.phase == DownloadPhase.listo) {
-      await _continuar();
+  /// Prepara TODO antes de abrir Pronto: descarga (si falta) + precarga del motor.
+  Future<void> _flujo() async {
+    // 1) Descarga solo si falta el modelo.
+    final presente = (await ParakeetModelDownloader.resolveModelDir()) != null;
+    if (!presente) {
+      await ref.read(parakeetDownloaderProvider.notifier).ensureModel();
+      if (!mounted) return;
+      if (ref.read(parakeetDownloaderProvider).phase != DownloadPhase.listo) {
+        return; // error de descarga → se muestra el estado con "Reintentar"
+      }
     }
+    // 2) Precarga del motor: NO abrimos hasta que esté listo para dictar.
+    await _precargarMotor();
   }
 
-  /// Modelo listo: volvemos al modo píldora y dejamos que la app arranque.
+  /// Instancia el motor (dispara la carga del modelo en un isolate) y espera a
+  /// que quede LISTO (el estado deja de ser "uninitialized"). Con tope de tiempo
+  /// para no quedarnos atascados si el motor fallara.
+  Future<void> _precargarMotor() async {
+    if (!mounted) return;
+    setState(() => _precargando = true);
+    // Leer el controlador dispara su initialize() → carga del modelo en memoria.
+    ref.read(dictationControllerProvider);
+    final tope = DateTime.now().add(const Duration(seconds: 60));
+    while (mounted && DateTime.now().isBefore(tope)) {
+      final st = ref.read(dictationControllerProvider).status;
+      if (st != DictationStatus.uninitialized) break; // idle (listo) o error
+      await Future<void>.delayed(const Duration(milliseconds: 150));
+    }
+    if (!mounted) return;
+    await _continuar();
+  }
+
+  /// Todo listo: marca el "ready once", vuelve al modo píldora y deja arrancar.
   Future<void> _continuar() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_kReadyOnceKey, true);
+    } catch (_) {}
     try {
       await ref.read(windowModeProvider.notifier).toPill();
     } catch (_) {
-      // Aunque falle el ajuste de ventana, marcamos el modelo como listo para
-      // no dejar al usuario atascado en el splash.
+      // Aunque falle el ajuste de ventana, marcamos listo para no atascar.
     }
     if (!mounted) return;
     ref.read(modelReadyProvider.notifier).state = true;
@@ -89,6 +132,15 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
   Widget build(BuildContext context) {
     final state = ref.watch(parakeetDownloaderProvider);
     final esError = state.phase == DownloadPhase.error;
+
+    final String subtitulo;
+    if (esError) {
+      subtitulo = state.error ?? 'Error de descarga';
+    } else if (_precargando) {
+      subtitulo = 'Cargando el motor de voz… ya casi está.';
+    } else {
+      subtitulo = 'Descargando el modelo de voz (solo la primera vez)…';
+    }
 
     return Scaffold(
       backgroundColor: const Color(0xFF0B0810),
@@ -115,9 +167,7 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                esError
-                    ? 'No se pudo preparar Pronto'
-                    : 'Preparando Pronto…',
+                esError ? 'No se pudo preparar Pronto' : 'Preparando Pronto…',
                 style: const TextStyle(
                   color: Color(0xFFF5F3FF),
                   fontSize: 15,
@@ -126,26 +176,26 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
               ),
               const SizedBox(height: 4),
               Text(
-                esError
-                    ? (state.error ?? 'Error de descarga')
-                    : 'Descargando el modelo de voz (solo la primera vez)…',
+                subtitulo,
                 textAlign: TextAlign.center,
                 style: const TextStyle(color: Color(0xFF9C93AE), fontSize: 12),
               ),
               const SizedBox(height: 28),
-
               if (esError)
                 FilledButton.icon(
-                  onPressed: _descargar,
+                  onPressed: _flujo,
                   icon: const Icon(Icons.refresh_rounded),
                   label: const Text('Reintentar'),
                 )
               else ...[
-                // Barra de progreso MORADA (determinada mientras haya total).
+                // Barra de progreso MORADA: determinada en descarga (con total),
+                // indeterminada en la precarga del motor.
                 ClipRRect(
                   borderRadius: BorderRadius.circular(6),
                   child: LinearProgressIndicator(
-                    value: state.totalBytes > 0 ? state.progress : null,
+                    value: _precargando
+                        ? null
+                        : (state.totalBytes > 0 ? state.progress : null),
                     minHeight: 8,
                     backgroundColor: const Color(0xFF161021),
                     valueColor: const AlwaysStoppedAnimation<Color>(
@@ -155,14 +205,13 @@ class _SplashScreenState extends ConsumerState<SplashScreen> {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  state.totalBytes > 0
-                      ? '${_mb(state.receivedBytes)} / ${_mb(state.totalBytes)} MB'
-                          '${state.currentFile != null ? '  ·  ${state.currentFile}' : ''}'
-                      : 'Calculando descarga…',
-                  style: const TextStyle(
-                    color: Color(0xFFA78BFA),
-                    fontSize: 12,
-                  ),
+                  _precargando
+                      ? 'Cargando en memoria…'
+                      : (state.totalBytes > 0
+                          ? '${_mb(state.receivedBytes)} / ${_mb(state.totalBytes)} MB'
+                              '${state.currentFile != null ? '  ·  ${state.currentFile}' : ''}'
+                          : 'Calculando descarga…'),
+                  style: const TextStyle(color: Color(0xFFA78BFA), fontSize: 12),
                 ),
               ],
             ],

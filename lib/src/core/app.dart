@@ -140,14 +140,13 @@ class _RootState extends ConsumerState<_Root> with TrayListener, WindowListener 
 
   @override
   Widget build(BuildContext context) {
-    // Primer arranque sin modelo: mostramos el splash (descarga con barra
-    // morada) hasta que el modelo esté listo. Si ya está presente, o ya se
-    // descargó en esta sesión, seguimos al arranque normal. Mientras se
-    // comprueba (o si la comprobación falla) asumimos presente = sin splash.
+    // Instalación / primer arranque: NO abrimos Pronto hasta que TODO esté listo
+    // (modelo descargado + motor cargado en memoria). El splash se muestra si
+    // falta el modelo o en el primer arranque logrado (ver shouldSplashProvider);
+    // en arranques normales posteriores no aparece.
     final ready = ref.watch(modelReadyProvider);
-    if (!ready) {
-      final present = ref.watch(modelPresentProvider).valueOrNull ?? true;
-      if (!present) return const SplashScreen();
+    if (!ready && (ref.watch(shouldSplashProvider).valueOrNull ?? false)) {
+      return const SplashScreen();
     }
 
     final mode = ref.watch(windowModeProvider);
