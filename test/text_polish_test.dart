@@ -46,6 +46,13 @@ void main() {
     test('abre interrogacion',
         () => expect(ortho('cómo estás?'), '¿Cómo estás?'));
     test('abre exclamacion', () => expect(ortho('genial!'), '¡Genial!'));
+    test('NO duplica apertura si el motor ya la puso (bug ¿¿)',
+        () => expect(ortho('¿cómo estás?'), '¿Cómo estás?'));
+    test('NO duplica apertura exclamacion',
+        () => expect(ortho('¡genial!'), '¡Genial!'));
+    test('mixto: una con apertura previa y otra sin ella',
+        () => expect(ortho('¿vienes? seguro que sí!'),
+            '¿Vienes? ¡Seguro que sí!'));
     test('NO rompe dominios',
         () => expect(ortho('mira github.com vale'), 'Mira github.com vale'));
     test(
@@ -74,4 +81,66 @@ void main() {
   });
 
   test('vacio se devuelve igual', () => expect(TextPolish.apply('  '), '  '));
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // Casos adicionales — bordes no cubiertos antes
+  // ──────────────────────────────────────────────────────────────────────────
+
+  group('ortografia ES — bordes adicionales', () {
+    test('exclamacion con apertura previa NO duplica ¡',
+        () => expect(ortho('¡genial!'), '¡Genial!'));
+
+    test('frase mixta: interrogacion previa + exclamacion sin apertura',
+        () => expect(
+              ortho('¿sabes lo que pasó? increíble!'),
+              '¿Sabes lo que pasó? ¡Increíble!',
+            ));
+
+    test('dos preguntas seguidas ninguna tiene apertura previa',
+        () => expect(
+              ortho('qué tal? cómo estás?'),
+              '¿Qué tal? ¿Cómo estás?',
+            ));
+
+    test('mayuscula tras salto de linea',
+        () => expect(ortho('primera\nsegunda'), 'Primera\nSegunda'));
+
+    test('no mete espacio en decimal 3,5',
+        () => expect(ortho('son 3,5 litros'), 'Son 3,5 litros'));
+  });
+
+  group('puntuacion dictada — bordes adicionales', () {
+    test('"coma" suelto al final de linea',
+        () => expect(punct('en la lista coma'), 'en la lista,'));
+
+    test('"coma" en mitad de frase no se toca',
+        () => expect(punct('la coma flotante'), 'la coma flotante'));
+
+    // El token queda rodeado de los espacios originales: diseño conservador
+    // (no se colapsan espacios cuando spanishOrthography=false).
+    test('abre comillas y cierra comillas (solo punt, sin ortografia)',
+        () => expect(
+              punct('dijo abre comillas hola cierra comillas'),
+              'dijo " hola "',
+            ));
+
+    test('puntos suspensivos',
+        () => expect(punct('bueno puntos suspensivos ya'), 'bueno … ya'));
+  });
+
+  group('numeros (ITN) — bordes adicionales', () {
+    test('millones simples', () => expect(nums('dos millones'), '2000000'));
+
+    test('novecientos noventa y nueve',
+        () => expect(nums('novecientos noventa y nueve'), '999'));
+
+    test('doscientos treinta y cuatro',
+        () => expect(nums('doscientos treinta y cuatro'), '234'));
+
+    test('"una" suelto NO se convierte',
+        () => expect(nums('dame una oportunidad'), 'dame una oportunidad'));
+
+    test('"un" suelto NO se convierte',
+        () => expect(nums('es un problema'), 'es un problema'));
+  });
 }

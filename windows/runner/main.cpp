@@ -36,6 +36,14 @@ static LONG WINAPI ProntoCrashHandler(EXCEPTION_POINTERS *info) {
 
 int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
                       _In_ wchar_t *command_line, _In_ int show_command) {
+  // Endurecimiento contra DLL planting (secuestro del orden de búsqueda de
+  // DLLs): restringe la búsqueda a los directorios seguros por defecto
+  // (System32 + la carpeta del .exe) y saca el directorio de trabajo actual de
+  // la ruta de búsqueda. Así una DLL maliciosa colocada en la carpeta desde la
+  // que se lanza Pronto (Descargas, un USB…) NO se carga en lugar de la buena.
+  ::SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_DEFAULT_DIRS);
+  ::SetDllDirectory(L"");
+
   // Lo primero: capturar crashes nativos a un log (ver ProntoCrashHandler).
   ::SetUnhandledExceptionFilter(ProntoCrashHandler);
 

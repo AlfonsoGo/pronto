@@ -31,6 +31,36 @@ class AppConfig {
   /// decoder/joiner/tokens). Es el motor POR DEFECTO y va en el instalador.
   static const String parakeetModelDir = 'parakeet';
 
+  /// Base de descarga del modelo Parakeet (sherpa-onnx NeMo Parakeet TDT 0.6b
+  /// v3 int8) en Hugging Face. El splash descarga aquí los ficheros que falten
+  /// la primera vez que se abre la app sin modelo empaquetado.
+  static const String parakeetModelBaseUrl =
+      'https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8/resolve/main';
+
+  /// Ficheros que componen el modelo Parakeet (deben estar los cuatro).
+  static const List<String> parakeetModelFiles = [
+    'encoder.int8.onnx',
+    'decoder.int8.onnx',
+    'joiner.int8.onnx',
+    'tokens.txt',
+  ];
+
+  /// SHA-256 esperado de cada fichero del modelo Parakeet. El descargador
+  /// verifica el hash de cada `.part` recién bajado ANTES de renombrarlo al
+  /// nombre final; si no coincide, borra el `.part` y falla (no se carga un
+  /// modelo sin verificar). Calculados sobre los ficheros de `native/parakeet/`
+  /// que van en el instalador (mismo mirror de Hugging Face que la descarga).
+  static const Map<String, String> parakeetModelSha256 = {
+    'encoder.int8.onnx':
+        'acfc2b4456377e15d04f0243af540b7fe7c992f8d898d751cf134c3a55fd2247',
+    'decoder.int8.onnx':
+        '179e50c43d1a9de79c8a24149a2f9bac6eb5981823f2a2ed88d655b24248db4e',
+    'joiner.int8.onnx':
+        '3164c13fc2821009440d20fcb5fdc78bff28b4db2f8d0f0b329101719c0948b3',
+    'tokens.txt':
+        'd58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d',
+  };
+
   // --- Automejora ---
   /// Frecuencia mínima para que un par de corrección se active (anti-ruido).
   static const int minCorrectionFreq = 3;

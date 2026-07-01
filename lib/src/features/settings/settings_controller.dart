@@ -73,6 +73,9 @@ class AppSettings {
   /// Reproducir un sonido corto al empezar y parar de grabar.
   final bool sounds;
 
+  /// Id del micrófono elegido, o null = micrófono por defecto del sistema.
+  final String? micDeviceId;
+
   const AppSettings({
     required this.modelFile,
     required this.language,
@@ -88,6 +91,7 @@ class AppSettings {
     this.engine = SpeechEngine.parakeet,
     this.textPolish = true,
     this.sounds = true,
+    this.micDeviceId,
   });
 
   /// Valores por defecto, tomados de [AppConfig] cuando existen.
@@ -121,6 +125,10 @@ class AppSettings {
     SpeechEngine? engine,
     bool? textPolish,
     bool? sounds,
+    // Nullable con "reset": por defecto conserva el valor actual; pasa
+    // `resetMicDevice: true` para volver al micrófono por defecto (null).
+    String? micDeviceId,
+    bool resetMicDevice = false,
   }) {
     return AppSettings(
       modelFile: modelFile ?? this.modelFile,
@@ -137,6 +145,7 @@ class AppSettings {
       engine: engine ?? this.engine,
       textPolish: textPolish ?? this.textPolish,
       sounds: sounds ?? this.sounds,
+      micDeviceId: resetMicDevice ? null : (micDeviceId ?? this.micDeviceId),
     );
   }
 
@@ -155,6 +164,7 @@ class AppSettings {
         'engine': engine.name,
         'textPolish': textPolish,
         'sounds': sounds,
+        'micDeviceId': micDeviceId,
       };
 
   /// Reconstruye desde JSON tolerando claves ausentes o valores inválidos:
@@ -181,6 +191,7 @@ class AppSettings {
       engine: _engineFromName(j['engine'] as String?) ?? d.engine,
       textPolish: j['textPolish'] as bool? ?? d.textPolish,
       sounds: j['sounds'] as bool? ?? d.sounds,
+      micDeviceId: j['micDeviceId'] as String?,
     );
   }
 
@@ -224,7 +235,8 @@ class AppSettings {
       other.pillScale == pillScale &&
       other.engine == engine &&
       other.textPolish == textPolish &&
-      other.sounds == sounds;
+      other.sounds == sounds &&
+      other.micDeviceId == micDeviceId;
 
   @override
   int get hashCode => Object.hash(
@@ -242,6 +254,7 @@ class AppSettings {
         engine,
         textPolish,
         sounds,
+        micDeviceId,
       );
 }
 
@@ -275,6 +288,11 @@ class SettingsController extends Notifier<AppSettings> {
       if (raw == null || raw.isEmpty) return;
       final map = jsonDecode(raw) as Map<String, dynamic>;
       state = AppSettings.fromJson(map);
+      // Pronto usa solo Parakeet: migra en memoria cualquier ajuste antiguo de
+      // Whisper para que resolutor de modelo y UI queden consistentes.
+      if (state.engine == SpeechEngine.whisper) {
+        state = state.copyWith(engine: SpeechEngine.parakeet);
+      }
       // Re-sincroniza el autostart del sistema con lo persistido.
       await _applyAutostart(state.autostart);
     } catch (e) {
@@ -362,6 +380,14 @@ class SettingsController extends Notifier<AppSettings> {
 
   Future<void> setSounds(bool value) async {
     state = state.copyWith(sounds: value);
+    await _save();
+  }
+
+  /// Fija el micrófono a usar. `null` = micrófono por defecto del sistema.
+  /// Surte efecto en la siguiente grabación (el dispositivo se resuelve en
+  /// [AudioCapture.start]).
+  Future<void> setMicDeviceId(String? value) async {
+    state = state.copyWith(micDeviceId: value, resetMicDevice: value == null);
     await _save();
   }
 

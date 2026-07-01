@@ -168,6 +168,12 @@ void _isolateMain(_InitMsg init) {
   try {
     // Carga la DLL nativa (sherpa-onnx-c-api.dll) e inicializa los bindings en
     // ESTE isolate. Sin esto, las llamadas FFI fallarían.
+    // SEGURIDAD (DLL planting): sherpa_onnx abre su DLL por nombre simple y NO
+    // expone forma de fijar una ruta absoluta, así que aquí no se puede
+    // endurecer la carga. La mitigación vive en windows/runner/main.cpp
+    // (SetDefaultDllDirectories + SetDllDirectory("")), que restringe la
+    // búsqueda de DLLs del proceso a directorios seguros y saca el cwd/PATH del
+    // orden de búsqueda, cubriendo también a las DLLs de sherpa_onnx.
     sherpa.initBindings();
 
     final sep = Platform.pathSeparator;

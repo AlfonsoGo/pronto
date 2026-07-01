@@ -406,9 +406,11 @@ class WhisperBindings {
 
   /// Abre la librería nativa.
   ///
-  /// En Windows busca, por orden:
-  ///   1) 'whisper.dll' junto al ejecutable (carpeta de Platform.resolvedExecutable).
-  ///   2) 'whisper.dll' a secas (resuelta por el cargador de Windows vía PATH).
+  /// SEGURIDAD (DLL planting): en Windows se carga SIEMPRE por ruta ABSOLUTA
+  /// junto al ejecutable (`whisper.dll` en la carpeta de
+  /// Platform.resolvedExecutable). NO se cae de vuelta a `'whisper.dll'` a
+  /// secas, que dejaría al cargador de Windows resolverla vía el directorio de
+  /// trabajo o el PATH (vector de secuestro de DLL).
   /// En Linux/macOS intenta libwhisper.so / libwhisper.dylib (best-effort; el
   /// objetivo principal del MVP es Windows escritorio).
   ///
@@ -444,28 +446,24 @@ class WhisperBindings {
     final exeDir = p.dirname(Platform.resolvedExecutable);
 
     if (Platform.isWindows) {
+      // Solo ruta absoluta junto al .exe: NO caemos a 'whisper.dll' a secas
+      // para no dejar que el cargador la resuelva vía cwd/PATH (DLL planting).
+      // Las dependencias (ggml.dll…) las resuelve el cargador desde esta misma
+      // carpeta, que es un directorio seguro por defecto.
       return <String>[
         p.join(exeDir, 'whisper.dll'),
-        // ggml/whisper a veces se distribuye con dependencias separadas; el
-        // cargador de Windows resolverá ggml.dll automáticamente si están en
-        // la misma carpeta. Como último recurso, dejar que el PATH la resuelva.
-        'whisper.dll',
       ];
     }
 
     if (Platform.isMacOS) {
       return <String>[
         p.join(exeDir, 'libwhisper.dylib'),
-        'libwhisper.dylib',
-        'libwhisper.1.dylib',
       ];
     }
 
     // Linux y otros POSIX.
     return <String>[
       p.join(exeDir, 'libwhisper.so'),
-      'libwhisper.so',
-      'libwhisper.so.1',
     ];
   }
 }
