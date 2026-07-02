@@ -40,9 +40,17 @@ if (-not (Test-Path (Join-Path $parakeetSrc 'tokens.txt'))) {
 }
 if (-not (Test-Path $parakeetDst)) { New-Item -ItemType Directory $parakeetDst -Force | Out-Null }
 Copy-Item (Join-Path $parakeetSrc '*') $parakeetDst -Recurse -Force
-# Whisper (motor alternativo) — TAMBIEN empaquetado: el usuario NO descarga nada.
-if (-not (Test-Path $whisperModel)) { throw "Falta el modelo Whisper en native\whisper\models\ggml-small.bin" }
-Copy-Item $whisperModel (Join-Path $models 'ggml-small.bin') -Force
+# Whisper (motor alternativo, RETIRADO de la seleccion): solo se empaqueta si el
+# modelo esta presente. La app usa SOLO Parakeet y el build ya no trae las DLLs de
+# whisper, asi que el modelo seria peso muerto (~488 MB) en el instalador; si falta,
+# se omite sin bloquear la publicacion.
+if (Test-Path $whisperModel) {
+    Copy-Item $whisperModel (Join-Path $models 'ggml-small.bin') -Force
+    Write-Host "   + modelo Whisper (motor alternativo)" -ForegroundColor DarkGray
+}
+else {
+    Write-Host "   (Whisper omitido: sin modelo; la app usa solo Parakeet)" -ForegroundColor DarkGray
+}
 
 # Runtime de Visual C++ junto al .exe: sin esto la app instala pero NO arranca
 # en un PC limpio (sin VS / sin el redistribuible). App-local = sin admin.
