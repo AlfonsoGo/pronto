@@ -32,6 +32,9 @@ class AudioCaptureRecord implements AudioCapture {
   /// Evita usar la instancia después de [dispose].
   bool _disposed = false;
 
+  /// Id del micrófono elegido en Ajustes, o null = por defecto del sistema.
+  String? _deviceId;
+
   /// Configuración de grabación: PCM 16-bit, mono, 16 kHz.
   static const RecordConfig _config = RecordConfig(
     encoder: AudioEncoder.pcm16bits,
@@ -43,6 +46,18 @@ class AudioCaptureRecord implements AudioCapture {
   Future<bool> hasPermission() {
     _checkNotDisposed();
     return _recorder.hasPermission();
+  }
+
+  @override
+  Future<List<MicDevice>> listInputDevices() async {
+    _checkNotDisposed();
+    final devices = await _recorder.listInputDevices();
+    return devices.map((d) => MicDevice(d.id, d.label)).toList();
+  }
+
+  @override
+  void setInputDeviceId(String? id) {
+    _deviceId = id;
   }
 
   @override
@@ -67,7 +82,29 @@ class AudioCaptureRecord implements AudioCapture {
     // Limpiamos cualquier resto de una grabación anterior.
     _chunks.clear();
 
-    final Stream<Uint8List> stream = await _recorder.startStream(_config);
+    // Resolvemos el micrófono elegido (si hay uno) a su InputDevice; si no se
+    // fijó ninguno o ya no existe, config.device queda null = por defecto.
+    InputDevice? device;
+    if (_deviceId != null) {
+      final devices = await _recorder.listInputDevices();
+      for (final d in devices) {
+        if (d.id == _deviceId) {
+          device = d;
+          break;
+        }
+      }
+    }
+    // Reusamos los parámetros de [_config] y solo fijamos el dispositivo (el
+    // copyWith de RecordConfig envuelve `device` en un record, así que es más
+    // legible construirlo aquí con `device:` directo, que es InputDevice?).
+    final RecordConfig config = RecordConfig(
+      encoder: _config.encoder,
+      sampleRate: _config.sampleRate,
+      numChannels: _config.numChannels,
+      device: device,
+    );
+
+    final Stream<Uint8List> stream = await _recorder.startStream(config);
     _recording = true;
 
     _subscription = stream.listen(

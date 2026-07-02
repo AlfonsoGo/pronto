@@ -225,6 +225,15 @@ class UpdateController extends Notifier<UpdateState> {
       await sink.flush();
       await sink.close();
 
+      // SEGURIDAD (integridad del instalador). No verificamos aquí un hash:
+      // sería seguridad falsa, porque el hash esperado tendría que venir del
+      // mismo GitHub Release que el .exe (misma fuente), así que un release
+      // comprometido serviría ambos. La verificación ROBUSTA es la firma
+      // Authenticode (code-signing) del instalador, que el propio Windows
+      // valida al ejecutarlo. Eso queda FUERA DE SCOPE aquí (requiere un
+      // certificado de firma). Mitigaciones ya presentes: la descarga va por
+      // HTTPS y el instalador lo lanza el usuario (no es silencioso a espaldas
+      // suyas). TODO: firmar el instalador con Authenticode y exigir la firma.
       state = state.copyWith(status: UpdateStatus.installing, progress: 1);
       await _launchSilentInstallerAndQuit(outPath);
     } catch (e) {

@@ -12,7 +12,6 @@ import '../features/learning/learning_repository.dart';
 import '../features/learning/learning_service.dart';
 import '../features/settings/settings_controller.dart';
 import '../features/transcription/parakeet_engine.dart';
-import '../features/transcription/whisper_engine_ffi.dart';
 import 'audio_capture.dart';
 import 'clipboard_watcher.dart';
 import 'global_hotkey_service.dart';
@@ -26,13 +25,13 @@ import 'windows/windows_text_injector.dart';
 /// (ver ROADMAP.md) se añaden las ramas macOS/Linux/Android/iOS aquí, detrás
 /// de las mismas interfaces.
 
-/// Motor de voz activo, según el ajuste [AppSettings.engine]. Se lee como
-/// SNAPSHOT (no reactivo): cambiar de motor surte efecto al REINICIAR, porque
-/// el modelo queda residente desde el arranque. Léelo tras `settings.loaded`.
+/// Motor de voz activo. Pronto usa SOLO Parakeet (NVIDIA, sherpa-onnx): más
+/// rápido y preciso en español, puntúa solo y entiende mejor la jerga. Whisper
+/// quedó retirado de la selección; conservamos la interfaz [WhisperEngine]
+/// porque el pipeline es agnóstico del motor. El modelo queda residente desde
+/// el arranque, así que se lee como SNAPSHOT tras `settings.loaded`.
 final whisperEngineProvider = Provider<WhisperEngine>((ref) {
-  final engine = ref.read(settingsProvider).engine;
-  final WhisperEngine impl =
-      engine == SpeechEngine.whisper ? WhisperEngineFfi() : ParakeetEngine();
+  final impl = ParakeetEngine();
   ref.onDispose(impl.dispose);
   return impl;
 });
@@ -53,6 +52,17 @@ final hotkeyServiceProvider = Provider<GlobalHotkeyService>((ref) {
 
 final audioCaptureProvider = Provider<AudioCapture>((ref) {
   final cap = AudioCaptureRecord();
+  // Sincroniza el micrófono elegido SIN recrear la instancia: `read` para el
+  // valor inicial + `listen` para los cambios. Con `ref.watch`, cambiar de
+  // micrófono reconstruía el provider y hacía dispose() de la captura que el
+  // dictado seguía usando → "AudioCaptureRecord ya fue liberado con dispose()".
+  // Con `listen`, la MISMA instancia vive toda la sesión y solo actualiza el
+  // dispositivo (se aplica en el próximo start()).
+  cap.setInputDeviceId(ref.read(settingsProvider.select((s) => s.micDeviceId)));
+  ref.listen<String?>(
+    settingsProvider.select((s) => s.micDeviceId),
+    (_, id) => cap.setInputDeviceId(id),
+  );
   ref.onDispose(cap.dispose);
   return cap;
 });

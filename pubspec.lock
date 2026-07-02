@@ -58,7 +58,7 @@ packages:
     source: hosted
     version: "1.19.1"
   crypto:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: crypto
       sha256: c8ea0233063ba03258fbcf2ca4d6dadfefe14f02fab57702265467a19f27fadf
@@ -441,7 +441,7 @@ packages:
     source: hosted
     version: "2.6.1"
   screen_retriever:
-    dependency: transitive
+    dependency: "direct main"
     description:
       name: screen_retriever
       sha256: "42cc3b402a0f67d2455a0d067553d0f13453f6a008d98eababf8b63958d506bd"

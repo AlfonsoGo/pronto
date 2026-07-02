@@ -7,7 +7,9 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../../core/config.dart';
+import '../../platform/audio_capture.dart';
 import '../../platform/global_hotkey_service.dart';
+import '../../platform/platform_services.dart';
 import '../../platform/text_injector.dart';
 import '../update/update_controller.dart';
 import 'hotkey_recorder.dart';
@@ -55,6 +57,7 @@ class SettingsScreen extends ConsumerWidget {
           _SectionHeader('Motor de voz', theme: theme),
           const _EngineTile(),
           const _WhisperModelTile(),
+          const _MicDeviceTile(),
 
           const Divider(height: 24),
 
@@ -442,34 +445,125 @@ class _PillSizeTile extends ConsumerWidget {
   }
 }
 
-/// Selector del motor de voz (Parakeet / Whisper).
-class _EngineTile extends ConsumerWidget {
+/// Motor de voz. Pronto usa EXCLUSIVAMENTE Parakeet (NVIDIA, sherpa-onnx), así
+/// que este tile es informativo (Whisper quedó retirado de la selección).
+class _EngineTile extends StatelessWidget {
   const _EngineTile();
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final engine = ref.watch(settingsProvider.select((s) => s.engine));
-    final ctrl = ref.read(settingsProvider.notifier);
-    return ListTile(
-      title: const Text('Motor de reconocimiento'),
-      subtitle: const Text(
-        'Parakeet: rápido, puntúa solo y entiende mejor la jerga (recomendado).\n'
-        'Cambiar de motor se aplica al reiniciar Pronto.',
+  Widget build(BuildContext context) {
+    return const ListTile(
+      leading: Icon(Icons.graphic_eq_rounded, color: Color(0xFF8B5CF6)),
+      title: Text('Motor de reconocimiento'),
+      subtitle: Text(
+        'Parakeet (NVIDIA): rápido, puntúa solo y entiende mejor la jerga.\n'
+        'Reconocimiento 100 % en tu equipo, sin enviar tu voz a la nube.',
       ),
       isThreeLine: true,
-      trailing: DropdownButton<SpeechEngine>(
-        value: engine,
-        onChanged: (v) {
-          if (v != null) ctrl.setEngine(v);
-        },
-        items: const [
-          DropdownMenuItem(
-            value: SpeechEngine.parakeet,
-            child: Text('Parakeet'),
-          ),
-          DropdownMenuItem(value: SpeechEngine.whisper, child: Text('Whisper')),
-        ],
+      trailing: Text(
+        'Parakeet',
+        style: TextStyle(
+          fontWeight: FontWeight.w600,
+          color: Color(0xFFA78BFA),
+        ),
       ),
+    );
+  }
+}
+
+/// Selector de micrófono de entrada. Enumera los dispositivos del sistema y
+/// deja elegir uno concreto o el "por defecto". La lista se carga en initState
+/// y se puede refrescar (p. ej. si conectas un micro USB con la app abierta).
+class _MicDeviceTile extends ConsumerStatefulWidget {
+  const _MicDeviceTile();
+
+  @override
+  ConsumerState<_MicDeviceTile> createState() => _MicDeviceTileState();
+}
+
+class _MicDeviceTileState extends ConsumerState<_MicDeviceTile> {
+  List<MicDevice> _devices = const [];
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() => _loading = true);
+    try {
+      final devices =
+          await ref.read(audioCaptureProvider).listInputDevices();
+      if (!mounted) return;
+      setState(() {
+        _devices = devices;
+        _loading = false;
+      });
+    } catch (_) {
+      // Si la enumeración falla (sin permiso, driver), dejamos lista vacía:
+      // el usuario sigue pudiendo usar el micrófono por defecto del sistema.
+      if (!mounted) return;
+      setState(() {
+        _devices = const [];
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final selectedId = ref.watch(settingsProvider.select((s) => s.micDeviceId));
+    final controller = ref.read(settingsProvider.notifier);
+    // El valor guardado solo es válido si sigue en la lista; si el micro se
+    // desconectó, caemos a "por defecto" para no romper el Dropdown.
+    final bool selectedExists =
+        selectedId != null && _devices.any((d) => d.id == selectedId);
+    final String? value = selectedExists ? selectedId : null;
+
+    // Cabecera (título + estado + refrescar) y DEBAJO el desplegable a ancho
+    // completo. Antes el Dropdown iba en `trailing` y, con nombres de micro
+    // largos, se comía todo el ancho → el título "Micrófono" salía en vertical.
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ListTile(
+          leading: const Icon(Icons.mic_rounded, color: Color(0xFFA78BFA)),
+          title: const Text('Micrófono'),
+          subtitle: Text(
+            _loading
+                ? 'Buscando micrófonos…'
+                : (_devices.isEmpty
+                    ? 'No se detectaron micrófonos (se usa el del sistema)'
+                    : 'Elige qué micrófono usa Pronto para dictar'),
+          ),
+          trailing: IconButton(
+            tooltip: 'Volver a buscar micrófonos',
+            icon: const Icon(Icons.refresh_rounded),
+            onPressed: _loading ? null : _load,
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+          child: DropdownButton<String?>(
+            isExpanded: true, // ocupa el ancho y recorta nombres largos
+            value: value,
+            onChanged: _loading ? null : (v) => controller.setMicDeviceId(v),
+            items: [
+              const DropdownMenuItem<String?>(
+                value: null,
+                child: Text('Micrófono por defecto del sistema'),
+              ),
+              for (final d in _devices)
+                DropdownMenuItem<String?>(
+                  value: d.id,
+                  child: Text(d.label, overflow: TextOverflow.ellipsis),
+                ),
+            ],
+          ),
+        ),
+      ],
     );
   }
 }

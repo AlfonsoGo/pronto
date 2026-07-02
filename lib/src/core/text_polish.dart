@@ -283,6 +283,14 @@ class TextPolish {
         final body = phrase.substring(lead.length);
         if (body.isEmpty) return phrase;
         if (body.startsWith('¿') || body.startsWith('¡')) return phrase;
+        // La clase [^.?!¿¡\n] EXCLUYE ¿ ¡, así que un signo de apertura que ya
+        // venga del motor (p. ej. Parakeet transcribe "¿Cómo estás?") queda JUSTO
+        // antes del match, no dentro de `body`. Sin mirarlo aquí, prependeríamos
+        // un segundo signo → "¿¿". Comprobamos el carácter previo (ignorando
+        // espacios) para no duplicar.
+        final before =
+            m.input.substring(0, m.start).replaceFirst(RegExp(r'\s+$'), '');
+        if (before.endsWith('¿') || before.endsWith('¡')) return phrase;
         final open = body.endsWith('?') ? '¿' : '¡';
         return '$lead$open$body';
       },

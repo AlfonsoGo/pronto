@@ -7,6 +7,7 @@ import 'package:window_manager/window_manager.dart';
 import '../features/home/home_screen.dart';
 import '../features/overlay/overlay_pill_screen.dart';
 import '../features/overlay/window_mode_controller.dart';
+import '../features/splash/splash_screen.dart';
 import '../features/update/update_controller.dart';
 import 'theme.dart';
 
@@ -139,6 +140,16 @@ class _RootState extends ConsumerState<_Root> with TrayListener, WindowListener 
 
   @override
   Widget build(BuildContext context) {
+    // Primer arranque sin modelo: mostramos el splash (descarga con barra
+    // morada) hasta que el modelo esté listo. Si ya está presente, o ya se
+    // descargó en esta sesión, seguimos al arranque normal. Mientras se
+    // comprueba (o si la comprobación falla) asumimos presente = sin splash.
+    final ready = ref.watch(modelReadyProvider);
+    if (!ready) {
+      final present = ref.watch(modelPresentProvider).valueOrNull ?? true;
+      if (!present) return const SplashScreen();
+    }
+
     final mode = ref.watch(windowModeProvider);
 
     if (mode == WindowMode.pill) {

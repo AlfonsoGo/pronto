@@ -5,7 +5,7 @@ description: >-
   dictado global en cualquier aplicaciÃ³n, con sistema de automejora que
   aprende de tus correcciones.
 publish_to: "none"
-version: 0.6.0+17
+version: 0.7.0+18
 
 environment:
   sdk: ">=3.4.0 <4.0.0"
@@ -41,11 +41,17 @@ dependencies:
 
   # Ventana / overlay / bandeja / autostart (ecosistema leanflutter)
   window_manager: ^0.4.2
+  # Info de monitores (posición/tamaño de cada pantalla) para el arrastre
+  # multi-monitor de la píldora. Ya es dependencia transitiva de window_manager.
+  screen_retriever: ^0.2.1
   tray_manager: ^0.3.0
   launch_at_startup: ^0.3.0
 
   # LLM de post-correcciÃ³n opcional (Ollama local o nube)
   http: ^1.2.2
+
+  # Verificación de integridad (SHA-256) del modelo Parakeet descargado.
+  crypto: ^3.0.0
 
   # VersiÃ³n actual de la app (para el auto-actualizador desde GitHub Releases).
   package_info_plus: ^8.0.0

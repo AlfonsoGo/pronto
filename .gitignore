@@ -48,3 +48,7 @@ build/
 # Misc
 .DS_Store
 Thumbs.db
+
+# Informe de auditoria interno - NO publicar en repo publico
+AUDITORIA-SEGURIDAD.md
+

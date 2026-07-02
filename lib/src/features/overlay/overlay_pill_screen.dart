@@ -3,6 +3,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:screen_retriever/screen_retriever.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../dictation/dictation_controller.dart';
@@ -198,8 +199,13 @@ class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
                     level: level,
                     onOpenPanel: () =>
                         ref.read(windowModeProvider.notifier).toPanel(),
+                    // Al arrastrar, actualiza el ancla para no volver atrás en
+                    // el próximo redimensionado (grabar/parar).
+                    onMoved: (bl) => _pillAnchor = bl,
                   ),
-                  if (updateAvailable)
+                  // Solo en reposo (punto verde): sobre las ondas de grabación
+                  // el punto morado quedaba feo. Idle = buen momento para avisar.
+                  if (updateAvailable && status == DictationStatus.idle)
                     const Positioned(top: 13, right: 13, child: _UpdateDot()),
                 ],
               ),
@@ -231,11 +237,16 @@ class _StatusLight extends StatefulWidget {
   final double level;
   final VoidCallback onOpenPanel;
 
+  /// Notifica la nueva esquina inferior-izquierda de la ventana tras arrastrar,
+  /// para que la píldora reancle sus reajustes de tamaño a esa posición.
+  final ValueChanged<Offset>? onMoved;
+
   const _StatusLight({
     required this.status,
     required this.scale,
     required this.level,
     required this.onOpenPanel,
+    this.onMoved,
   });
 
   @override
@@ -261,6 +272,67 @@ class _StatusLightState extends State<_StatusLight>
     super.dispose();
   }
 
+  // ─── Arrastre SOLO horizontal, con soporte MULTI-MONITOR ────────────────────
+  // El eje vertical queda bloqueado, pero la píldora cruza libremente entre
+  // monitores. Al pasar a otro monitor de distinta resolución NO "salta arriba":
+  // se ancla al borde inferior del monitor bajo el que está, conservando la
+  // misma distancia al fondo que tenía al empezar. Solo movemos en onPanUpdate
+  // (rebasado el touch-slop), así un clic simple no la desplaza. Funciona igual
+  // esté grabando o no (este gestor está presente en todos los estados).
+  bool _dragReady = false;
+  double _logicalLeft = 0; // X lógica de la ventana durante el arrastre
+  double _winWidth = 50;
+  double _winHeight = 50;
+  double _startTop = 0; // Y inicial (fallback si no hay datos de monitores)
+  double _bottomOffset = 0; // distancia del borde inferior del monitor al top
+  List<Display> _displays = const [];
+
+  Future<void> _onDragStart(DragStartDetails _) async {
+    try {
+      final b = await windowManager.getBounds();
+      _logicalLeft = b.left;
+      _winWidth = b.width;
+      _winHeight = b.height;
+      _startTop = b.top;
+      _displays = await screenRetriever.getAllDisplays();
+      final d = _displayForX(b.left + b.width / 2);
+      _bottomOffset = d != null ? _workBottom(d) - b.top : 0;
+      _dragReady = true;
+    } catch (_) {
+      _dragReady = false;
+    }
+  }
+
+  void _onDragUpdate(DragUpdateDetails d) {
+    if (!_dragReady) return;
+    // Solo eje X (vertical bloqueado); movimiento libre por todo el escritorio
+    // virtual → cruza entre monitores.
+    _logicalLeft += d.delta.dx;
+    final disp = _displayForX(_logicalLeft + _winWidth / 2);
+    final top = disp != null ? _workBottom(disp) - _bottomOffset : _startTop;
+    windowManager.setPosition(Offset(_logicalLeft, top));
+    // Informa a la píldora de su nueva esquina inferior-izquierda para que los
+    // reajustes de tamaño (grabar/parar) NO la devuelvan a la posición previa.
+    widget.onMoved?.call(Offset(_logicalLeft, top + _winHeight));
+  }
+
+  /// Monitor cuya área de trabajo contiene la X dada (o el primero si ninguno).
+  Display? _displayForX(double x) {
+    for (final d in _displays) {
+      final pos = d.visiblePosition ?? Offset.zero;
+      final size = d.visibleSize ?? d.size;
+      if (x >= pos.dx && x < pos.dx + size.width) return d;
+    }
+    return _displays.isNotEmpty ? _displays.first : null;
+  }
+
+  /// Borde inferior del área de trabajo (sin barra de tareas) del monitor.
+  double _workBottom(Display d) {
+    final pos = d.visiblePosition ?? Offset.zero;
+    final size = d.visibleSize ?? d.size;
+    return pos.dy + size.height;
+  }
+
   @override
   Widget build(BuildContext context) {
     final status = widget.status;
@@ -269,7 +341,11 @@ class _StatusLightState extends State<_StatusLight>
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
       onTap: widget.onOpenPanel,
-      onPanStart: (_) => windowManager.startDragging(),
+      // Arrastre SOLO horizontal (ver _onDragUpdate): la píldora no se mueve en
+      // vertical y un clic no la arrastra.
+      onPanStart: _onDragStart,
+      onPanUpdate: _onDragUpdate,
+      onPanEnd: (_) => _dragReady = false,
       child: Center(
         child: status == DictationStatus.recording
             ? _RecordingBars(
@@ -469,20 +545,63 @@ class _ThinkingRing extends StatelessWidget {
   }
 }
 
-/// Punto morado sobre la píldora cuando hay una actualización disponible.
-class _UpdateDot extends StatelessWidget {
+/// Indicador de "hay actualización disponible": un punto MORADO grande y
+/// pulsante en la parte superior de la píldora, con un halo amplio que tiñe la
+/// píldora de morado para que salte a la vista de un vistazo. Mantiene el color
+/// de estado del punto principal intacto (el morado solo aparece si hay update).
+class _UpdateDot extends StatefulWidget {
   const _UpdateDot();
 
   @override
+  State<_UpdateDot> createState() => _UpdateDotState();
+}
+
+class _UpdateDotState extends State<_UpdateDot>
+    with SingleTickerProviderStateMixin {
+  /// Morado de marca (theme.dart → violet).
+  static const _violet = Color(0xFF8B5CF6);
+
+  late final AnimationController _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    _anim = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    )..repeat();
+  }
+
+  @override
+  void dispose() {
+    _anim.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 9,
-      height: 9,
-      decoration: BoxDecoration(
-        shape: BoxShape.circle,
-        color: const Color(0xFF7800E3),
-        border: Border.all(color: Colors.white, width: 1.5),
-      ),
+    return AnimatedBuilder(
+      animation: _anim,
+      builder: (context, _) {
+        final pulse = 0.5 + 0.5 * math.sin(_anim.value * 2 * math.pi);
+        return Container(
+          width: 13,
+          height: 13,
+          decoration: BoxDecoration(
+            shape: BoxShape.circle,
+            color: _violet,
+            border: Border.all(color: Colors.white, width: 1.6),
+            boxShadow: [
+              // Halo amplio que "tiñe" la píldora de morado; más intenso al pulsar.
+              BoxShadow(
+                color: _violet.withValues(alpha: 0.45 + 0.35 * pulse),
+                blurRadius: 8 + 6 * pulse,
+                spreadRadius: 1 + 2 * pulse,
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
