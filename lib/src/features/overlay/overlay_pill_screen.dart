@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
@@ -6,6 +7,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:screen_retriever/screen_retriever.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../../platform/windows/windows_active_monitor.dart';
 import '../dictation/dictation_controller.dart';
 import '../dictation/dictation_state.dart';
 import '../settings/settings_controller.dart';
@@ -68,6 +70,20 @@ class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
   /// ¿Grabando ahora? Mientras graba, la ventana se ensancha para el waveform.
   bool _isRecording = false;
 
+  /// ─── Seguimiento del monitor activo ──────────────────────────────────────
+  /// La píldora salta al monitor de la ventana en primer plano cuando cambias de
+  /// pantalla para escribir. Solo Windows; el timer vive mientras la píldora esté
+  /// montada (en modo panel este widget se desmonta y el timer se cancela).
+  Timer? _followTimer;
+
+  /// Último monitor en primer plano que vimos (HMONITOR). Solo actuamos al
+  /// CAMBIAR de monitor (disparo por flanco): así no peleamos con el arrastre
+  /// manual ni recolocamos al alternar entre apps de la misma pantalla.
+  int _lastForegroundMonitor = 0;
+
+  /// Evita solapar dos movimientos (los reajustes de window_manager son async).
+  bool _movingToMonitor = false;
+
   @override
   void initState() {
     super.initState();
@@ -77,12 +93,82 @@ class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
         _applyWindowSize(kPillExpanded);
       });
     }
+    // Sondeo ligero del monitor activo para que la píldora te siga de pantalla.
+    if (Platform.isWindows) {
+      _followTimer = Timer.periodic(
+        const Duration(milliseconds: 350),
+        (_) => _followActiveMonitor(),
+      );
+    }
   }
 
   @override
   void dispose() {
     _collapseTimer?.cancel();
+    _followTimer?.cancel();
     super.dispose();
+  }
+
+  /// Si la ventana en primer plano ha pasado a otro monitor, mueve la píldora al
+  /// borde inferior de ese monitor (centrada horizontalmente). Disparo por
+  /// flanco: solo cuando el monitor en primer plano CAMBIA, y solo si la píldora
+  /// no está ya en él (así se respeta su posición horizontal manual).
+  Future<void> _followActiveMonitor() async {
+    if (!mounted || _movingToMonitor) return;
+    final fg = foregroundMonitorIfExternal();
+    if (fg == 0 || fg == _lastForegroundMonitor) return;
+
+    final target = monitorFollowTarget(fg, 'Pronto');
+    // No pudimos leer el monitor destino: NO consumimos el flanco, así el
+    // próximo tick reintenta (si lo consumiéramos, la píldora se quedaría
+    // clavada en la pantalla vieja hasta un cambio de monitor no relacionado).
+    if (target == null) return;
+
+    // La píldora ya está en ese monitor: nada que mover. Consumimos el flanco
+    // para no recolocarla al volver (respeta su posición horizontal manual).
+    if (fg == target.pillMonitor) {
+      _lastForegroundMonitor = fg;
+      return;
+    }
+
+    // Solo damos el flanco por consumido si el movimiento se hizo DE VERDAD;
+    // si falló, se reintenta en el siguiente tick.
+    if (await _moveToMonitor(target)) _lastForegroundMonitor = fg;
+  }
+
+  /// Recoloca la píldora abajo-centro del área de trabajo del monitor destino.
+  /// Convierte el área física a lógica con el DPR ACTUAL de la píldora: eso
+  /// invierte exactamente el cálculo de window_manager.setBounds, así aterriza
+  /// donde toca (asume, como el arrastre multi-monitor ya existente, misma escala
+  /// entre monitores). Reancla la esquina inferior-izquierda para que los
+  /// reajustes de tamaño posteriores partan de la nueva posición.
+  Future<bool> _moveToMonitor(FollowTarget t) async {
+    if (!mounted) return false;
+    _movingToMonitor = true;
+    try {
+      final dpr = View.of(context).devicePixelRatio;
+      final l = t.workLeft / dpr;
+      final r = t.workRight / dpr;
+      final b = t.workBottom / dpr;
+
+      final bounds = await windowManager.getBounds();
+      final w = bounds.width;
+      final h = bounds.height;
+
+      // Centrada en el monitor, sin salirse por los lados.
+      final maxLeft = (r - w) < l ? l : (r - w);
+      final left = (l + ((r - l) - w) / 2).clamp(l, maxLeft).toDouble();
+      final top = b - h;
+
+      await windowManager.setPosition(Offset(left, top));
+      _pillAnchor = Offset(left, b);
+      return true;
+    } catch (_) {
+      // Si algo falla, NO consumimos el flanco: el próximo tick reintenta.
+      return false;
+    } finally {
+      _movingToMonitor = false;
+    }
   }
 
   /// El ratón entra en la caja: amplía YA (cancela cualquier colapso pendiente).
