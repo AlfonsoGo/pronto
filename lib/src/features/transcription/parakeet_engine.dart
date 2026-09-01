@@ -7,13 +7,23 @@
 // bloquear la UI.
 //
 // A diferencia de whisper, Parakeet:
-//   - NO usa initial_prompt (un transducer no sesga por prompt); el diccionario
-//     aprendido de Pronto sigue corrigiendo en post igual que siempre.
+//   - NO usa initial_prompt (un transducer no sesga por prompt). El biasing se
+//     hace con HOTWORDS: una lista de términos que se inyecta en la búsqueda.
 //   - trae puntuación y mayúsculas "de fábrica" y no alucina en silencio.
 //
 // El "modelPath" que recibe load() es la CARPETA del modelo (no un fichero):
 // debe contener encoder.int8.onnx, decoder.int8.onnx, joiner.int8.onnx y
 // tokens.txt (formato sherpa-onnx para Parakeet TDT).
+//
+// BIASING (hotwords). Si en esa misma carpeta están ADEMÁS hotwords.txt y
+// bpe.vocab, el motor arranca sesgado hacia tu vocabulario. Requiere las tres
+// cosas a la vez, y por eso es fácil que parezca activo sin estarlo:
+//   1. decodingMethod = 'modified_beam_search'  (con greedy_search sherpa-onnx
+//      IGNORA los hotwords EN SILENCIO — no avisa, simplemente no sesga),
+//   2. modelingUnit = 'bpe' + bpe.vocab para poder tokenizar los términos,
+//   3. el propio hotwords.txt, que escribe LearningService desde lo aprendido.
+// Soportado para transducers NeMo desde sherpa-onnx v1.13.0 (PR #3077).
+// [hotwordsActive] dice si de verdad quedó puesto; no lo des por hecho.
 
 import 'dart:async';
 import 'dart:io';
@@ -22,6 +32,7 @@ import 'dart:typed_data';
 
 import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 
+import '../../core/config.dart';
 import '../../platform/whisper_engine.dart';
 
 class ParakeetEngine implements WhisperEngine {
@@ -41,14 +52,23 @@ class ParakeetEngine implements WhisperEngine {
 
   int _nextId = 0;
   final Map<int, Completer<String>> _pending = {};
+  bool _hotwordsActive = false;
 
   @override
   bool get isLoaded => _loaded;
 
+  /// Si el motor cargado está REALMENTE sesgado con tus hotwords.
+  ///
+  /// Falso cuando falta `hotwords.txt` o `bpe.vocab`. Lo expone para que la UI
+  /// y los diagnósticos puedan decirlo en vez de suponerlo: un biasing que se
+  /// cae en silencio es indistinguible de uno que no sirve.
+  bool get hotwordsActive => _hotwordsActive;
+
   /// [modelPath] aquí es la CARPETA del modelo Parakeet.
   @override
   Future<void> load(String modelPath) async {
-    final tokens = File('$modelPath${Platform.pathSeparator}$tokensFile');
+    final sep = Platform.pathSeparator;
+    final tokens = File('$modelPath$sep$tokensFile');
     if (!await tokens.exists()) {
       throw StateError(
         'No se encontró el modelo Parakeet en "$modelPath" '
@@ -56,6 +76,14 @@ class ParakeetEngine implements WhisperEngine {
       );
     }
     if (_loaded) return;
+
+    // Los hotwords solo se activan si están LAS DOS piezas. Con una sola, se
+    // arrancaría en modified_beam_search (más lento) sin sesgar nada.
+    final hotwords = File('$modelPath$sep${AppConfig.hotwordsFile}');
+    final bpeVocab = File('$modelPath$sep${AppConfig.bpeVocabFile}');
+    final useHotwords = await hotwords.exists() &&
+        await bpeVocab.exists() &&
+        (await hotwords.length()) > 0;
 
     final ready = ReceivePort();
     final fromIsolate = ReceivePort();
@@ -65,12 +93,15 @@ class ParakeetEngine implements WhisperEngine {
       _isolateMain,
       _InitMsg(
         modelDir: modelPath,
+        hotwordsPath: useHotwords ? hotwords.path : null,
+        bpeVocabPath: useHotwords ? bpeVocab.path : null,
         readyPort: ready.sendPort,
         responsePort: fromIsolate.sendPort,
       ),
       debugName: 'parakeet',
       errorsAreFatal: true,
     );
+    _hotwordsActive = useHotwords;
 
     final first = await ready.first;
     ready.close();
@@ -131,6 +162,7 @@ class ParakeetEngine implements WhisperEngine {
 
   Future<void> _shutdown() async {
     _loaded = false;
+    _hotwordsActive = false;
     try {
       _toIsolate?.send(const ['shutdown']);
     } catch (_) {}
@@ -154,10 +186,17 @@ class ParakeetEngine implements WhisperEngine {
 
 class _InitMsg {
   final String modelDir;
+
+  /// Rutas del biasing. Van SIEMPRE las dos o ninguna (lo garantiza load()).
+  final String? hotwordsPath;
+  final String? bpeVocabPath;
+
   final SendPort readyPort;
   final SendPort responsePort;
   const _InitMsg({
     required this.modelDir,
+    required this.hotwordsPath,
+    required this.bpeVocabPath,
     required this.readyPort,
     required this.responsePort,
   });
@@ -177,6 +216,10 @@ void _isolateMain(_InitMsg init) {
     sherpa.initBindings();
 
     final sep = Platform.pathSeparator;
+    final hotwords = init.hotwordsPath;
+    final bpeVocab = init.bpeVocabPath;
+    final biasing = hotwords != null && bpeVocab != null;
+
     final config = sherpa.OfflineRecognizerConfig(
       model: sherpa.OfflineModelConfig(
         transducer: sherpa.OfflineTransducerModelConfig(
@@ -188,8 +231,16 @@ void _isolateMain(_InitMsg init) {
         modelType: 'nemo_transducer',
         numThreads: 4,
         provider: 'cpu',
+        // Sin bpe.vocab los hotwords no se pueden tokenizar y se descartan.
+        modelingUnit: biasing ? 'bpe' : '',
+        bpeVocab: biasing ? bpeVocab : '',
         debug: false,
       ),
+      // greedy_search es más rápido, pero IGNORA los hotwords sin avisar. Solo
+      // se paga el beam search cuando hay vocabulario que sesgar.
+      decodingMethod: biasing ? 'modified_beam_search' : 'greedy_search',
+      hotwordsFile: biasing ? hotwords : '',
+      hotwordsScore: AppConfig.hotwordsScore,
     );
     recognizer = sherpa.OfflineRecognizer(config);
   } catch (e) {

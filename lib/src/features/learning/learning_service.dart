@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import '../../core/config.dart';
 import 'learning_repository.dart';
 import 'text_similarity.dart';
@@ -37,7 +39,10 @@ class LearningService {
       minFreq: AppConfig.minCorrectionFreq,
     );
     _activeMap = {for (final c in corr) c.raw.toLowerCase(): c.corrected};
-    _vocab = await _repo.topVocab(limit: AppConfig.initialPromptMaxTerms);
+    // Se carga el cupo de HOTWORDS (el mayor de los dos). buildInitialPrompt
+    // recorta por su cuenta y por longitud, así que traer de más no le afecta;
+    // traer de menos sí cegaría el biasing del motor.
+    _vocab = await _repo.topVocab(limit: AppConfig.hotwordsMaxTerms);
   }
 
   /// Aprende de una edición del usuario.
@@ -136,6 +141,54 @@ class LearningService {
       added.add(term);
     }
     return buf.toString();
+  }
+
+  /// Vocabulario propio listo para el fichero de hotwords de sherpa-onnx.
+  ///
+  /// A diferencia de [buildInitialPrompt] (que era para Whisper y que Parakeet
+  /// IGNORA), esto sí llega al motor: sesga la decodificación hacia tus
+  /// términos antes de que se elija la palabra, en vez de intentar reemplazarla
+  /// después. Es la diferencia entre corregir "supabáis" y no oírlo nunca.
+  ///
+  /// Devuelve los términos en orden descendente de frecuencia, sin duplicados
+  /// y sin recortes por longitud de línea (la lista no compite por contexto).
+  List<String> buildHotwords() {
+    final seen = <String>{};
+    final out = <String>[];
+    for (final term in _vocab) {
+      final t = term.trim();
+      if (t.length < AppConfig.hotwordsMinTermLength) continue;
+      // Un hotword con caracteres raros no se tokeniza y ensucia el fichero.
+      if (!RegExp(r'^[\wÀ-ÿ][\wÀ-ÿ .-]*$').hasMatch(t)) continue;
+      if (!seen.add(t.toLowerCase())) continue;
+      out.add(t);
+    }
+    return out;
+  }
+
+  /// Vuelca los hotwords a `<modelDir>/hotwords.txt`.
+  ///
+  /// Devuelve `true` si el fichero queda escrito con al menos un término. Si no
+  /// hay vocabulario todavía, BORRA el fichero: dejar uno vacío haría que el
+  /// motor arrancase en `modified_beam_search` (más lento) sin ganar nada.
+  ///
+  /// El motor lee este fichero al construir el recognizer, así que los términos
+  /// nuevos entran en el siguiente arranque, no en caliente.
+  Future<bool> writeHotwordsFile(String modelDir) async {
+    final file = File('$modelDir${Platform.pathSeparator}'
+        '${AppConfig.hotwordsFile}');
+    final terms = buildHotwords();
+    try {
+      if (terms.isEmpty) {
+        if (file.existsSync()) await file.delete();
+        return false;
+      }
+      await file.writeAsString('${terms.join('\n')}\n');
+      return true;
+    } on FileSystemException {
+      // Sin permisos o disco lleno: el dictado debe seguir funcionando.
+      return false;
+    }
   }
 
   // --- helpers ---

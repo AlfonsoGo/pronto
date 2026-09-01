@@ -79,6 +79,31 @@ class AppConfig {
   /// Nº máximo de términos de vocabulario en el initial_prompt.
   static const int initialPromptMaxTerms = 45;
 
+  // --- Biasing del motor (hotwords de sherpa-onnx) ---
+  /// Nº máximo de términos que se vuelcan al fichero de hotwords.
+  ///
+  /// MUY por encima de [initialPromptMaxTerms]: el initial_prompt de Whisper
+  /// competía por una ventana de ~224 tokens, pero los hotwords son una lista
+  /// aparte y no gastan contexto. Un tope bajo aquí CIEGA el biasing en
+  /// silencio: el vocabulario aprendido existe en la BD pero nunca llega al
+  /// motor, que es justo la avería que este fichero viene a arreglar.
+  static const int hotwordsMaxTerms = 500;
+
+  /// Peso del biasing. El valor por defecto de sherpa-onnx es 1.5; subirlo
+  /// fuerza más la coincidencia pero aumenta los falsos positivos.
+  static const double hotwordsScore = 2.0;
+
+  /// Longitud mínima de un término para entrar en los hotwords. Las palabras
+  /// muy cortas disparan falsos positivos por todas partes.
+  static const int hotwordsMinTermLength = 3;
+
+  /// Fichero de hotwords que Pronto genera dentro de la carpeta del modelo.
+  static const String hotwordsFile = 'hotwords.txt';
+
+  /// Vocabulario BPE necesario para tokenizar los hotwords. Se genera desde el
+  /// tokenizer del modelo original y viaja junto al modelo.
+  static const String bpeVocabFile = 'bpe.vocab';
+
   // --- Post-corrección LLM (opcional, off por defecto) ---
   /// Por debajo de esta confianza (avgLogProb) se permite la post-corrección.
   /// Por encima (texto muy seguro) se salta para evitar parafraseo.

@@ -17,6 +17,7 @@ import '../learning/learning_service.dart';
 import '../overlay/pill_popup_controller.dart';
 import '../post_correction/llm_provider.dart';
 import '../settings/settings_controller.dart';
+import '../transcription/parakeet_engine.dart';
 import '../translation/language_detect.dart';
 import '../translation/translation_provider.dart';
 import 'dictation_state.dart';
@@ -94,11 +95,22 @@ class DictationController extends Notifier<DictationState> {
       _engine = engine;
 
       final path = modelPath ?? await _resolveModelPath();
+
+      // Vuelca el vocabulario aprendido ANTES de cargar: sherpa-onnx lee los
+      // hotwords al construir el recognizer, no en caliente. Si esto se hiciera
+      // después, el biasing entraría un arranque tarde y parecería que no
+      // funciona.
+      if (path != null && engine is ParakeetEngine) {
+        await _learning.writeHotwordsFile(path);
+      }
+
       if (path != null) {
         await engine.load(path);
       }
+      final biasing =
+          engine is ParakeetEngine ? '${engine.hotwordsActive}' : 'n/a';
       _logEngine('engine=${engine.runtimeType} loaded=${engine.isLoaded} '
-          'path=$path');
+          'path=$path hotwords=$biasing');
 
       _levelSub = _audio.amplitude.listen((lvl) {
         state = state.copyWith(level: lvl);
