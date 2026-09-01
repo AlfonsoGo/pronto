@@ -3,6 +3,20 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../translation/language_detect.dart';
+
+/// Qué está enseñando la cajita de la píldora.
+enum PillPopupKind {
+  /// La transcripción recién terminada.
+  transcription,
+
+  /// Confirmación de "Copiado".
+  copied,
+
+  /// Un aviso corto del sistema (p. ej. el cambio de idioma de salida).
+  notice,
+}
+
 /// Estado de la cajita que aparece a la derecha del punto (píldora) con la
 /// última transcripción, y que también confirma el "Copiado".
 @immutable
@@ -10,11 +24,25 @@ class PillPopup {
   /// Si la caja debe mostrarse.
   final bool visible;
 
-  /// Texto a mostrar (la transcripción).
+  /// Qué está mostrando.
+  final PillPopupKind kind;
+
+  /// Texto principal: lo que se ha pegado (en el idioma de salida).
   final String text;
 
-  /// Si el motivo es "se acaba de copiar" (muestra el check + "Copiado").
-  final bool copied;
+  /// Idioma de [text]; `null` si la traducción está desactivada o no se supo.
+  final TextLanguage? lang;
+
+  /// La OTRA versión del mismo dictado (traducción u original). Vacío si no la
+  /// hay todavía.
+  final String altText;
+
+  /// Idioma de [altText].
+  final TextLanguage? altLang;
+
+  /// La otra versión se está traduciendo en segundo plano (spinner en la
+  /// insignia).
+  final bool altPending;
 
   /// Contador que sube en cada aparición: sirve de `key` para re-disparar la
   /// animación de entrada aunque la caja ya estuviera visible.
@@ -22,16 +50,36 @@ class PillPopup {
 
   const PillPopup({
     this.visible = false,
+    this.kind = PillPopupKind.transcription,
     this.text = '',
-    this.copied = false,
+    this.lang,
+    this.altText = '',
+    this.altLang,
+    this.altPending = false,
     this.seq = 0,
   });
 
-  PillPopup copyWith({bool? visible, String? text, bool? copied, int? seq}) {
+  /// `true` si hay que dibujar la insignia ES/EN de la otra versión.
+  bool get hasAlt => altText.isNotEmpty || altPending;
+
+  PillPopup copyWith({
+    bool? visible,
+    PillPopupKind? kind,
+    String? text,
+    TextLanguage? lang,
+    String? altText,
+    TextLanguage? altLang,
+    bool? altPending,
+    int? seq,
+  }) {
     return PillPopup(
       visible: visible ?? this.visible,
+      kind: kind ?? this.kind,
       text: text ?? this.text,
-      copied: copied ?? this.copied,
+      lang: lang ?? this.lang,
+      altText: altText ?? this.altText,
+      altLang: altLang ?? this.altLang,
+      altPending: altPending ?? this.altPending,
       seq: seq ?? this.seq,
     );
   }
@@ -53,19 +101,97 @@ class PillPopupController extends Notifier<PillPopup> {
   }
 
   /// Muestra la transcripción recién terminada.
-  void showTranscription(String text) => _show(text, copied: false);
+  ///
+  /// [altText]/[altLang] son la otra versión del par español-inglés; si aún se
+  /// está traduciendo en segundo plano se pasa [altPending] y luego se completa
+  /// con [completeAlt].
+  void showTranscription(
+    String text, {
+    TextLanguage? lang,
+    String altText = '',
+    TextLanguage? altLang,
+    bool altPending = false,
+  }) {
+    _show(
+      text,
+      kind: PillPopupKind.transcription,
+      lang: lang,
+      altText: altText,
+      altLang: altLang,
+      altPending: altPending,
+    );
+  }
 
-  /// Confirma que se ha copiado la transcripción.
-  void showCopied(String text) => _show(text, copied: true);
+  /// Confirma que se ha copiado un texto. [lang] es el idioma de lo copiado,
+  /// para que la caja lo etiquete.
+  void showCopied(
+    String text, {
+    TextLanguage? lang,
+    String altText = '',
+    TextLanguage? altLang,
+    bool altPending = false,
+  }) {
+    _show(
+      text,
+      kind: PillPopupKind.copied,
+      lang: lang,
+      altText: altText,
+      altLang: altLang,
+      altPending: altPending,
+    );
+  }
 
-  void _show(String text, {required bool copied}) {
+  /// Aviso corto del sistema (cambio de idioma de salida, traducción no
+  /// disponible…). No tiene "otra versión" ni acción de copiar.
+  void showNotice(String message) => _show(message, kind: PillPopupKind.notice);
+
+  /// Completa la otra versión cuando termina la traducción en segundo plano.
+  ///
+  /// No reabre la caja si ya se ocultó (sería un pop fantasma varios segundos
+  /// después del dictado); si sigue visible, reinicia la cuenta atrás para dar
+  /// tiempo a leer la traducción recién llegada.
+  void completeAlt(String altText, TextLanguage altLang) {
+    if (!state.visible || !state.altPending) {
+      state = state.copyWith(altPending: false);
+      return;
+    }
+    state = state.copyWith(
+      altText: altText,
+      altLang: altLang,
+      altPending: false,
+    );
+    _timer?.cancel();
+    _timer = Timer(_visibleFor, hide);
+  }
+
+  /// La traducción en segundo plano falló: quitamos el spinner y dejamos la
+  /// caja con lo que ya tenía (nunca empeoramos lo que ve el usuario).
+  void failAlt() {
+    if (!state.altPending) return;
+    state = state.copyWith(altPending: false);
+  }
+
+  void _show(
+    String text, {
+    required PillPopupKind kind,
+    TextLanguage? lang,
+    String altText = '',
+    TextLanguage? altLang,
+    bool altPending = false,
+  }) {
     final t = text.trim();
     if (t.isEmpty) return;
     _timer?.cancel();
-    state = state.copyWith(
+    // Estado nuevo COMPLETO (no copyWith): así la otra versión del dictado
+    // anterior no se cuela en este.
+    state = PillPopup(
       visible: true,
+      kind: kind,
       text: t,
-      copied: copied,
+      lang: lang,
+      altText: altText.trim(),
+      altLang: altLang,
+      altPending: altPending,
       seq: state.seq + 1,
     );
     _timer = Timer(_visibleFor, hide);

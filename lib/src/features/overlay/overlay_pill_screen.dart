@@ -11,6 +11,7 @@ import '../../platform/windows/windows_active_monitor.dart';
 import '../dictation/dictation_controller.dart';
 import '../dictation/dictation_state.dart';
 import '../settings/settings_controller.dart';
+import '../translation/language_detect.dart';
 import '../update/update_controller.dart';
 import 'pill_popup_controller.dart';
 import 'window_mode_controller.dart';
@@ -23,6 +24,7 @@ Color _colorFor(DictationStatus s) {
     case DictationStatus.recording:
       return const Color(0xFFFF3B30); // rojo · grabando
     case DictationStatus.transcribing:
+    case DictationStatus.translating:
     case DictationStatus.injecting:
       return const Color(0xFFFFCC00); // amarillo · pensando/escribiendo
     case DictationStatus.error:
@@ -37,9 +39,11 @@ bool _animated(DictationStatus s) =>
     s == DictationStatus.recording ||
     s == DictationStatus.error;
 
-/// ¿Está procesando? (pensando/escribiendo): mostramos un aro giratorio.
+/// ¿Está procesando? (pensando/traduciendo/escribiendo): aro giratorio.
 bool _thinking(DictationStatus s) =>
-    s == DictationStatus.transcribing || s == DictationStatus.injecting;
+    s == DictationStatus.transcribing ||
+    s == DictationStatus.translating ||
+    s == DictationStatus.injecting;
 
 /// Modo barra flotante: ventana transparente y sin marco, con un único punto.
 /// Al terminar un dictado (o al copiar con Ctrl+Alt+V) se despliega una cajita
@@ -198,13 +202,18 @@ class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
   /// borra el ancla para recalcularla la próxima vez.
   void _syncWindowSize(bool visible) {
     if (visible) {
-      _applyWindowSize(_hovered ? kPillReading : kPillExpanded);
+      _applyWindowSize(_hovered ? _readingSize() : kPillExpanded);
       return;
     }
     // Sin caja: grabando = un poco más ancha (waveform); en reposo = el punto.
     _applyWindowSize(_isRecording ? kPillRecording : kPillIdle);
     if (!_isRecording) _pillAnchor = null;
   }
+
+  /// Tamaño de la ventana en modo lectura: más alto si la caja tiene que
+  /// enseñar también la otra versión del dictado (traducción).
+  Size _readingSize() =>
+      ref.read(pillPopupProvider).hasAlt ? kPillReadingDual : kPillReading;
 
   /// Aplica el tamaño anclando la esquina INFERIOR-IZQUIERDA: al crecer en alto
   /// la ventana se expande hacia arriba (no hacia abajo, fuera de la pantalla)
@@ -250,6 +259,14 @@ class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
         _collapseTimer?.cancel();
         if (_hovered) _hovered = false;
         _syncWindowSize(false);
+      }
+    });
+
+    // La traducción de cortesía llega DESPUÉS de aparecer la caja: si estabas
+    // leyéndola con el ratón encima, la ventana tiene que crecer para que quepa.
+    ref.listen<bool>(pillPopupProvider.select((p) => p.hasAlt), (_, hasAlt) {
+      if (hasAlt && _hovered && ref.read(pillPopupProvider).visible) {
+        _applyWindowSize(_readingSize());
       }
     });
 
@@ -302,12 +319,14 @@ class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
                 onExit: (_) => _onBoxExit(),
                 child: _PopupBox(
                   key: ValueKey(popup.seq),
-                  text: popup.text,
-                  copied: popup.copied,
+                  popup: popup,
                   expanded: _hovered,
                   onCopy: () => ref
                       .read(dictationControllerProvider.notifier)
                       .copyLastTranscription(),
+                  onCopyAlt: () => ref
+                      .read(dictationControllerProvider.notifier)
+                      .copyAlternate(),
                 ),
               ),
           ],
@@ -698,27 +717,43 @@ class _UpdateDotState extends State<_UpdateDot>
 ///
 /// Al pasar el ratón por encima ([expanded] == true) se amplía y muestra TODA
 /// la transcripción en varias líneas (con scroll si es muy larga) para poder
-/// leerla con calma.
+/// leerla con calma, y —si la traducción está activada— también la versión en
+/// el otro idioma, con un cuadradito ES/EN para copiarla. Ese cuadradito SOLO
+/// existe con el ratón encima: en reposo la caja se mantiene limpia.
 class _PopupBox extends StatelessWidget {
-  final String text;
-  final bool copied;
+  final PillPopup popup;
   final bool expanded;
   final VoidCallback onCopy;
+  final VoidCallback onCopyAlt;
 
   const _PopupBox({
     super.key,
-    required this.text,
-    required this.copied,
+    required this.popup,
     required this.expanded,
     required this.onCopy,
+    required this.onCopyAlt,
   });
 
   static const _accent = Color(0xFF7800E3);
   static const _hint = Color(0xFFB98CFF);
   static const _textColor = Color(0xFFEDEAF5);
 
+  /// Texto secundario (la otra versión): algo más apagado que el principal para
+  /// que se lea de un vistazo cuál es cuál.
+  static const _altTextColor = Color(0xFFB4AECB);
+
+  bool get _copied => popup.kind == PillPopupKind.copied;
+  bool get _notice => popup.kind == PillPopupKind.notice;
+
+  /// Solo se ofrece copiar cuando hay algo que copiar (un aviso no lo es).
+  bool get _canCopy => !_notice && !_copied;
+
   @override
   Widget build(BuildContext context) {
+    // Con dos versiones la caja necesita más alto; el tamaño de la VENTANA lo
+    // acompaña desde _readingSize().
+    final double maxHeight = expanded ? (popup.hasAlt ? 292 : 200) : 44;
+
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
       duration: const Duration(milliseconds: 260),
@@ -733,12 +768,12 @@ class _PopupBox extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.only(left: 8, bottom: 3),
         child: GestureDetector(
-          onTap: copied ? null : onCopy,
+          onTap: _canCopy ? onCopy : null,
           child: AnimatedContainer(
             duration: const Duration(milliseconds: 180),
             curve: Curves.easeOut,
-            width: expanded ? 312 : 264,
-            constraints: BoxConstraints(maxHeight: expanded ? 200 : 44),
+            width: expanded ? (popup.hasAlt ? 340 : 312) : 264,
+            constraints: BoxConstraints(maxHeight: maxHeight),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             decoration: BoxDecoration(
               color: const Color(0xF21B1A20),
@@ -754,27 +789,28 @@ class _PopupBox extends StatelessWidget {
                 ),
               ],
             ),
-            child: expanded ? _expanded() : _compact(),
+            child: expanded ? _expandedView() : _compactView(),
           ),
         ),
       ),
     );
   }
 
+  IconData get _icon {
+    if (_notice) return Icons.translate_rounded;
+    return _copied ? Icons.check_circle_rounded : Icons.content_copy_rounded;
+  }
+
   /// Vista compacta: una sola línea con elipsis.
-  Widget _compact() {
+  Widget _compactView() {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(
-          copied ? Icons.check_circle_rounded : Icons.content_copy_rounded,
-          size: 15,
-          color: _hint,
-        ),
+        Icon(_icon, size: 15, color: _hint),
         const SizedBox(width: 8),
         Expanded(
           child: Text(
-            text,
+            popup.text,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
@@ -788,46 +824,187 @@ class _PopupBox extends StatelessWidget {
     );
   }
 
-  /// Vista ampliada (ratón encima): etiqueta + texto completo desplazable.
-  Widget _expanded() {
+  /// Vista ampliada (ratón encima): cabecera + texto completo y, si la hay, la
+  /// otra versión debajo con su insignia de idioma.
+  Widget _expandedView() {
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              copied ? Icons.check_circle_rounded : Icons.content_copy_rounded,
-              size: 14,
-              color: _hint,
-            ),
-            const SizedBox(width: 6),
-            Text(
-              copied ? 'Copiado' : 'Toca para copiar',
-              style: const TextStyle(
-                color: _hint,
-                fontSize: 11,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
+        _header(),
         const SizedBox(height: 6),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxHeight: 162),
+        Flexible(
           child: SingleChildScrollView(
-            child: Text(
-              text,
-              style: const TextStyle(
-                color: _textColor,
-                fontSize: 13,
-                height: 1.3,
-              ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  popup.text,
+                  style: const TextStyle(
+                    color: _textColor,
+                    fontSize: 13,
+                    height: 1.3,
+                  ),
+                ),
+                if (popup.hasAlt) ...[
+                  const SizedBox(height: 8),
+                  Divider(
+                    height: 1,
+                    thickness: 1,
+                    color: _accent.withValues(alpha: 0.35),
+                  ),
+                  const SizedBox(height: 8),
+                  _altBlock(),
+                ],
+              ],
             ),
           ),
         ),
       ],
+    );
+  }
+
+  /// Cabecera: qué es la caja y, a la derecha, el cuadradito ES/EN para copiar
+  /// la otra versión.
+  Widget _header() {
+    final String label;
+    if (_notice) {
+      label = 'Idioma';
+    } else if (_copied) {
+      label = popup.lang == null
+          ? 'Copiado'
+          : 'Copiado en ${popup.lang!.label.toLowerCase()}';
+    } else {
+      label = popup.lang == null
+          ? 'Toca para copiar'
+          : 'Toca para copiar (${popup.lang!.badge})';
+    }
+
+    return Row(
+      children: [
+        Icon(_icon, size: 14, color: _hint),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: _hint,
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
+        if (popup.hasAlt)
+          _LangBadgeButton(
+            lang: popup.altLang,
+            pending: popup.altPending,
+            onTap: popup.altPending ? null : onCopyAlt,
+          ),
+      ],
+    );
+  }
+
+  /// La otra versión del dictado: sirve para comprobar de un vistazo que la
+  /// transcripción se entendió bien antes de copiarla.
+  Widget _altBlock() {
+    if (popup.altPending) {
+      return const Row(
+        children: [
+          SizedBox(
+            width: 11,
+            height: 11,
+            child: CircularProgressIndicator(
+              strokeWidth: 1.6,
+              valueColor: AlwaysStoppedAnimation(_hint),
+            ),
+          ),
+          SizedBox(width: 8),
+          Text(
+            'Traduciendo…',
+            style: TextStyle(color: _altTextColor, fontSize: 12, height: 1.3),
+          ),
+        ],
+      );
+    }
+    return Text(
+      popup.altText,
+      style: const TextStyle(
+        color: _altTextColor,
+        fontSize: 12.5,
+        height: 1.3,
+      ),
+    );
+  }
+}
+
+/// Cuadradito con el código de idioma (ES / EN) que copia la otra versión del
+/// dictado. Solo se dibuja con la caja ampliada (ratón encima). Mientras la
+/// traducción está en marcha muestra un aro y no acepta pulsaciones.
+class _LangBadgeButton extends StatelessWidget {
+  final TextLanguage? lang;
+  final bool pending;
+  final VoidCallback? onTap;
+
+  const _LangBadgeButton({
+    required this.lang,
+    required this.pending,
+    required this.onTap,
+  });
+
+  static const _accent = Color(0xFF7800E3);
+  static const _hint = Color(0xFFB98CFF);
+
+  @override
+  Widget build(BuildContext context) {
+    final enabled = onTap != null && !pending;
+    final label = lang?.badge ?? '··';
+
+    return Tooltip(
+      message: pending
+          ? 'Traduciendo…'
+          : 'Copiar en ${lang?.label.toLowerCase() ?? 'el otro idioma'}',
+      waitDuration: const Duration(milliseconds: 400),
+      child: MouseRegion(
+        cursor: enabled ? SystemMouseCursors.click : MouseCursor.defer,
+        child: GestureDetector(
+          // El clic no debe llegar a la caja (que copiaría el texto principal).
+          behavior: HitTestBehavior.opaque,
+          onTap: enabled ? onTap : null,
+          child: Container(
+            width: 34,
+            height: 22,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: _accent.withValues(alpha: enabled ? 0.28 : 0.12),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(
+                color: _accent.withValues(alpha: enabled ? 0.85 : 0.4),
+              ),
+            ),
+            child: pending
+                ? const SizedBox(
+                    width: 11,
+                    height: 11,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 1.6,
+                      valueColor: AlwaysStoppedAnimation(_hint),
+                    ),
+                  )
+                : Text(
+                    label,
+                    style: const TextStyle(
+                      color: Color(0xFFEDEAF5),
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 0.6,
+                    ),
+                  ),
+          ),
+        ),
+      ),
     );
   }
 }

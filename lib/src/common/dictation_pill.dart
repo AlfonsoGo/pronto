@@ -415,6 +415,14 @@ class _PillVisuals {
           icon: Icons.graphic_eq_rounded,
           label: 'Transcribiendo',
         );
+      case DictationStatus.translating:
+        return _PillVisuals(
+          accent: scheme.secondary,
+          background: scheme.primary.withValues(alpha: 0.12),
+          foreground: scheme.onSurface,
+          icon: Icons.translate_rounded,
+          label: 'Traduciendo',
+        );
       case DictationStatus.injecting:
         return _PillVisuals(
           accent: scheme.secondary,

@@ -1,6 +1,7 @@
 // ignore_for_file: require_trailing_commas
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pronto/src/features/settings/settings_controller.dart';
+import 'package:pronto/src/features/translation/language_detect.dart';
 import 'package:pronto/src/platform/global_hotkey_service.dart';
 import 'package:pronto/src/platform/text_injector.dart';
 
@@ -22,7 +23,7 @@ void main() {
     });
 
     test('round-trip con todos los campos no-defecto', () {
-      final original = AppSettings(
+      const original = AppSettings(
         modelFile: 'ggml-large-v3-turbo.bin',
         language: 'en',
         injectionMode: InjectionMode.unicodeSendInput,
@@ -32,7 +33,7 @@ void main() {
         llmBaseUrl: 'http://localhost:1234',
         llmModel: 'phi3:mini',
         captureExternalEdits: false,
-        hotkey: const HotkeyCombo(
+        hotkey: HotkeyCombo(
           virtualKey: 0x73, // F4
           ctrl: true,
           shift: true,
@@ -42,6 +43,10 @@ void main() {
         textPolish: false,
         sounds: false,
         micDeviceId: 'mic-001',
+        translationEnabled: true,
+        outputLanguage: 'en',
+        translationModel: 'gemma3:4b',
+        translateHotkey: HotkeyCombo(virtualKey: 0x4C, ctrl: true, win: true),
       );
       final restored = AppSettings.fromJson(original.toJson());
       expect(restored, equals(original));
@@ -105,7 +110,7 @@ void main() {
 
     group('tolerancia a claves ausentes o inválidas', () {
       test('JSON vacío devuelve los valores por defecto', () {
-        final restored = AppSettings.fromJson({});
+        final restored = AppSettings.fromJson(const {});
         expect(restored, equals(base()));
       });
 
@@ -125,6 +130,50 @@ void main() {
         final json = base().toJson()..['pillScale'] = 2; // int, no double
         final restored = AppSettings.fromJson(json);
         expect(restored.pillScale, 2.0);
+      });
+    });
+
+    // Los ajustes de traducción son NUEVOS: un Pronto ya instalado tiene en
+    // disco un JSON sin estas claves y debe seguir arrancando con la traducción
+    // apagada, no romperse ni activarla sola.
+    group('traducción: compatibilidad con ajustes antiguos', () {
+      Map<String, dynamic> sinTraduccion() => base().toJson()
+        ..remove('translationEnabled')
+        ..remove('outputLanguage')
+        ..remove('translationModel')
+        ..remove('translateHotkey');
+
+      test('ajustes viejos (sin claves de traducción) caen a los defectos', () {
+        final restored = AppSettings.fromJson(sinTraduccion());
+        expect(restored.translationEnabled, isFalse);
+        expect(restored.outputLang, TextLanguage.es);
+        expect(restored.translateHotkey, HotkeyCombo.translateDefault);
+        expect(restored.translationModel, base().translationModel);
+      });
+
+      test('el resto de ajustes viejos sobrevive intacto', () {
+        final json = sinTraduccion()..['pillScale'] = 1.4;
+        final restored = AppSettings.fromJson(json);
+        expect(restored.pillScale, 1.4);
+        expect(restored.hotkey, base().hotkey);
+      });
+
+      test('outputLanguage inválido cae a español', () {
+        final json = base().toJson()..['outputLanguage'] = 'fr';
+        expect(AppSettings.fromJson(json).outputLang, TextLanguage.es);
+      });
+
+      test('outputLanguage válido se respeta', () {
+        final json = base().toJson()..['outputLanguage'] = 'en';
+        expect(AppSettings.fromJson(json).outputLang, TextLanguage.en);
+      });
+
+      test('translateHotkey corrupto (no-Map) cae al defecto', () {
+        final json = base().toJson()..['translateHotkey'] = 'ctrl+alt+t';
+        expect(
+          AppSettings.fromJson(json).translateHotkey,
+          HotkeyCombo.translateDefault,
+        );
       });
     });
 

@@ -60,6 +60,37 @@ const String _kMsgDown = 'down'; // el combo se acaba de pulsar
 const String _kMsgUp = 'up'; // el combo se acaba de soltar
 const String _kMsgThreadId = 'tid'; // id del hilo nativo del isolate del hook
 const String _kMsgCopy = 'copy'; // el combo de copiar se acaba de pulsar
+const String _kMsgLang = 'lang'; // el combo de idioma se acaba de pulsar
+
+/// Combo "de pulsación simple": no distingue mantener/soltar, solo emite su
+/// [tag] una vez por pulsación física (copiar, alternar idioma…). El combo de
+/// DICTAR no entra aquí: ese sí necesita down/up para el push-to-talk.
+class _TapCombo {
+  final String tag;
+  final int vk;
+  final bool ctrl;
+  final bool alt;
+  final bool shift;
+  final bool win;
+
+  const _TapCombo({
+    required this.tag,
+    required this.vk,
+    required this.ctrl,
+    required this.alt,
+    required this.shift,
+    required this.win,
+  });
+
+  factory _TapCombo.from(String tag, HotkeyCombo combo) => _TapCombo(
+        tag: tag,
+        vk: combo.virtualKey,
+        ctrl: combo.ctrl,
+        alt: combo.alt,
+        shift: combo.shift,
+        win: combo.win,
+      );
+}
 
 /// Parámetros con los que arrancamos el isolate del hook.
 ///
@@ -76,14 +107,8 @@ class _HookConfig {
   /// 0 = hold, 1 = toggle. Usamos int para que sea trivial de serializar.
   final int mode;
 
-  /// Combo opcional de COPIAR la última transcripción. [hasCopy] indica si está
-  /// configurado; si lo está, se vigila también esta tecla + modificadores.
-  final bool hasCopy;
-  final int copyVk;
-  final bool copyCtrl;
-  final bool copyAlt;
-  final bool copyShift;
-  final bool copyWin;
+  /// Combos de pulsación simple que también hay que vigilar (copiar, idioma).
+  final List<_TapCombo> taps;
 
   const _HookConfig({
     required this.toMain,
@@ -93,12 +118,7 @@ class _HookConfig {
     required this.shift,
     required this.win,
     required this.mode,
-    this.hasCopy = false,
-    this.copyVk = 0,
-    this.copyCtrl = false,
-    this.copyAlt = false,
-    this.copyShift = false,
-    this.copyWin = false,
+    this.taps = const [],
   });
 }
 
@@ -134,6 +154,7 @@ class WindowsHotkeyService implements GlobalHotkeyService {
     HotkeyCombo combo, {
     TriggerMode mode = TriggerMode.hold,
     HotkeyCombo? copyCombo,
+    HotkeyCombo? langCombo,
   }) async {
     if (_disposed) {
       throw StateError('WindowsHotkeyService ya está liberado.');
@@ -185,6 +206,11 @@ class WindowsHotkeyService implements GlobalHotkeyService {
             _controller.add(const HotkeyEvent(HotkeyEventType.copy));
           }
           break;
+        case _kMsgLang:
+          if (!_controller.isClosed) {
+            _controller.add(const HotkeyEvent(HotkeyEventType.toggleLanguage));
+          }
+          break;
       }
     });
 
@@ -196,12 +222,10 @@ class WindowsHotkeyService implements GlobalHotkeyService {
       shift: combo.shift,
       win: combo.win,
       mode: mode == TriggerMode.toggle ? 1 : 0,
-      hasCopy: copyCombo != null,
-      copyVk: copyCombo?.virtualKey ?? 0,
-      copyCtrl: copyCombo?.ctrl ?? false,
-      copyAlt: copyCombo?.alt ?? false,
-      copyShift: copyCombo?.shift ?? false,
-      copyWin: copyCombo?.win ?? false,
+      taps: <_TapCombo>[
+        if (copyCombo != null) _TapCombo.from(_kMsgCopy, copyCombo),
+        if (langCombo != null) _TapCombo.from(_kMsgLang, langCombo),
+      ],
     );
 
     _isolate = await Isolate.spawn<_HookConfig>(
@@ -288,7 +312,10 @@ late _HookConfig _isoConfig;
 /// Estado para distinguir down/up y evitar repeticiones por autorrepetición.
 bool _comboActive = false; // ¿el combo está actualmente "pulsado"?
 bool _toggleOn = false; // estado interno del modo toggle.
-bool _copyActive = false; // flanco del combo de copiar (una vez por pulsación).
+
+/// Flanco de cada combo de pulsación simple (mismo orden que `_isoConfig.taps`):
+/// garantiza un evento por pulsación física, ignorando la autorrepetición.
+List<bool> _tapActive = const [];
 
 /// Firma NATIVA del callback del hook (LowLevelKeyboardProc / HOOKPROC):
 /// LRESULT CALLBACK proc(int nCode, WPARAM wParam, LPARAM lParam).
@@ -301,7 +328,7 @@ void _hookIsolateEntry(_HookConfig config) {
   _isoToMain = config.toMain;
   _comboActive = false;
   _toggleOn = false;
-  _copyActive = false;
+  _tapActive = List<bool>.filled(config.taps.length, false);
 
   // Creamos el callback nativo enlazado a este isolate/hilo. Es válido porque
   // Windows invocará el hook en este mismo hilo (el que bombea mensajes).
@@ -391,12 +418,13 @@ int _lowLevelKeyboardProc(int nCode, int wParam, int lParam) {
       }
     }
 
-    // La tecla del combo de COPIAR (si está configurado).
-    if (_isoConfig.hasCopy && vk == _isoConfig.copyVk) {
+    // Las teclas de los combos de pulsación simple (copiar, idioma…).
+    for (var i = 0; i < _isoConfig.taps.length; i++) {
+      if (vk != _isoConfig.taps[i].vk) continue;
       if (isDown) {
-        _onCopyKeyDown();
+        _onTapKeyDown(i);
       } else if (isUp) {
-        _onCopyKeyUp();
+        _tapActive[i] = false;
       }
     }
   }
@@ -462,20 +490,14 @@ bool _modsMatch(bool ctrl, bool alt, bool shift, bool win) {
   return true;
 }
 
-/// Pulsación del combo de COPIAR: emite 'copy' una sola vez por pulsación
-/// física (flanco), si los modificadores coinciden.
-void _onCopyKeyDown() {
-  if (!_modsMatch(_isoConfig.copyCtrl, _isoConfig.copyAlt,
-      _isoConfig.copyShift, _isoConfig.copyWin,)) {
-    return;
-  }
-  if (_copyActive) return;
-  _copyActive = true;
-  _send(_kMsgCopy);
-}
-
-void _onCopyKeyUp() {
-  _copyActive = false;
+/// Pulsación de un combo de pulsación simple: emite su tag una sola vez por
+/// pulsación física (flanco), si los modificadores coinciden.
+void _onTapKeyDown(int index) {
+  final tap = _isoConfig.taps[index];
+  if (!_modsMatch(tap.ctrl, tap.alt, tap.shift, tap.win)) return;
+  if (_tapActive[index]) return;
+  _tapActive[index] = true;
+  _send(tap.tag);
 }
 
 /// Devuelve true si la tecla [vk] está actualmente pulsada.

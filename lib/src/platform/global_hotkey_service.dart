@@ -8,6 +8,10 @@ enum HotkeyEventType {
 
   /// El atajo de COPIAR (distinto del de dictar) se acaba de pulsar.
   copy,
+
+  /// El atajo de IDIOMA se acaba de pulsar: alterna español ⇄ inglés como
+  /// idioma en el que se pega el dictado.
+  toggleLanguage,
 }
 
 class HotkeyEvent {
@@ -41,6 +45,11 @@ class HotkeyCombo {
   /// (VK_V = 0x56). Distinto de Ctrl + C a propósito.
   static const HotkeyCombo copyDefault =
       HotkeyCombo(virtualKey: 0x56, ctrl: true, alt: true);
+
+  /// Atajo por defecto para alternar el IDIOMA en el que se pega el dictado
+  /// (español ⇄ inglés): Ctrl + Alt + T, de "traducir" (VK_T = 0x54).
+  static const HotkeyCombo translateDefault =
+      HotkeyCombo(virtualKey: 0x54, ctrl: true, alt: true);
 
   Map<String, dynamic> toJson() => {
         'vk': virtualKey,
@@ -123,11 +132,13 @@ enum TriggerMode {
 /// en un isolate con bucle de mensajes Win32).
 abstract class GlobalHotkeyService {
   /// Registra [combo] (dictado) y, opcionalmente, [copyCombo] (copiar la última
-  /// transcripción). Lanza si el atajo ya está en uso por otra app.
+  /// transcripción) y [langCombo] (alternar el idioma de salida). Lanza si el
+  /// atajo ya está en uso por otra app.
   Future<void> register(
     HotkeyCombo combo, {
     TriggerMode mode = TriggerMode.hold,
     HotkeyCombo? copyCombo,
+    HotkeyCombo? langCombo,
   });
 
   Future<void> unregister();

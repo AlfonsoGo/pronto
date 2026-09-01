@@ -27,6 +27,11 @@ const Size kPillRecording = Size(96, 50);
 /// no salirse por debajo de la pantalla (la píldora vive abajo).
 const Size kPillReading = Size(380, 240);
 
+/// Píldora en modo lectura CON TRADUCCIÓN: la caja muestra las dos versiones
+/// (la pegada y la del otro idioma), así que necesita más alto y algo más de
+/// ancho que [kPillReading].
+const Size kPillReadingDual = Size(410, 330);
+
 /// Tamaño del panel completo.
 const Size kPanelSize = Size(440, 680);
 

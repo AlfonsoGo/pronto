@@ -65,6 +65,9 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^4.0.0
+  # Reloj falso para probar los temporizadores de la caja de la píldora
+  # (auto-ocultado) sin esperar segundos reales en cada test.
+  fake_async: ^1.3.1
 
 flutter:
   uses-material-design: true

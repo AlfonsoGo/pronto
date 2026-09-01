@@ -87,4 +87,25 @@ class AppConfig {
   /// Si el LLM cambió más de esta fracción de palabras-contenido, se descarta
   /// su salida (protección contra alucinación).
   static const double llmMaxContentDrift = 0.15;
+
+  // --- Traducción al dictar (español ⇄ inglés, opcional) ---
+  /// Modelo por defecto para traducir. Se usa contra el mismo servidor LLM que
+  /// la post-corrección ([AppSettings.llmBaseUrl]); Ollama local por defecto.
+  static const String defaultTranslationModel = 'qwen2.5:7b';
+
+  /// Idioma en el que se pega el dictado por defecto (el "idioma por defecto"
+  /// que alterna el atajo de idioma).
+  static const String defaultOutputLanguage = 'es';
+
+  /// Tope de espera de una traducción. Más generoso que la post-corrección
+  /// porque un modelo local traduciendo un párrafo largo tarda más.
+  static const Duration translationTimeout = Duration(seconds: 45);
+
+  /// Tope de espera del precalentado del modelo. Se dispara al empezar a grabar
+  /// y solo sirve para adelantar la carga: si tarda más, se abandona sin ruido.
+  static const Duration translationWarmUpTimeout = Duration(seconds: 90);
+
+  /// Longitud máxima de un texto a traducir. Por encima no se traduce (se
+  /// pegaría el original) en vez de dejar la píldora colgada minutos.
+  static const int translationMaxChars = 4000;
 }

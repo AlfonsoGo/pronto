@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/config.dart';
 import '../../platform/global_hotkey_service.dart';
 import '../../platform/text_injector.dart';
+import '../translation/language_detect.dart';
 
 /// Provider global de ajustes de la app.
 final settingsProvider = NotifierProvider<SettingsController, AppSettings>(
@@ -76,6 +77,21 @@ class AppSettings {
   /// Id del micrófono elegido, o null = micrófono por defecto del sistema.
   final String? micDeviceId;
 
+  /// Si la traducción español ⇄ inglés al dictar está activada. Necesita un
+  /// servidor LLM (Ollama local por defecto), por eso viene apagada.
+  final bool translationEnabled;
+
+  /// Idioma en el que se PEGA el dictado ('es' o 'en'). Es el "idioma por
+  /// defecto": si dictas en el otro, Pronto traduce antes de pegar. Lo alterna
+  /// [translateHotkey] sin abrir Ajustes.
+  final String outputLanguage;
+
+  /// Modelo LLM usado para traducir (contra [llmBaseUrl]).
+  final String translationModel;
+
+  /// Atajo global que alterna el idioma de salida (español ⇄ inglés).
+  final HotkeyCombo translateHotkey;
+
   const AppSettings({
     required this.modelFile,
     required this.language,
@@ -92,7 +108,16 @@ class AppSettings {
     this.textPolish = true,
     this.sounds = true,
     this.micDeviceId,
+    this.translationEnabled = false,
+    this.outputLanguage = AppConfig.defaultOutputLanguage,
+    this.translationModel = AppConfig.defaultTranslationModel,
+    this.translateHotkey = HotkeyCombo.translateDefault,
   });
+
+  /// Idioma en el que se pega el dictado, ya validado ('es' o 'en'; cae a
+  /// español si el valor persistido no se reconoce).
+  TextLanguage get outputLang =>
+      TextLanguage.fromCode(outputLanguage) ?? TextLanguage.es;
 
   /// Valores por defecto, tomados de [AppConfig] cuando existen.
   factory AppSettings.defaults() => const AppSettings(
@@ -129,6 +154,10 @@ class AppSettings {
     // `resetMicDevice: true` para volver al micrófono por defecto (null).
     String? micDeviceId,
     bool resetMicDevice = false,
+    bool? translationEnabled,
+    String? outputLanguage,
+    String? translationModel,
+    HotkeyCombo? translateHotkey,
   }) {
     return AppSettings(
       modelFile: modelFile ?? this.modelFile,
@@ -146,6 +175,10 @@ class AppSettings {
       textPolish: textPolish ?? this.textPolish,
       sounds: sounds ?? this.sounds,
       micDeviceId: resetMicDevice ? null : (micDeviceId ?? this.micDeviceId),
+      translationEnabled: translationEnabled ?? this.translationEnabled,
+      outputLanguage: outputLanguage ?? this.outputLanguage,
+      translationModel: translationModel ?? this.translationModel,
+      translateHotkey: translateHotkey ?? this.translateHotkey,
     );
   }
 
@@ -165,6 +198,10 @@ class AppSettings {
         'textPolish': textPolish,
         'sounds': sounds,
         'micDeviceId': micDeviceId,
+        'translationEnabled': translationEnabled,
+        'outputLanguage': outputLanguage,
+        'translationModel': translationModel,
+        'translateHotkey': translateHotkey.toJson(),
       };
 
   /// Reconstruye desde JSON tolerando claves ausentes o valores inválidos:
@@ -192,6 +229,18 @@ class AppSettings {
       textPolish: j['textPolish'] as bool? ?? d.textPolish,
       sounds: j['sounds'] as bool? ?? d.sounds,
       micDeviceId: j['micDeviceId'] as String?,
+      translationEnabled:
+          j['translationEnabled'] as bool? ?? d.translationEnabled,
+      // Solo aceptamos 'es'/'en'; cualquier otra cosa cae al defecto.
+      outputLanguage: TextLanguage.fromCode(j['outputLanguage'] as String?)
+              ?.code ??
+          d.outputLanguage,
+      translationModel: j['translationModel'] as String? ?? d.translationModel,
+      translateHotkey: j['translateHotkey'] is Map
+          ? HotkeyCombo.fromJson(
+              Map<String, dynamic>.from(j['translateHotkey'] as Map),
+            )
+          : d.translateHotkey,
     );
   }
 
@@ -236,7 +285,11 @@ class AppSettings {
       other.engine == engine &&
       other.textPolish == textPolish &&
       other.sounds == sounds &&
-      other.micDeviceId == micDeviceId;
+      other.micDeviceId == micDeviceId &&
+      other.translationEnabled == translationEnabled &&
+      other.outputLanguage == outputLanguage &&
+      other.translationModel == translationModel &&
+      other.translateHotkey == translateHotkey;
 
   @override
   int get hashCode => Object.hash(
@@ -255,6 +308,10 @@ class AppSettings {
         textPolish,
         sounds,
         micDeviceId,
+        translationEnabled,
+        outputLanguage,
+        translationModel,
+        translateHotkey,
       );
 }
 
@@ -380,6 +437,35 @@ class SettingsController extends Notifier<AppSettings> {
 
   Future<void> setSounds(bool value) async {
     state = state.copyWith(sounds: value);
+    await _save();
+  }
+
+  Future<void> setTranslationEnabled(bool value) async {
+    state = state.copyWith(translationEnabled: value);
+    await _save();
+  }
+
+  /// Fija el idioma en el que se pega el dictado ('es' o 'en').
+  Future<void> setOutputLanguage(TextLanguage value) async {
+    state = state.copyWith(outputLanguage: value.code);
+    await _save();
+  }
+
+  /// Alterna el idioma de salida (español ⇄ inglés) y devuelve el nuevo. Lo usa
+  /// el atajo global de idioma.
+  Future<TextLanguage> toggleOutputLanguage() async {
+    final next = state.outputLang.other;
+    await setOutputLanguage(next);
+    return next;
+  }
+
+  Future<void> setTranslationModel(String value) async {
+    state = state.copyWith(translationModel: value);
+    await _save();
+  }
+
+  Future<void> setTranslateHotkey(HotkeyCombo value) async {
+    state = state.copyWith(translateHotkey: value);
     await _save();
   }
 

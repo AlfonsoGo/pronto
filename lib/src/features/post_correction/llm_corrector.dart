@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import '../../core/config.dart';
+import '../../core/llm_output.dart';
 import '../learning/word_diff.dart';
 
 /// Post-corrección opcional mediante un LLM (off por defecto).
@@ -110,7 +111,7 @@ REGLAS ABSOLUTAS:
       final corrected = await _callLlm(text);
       if (corrected == null) return text;
 
-      final cleaned = _cleanModelOutput(corrected);
+      final cleaned = cleanModelOutput(corrected);
       if (cleaned.isEmpty) return text;
 
       // 3) Verificación post-hoc: si el LLM cambió contenido, descartamos.
@@ -197,34 +198,6 @@ REGLAS ABSOLUTAS:
       ],
       {'role': 'user', 'content': text},
     ];
-  }
-
-  /// Limpia artefactos comunes de la salida del modelo: comillas envolventes,
-  /// bloques de razonamiento `<think>...</think>` (modelos tipo qwen3) y
-  /// espacios sobrantes.
-  String _cleanModelOutput(String raw) {
-    var out = raw.trim();
-
-    // Elimina bloques de razonamiento si el modelo los emitiera.
-    out = out.replaceAll(
-      RegExp(r'<think>.*?</think>', dotAll: true),
-      '',
-    );
-    out = out.trim();
-
-    // Quita comillas envolventes si las hubiera.
-    if (out.length >= 2) {
-      final first = out[0];
-      final last = out[out.length - 1];
-      const quotes = {'"', "'", '«', '“', '”', '‘', '’'};
-      if ((first == '"' && last == '"') ||
-          (first == "'" && last == "'") ||
-          (first == '«' && last == '»') ||
-          (quotes.contains(first) && quotes.contains(last) && first != last)) {
-        out = out.substring(1, out.length - 1).trim();
-      }
-    }
-    return out;
   }
 
   /// URL base normalizada (sin barra final).

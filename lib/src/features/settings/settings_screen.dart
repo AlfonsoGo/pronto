@@ -11,6 +11,8 @@ import '../../platform/audio_capture.dart';
 import '../../platform/global_hotkey_service.dart';
 import '../../platform/platform_services.dart';
 import '../../platform/text_injector.dart';
+import '../translation/language_detect.dart';
+import '../translation/translator.dart';
 import '../update/update_controller.dart';
 import 'hotkey_recorder.dart';
 import 'settings_controller.dart';
@@ -164,6 +166,24 @@ class SettingsScreen extends ConsumerWidget {
             ),
           ),
 
+          ListTile(
+            title: const Text('Atajo para cambiar de idioma'),
+            subtitle: Text(
+              'Alterna entre pegar en español y en inglés '
+              '(ahora: ${settings.outputLang.label.toLowerCase()})',
+            ),
+            trailing: HotkeyRecorderField(
+              value: settings.translateHotkey,
+              onChanged: controller.setTranslateHotkey,
+            ),
+          ),
+
+          const Divider(height: 24),
+
+          // --- Traducción ---
+          _SectionHeader('Traducción (español ⇄ inglés)', theme: theme),
+          const _TranslationTiles(),
+
           const Divider(height: 24),
 
           // --- Apariencia ---
@@ -212,10 +232,12 @@ class SettingsScreen extends ConsumerWidget {
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
             child: _LlmTextField(
               key: const ValueKey('llmBaseUrl'),
-              label: 'URL base',
+              label: 'URL base (servidor LLM, también para traducir)',
               hint: 'http://localhost:11434',
               initialValue: settings.llmBaseUrl,
-              enabled: settings.llmEnabled,
+              // La traducción usa el MISMO servidor: si está activada, hay que
+              // poder editar la URL aunque la post-corrección esté apagada.
+              enabled: settings.llmEnabled || settings.translationEnabled,
               keyboardType: TextInputType.url,
               onSubmitted: controller.setLlmBaseUrl,
             ),
@@ -249,6 +271,135 @@ class SettingsScreen extends ConsumerWidget {
           const SizedBox(height: 24),
         ],
       ),
+    );
+  }
+}
+
+/// Bloque de ajustes de la traducción español ⇄ inglés.
+///
+/// Traducir necesita un servidor LLM (Ollama local por defecto, el mismo que la
+/// post-corrección), por eso viene desactivada y hay un botón para comprobar
+/// que responde antes de fiarse de ella.
+class _TranslationTiles extends ConsumerStatefulWidget {
+  const _TranslationTiles();
+
+  @override
+  ConsumerState<_TranslationTiles> createState() => _TranslationTilesState();
+}
+
+class _TranslationTilesState extends ConsumerState<_TranslationTiles> {
+  bool _checking = false;
+
+  /// Resultado de la última comprobación: null = aún no se ha probado.
+  String? _result;
+  bool _ok = false;
+
+  Future<void> _check() async {
+    setState(() {
+      _checking = true;
+      _result = null;
+    });
+    // Se construye a mano (y no con el provider) para poder probar aunque la
+    // traducción esté desactivada: es justo lo que quieres hacer ANTES de
+    // encenderla.
+    final s = ref.read(settingsProvider);
+    final probe = Translator(
+      enabled: true,
+      baseUrl: s.llmBaseUrl,
+      model: s.translationModel,
+    );
+    try {
+      final error = await probe.checkConnection();
+      if (!mounted) return;
+      setState(() {
+        _checking = false;
+        _ok = error == null;
+        _result = error ?? 'Conectado. El modelo «${s.translationModel}» '
+            'traduce correctamente.';
+      });
+    } finally {
+      probe.dispose();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final settings = ref.watch(settingsProvider);
+    final controller = ref.read(settingsProvider.notifier);
+    final scheme = Theme.of(context).colorScheme;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SwitchListTile(
+          title: const Text('Traducir al dictar'),
+          subtitle: const Text(
+            'Pronto pega el dictado en tu idioma por defecto y deja la otra '
+            'versión a mano en la píldora. Necesita un servidor LLM.',
+          ),
+          isThreeLine: true,
+          value: settings.translationEnabled,
+          onChanged: controller.setTranslationEnabled,
+        ),
+
+        ListTile(
+          enabled: settings.translationEnabled,
+          leading: const Icon(Icons.translate_rounded, color: Color(0xFF8B5CF6)),
+          title: const Text('Idioma al pegar'),
+          subtitle: Text(
+            'Si dictas en el otro idioma, Pronto traduce antes de pegar. '
+            'Atajo: ${settings.translateHotkey.describe()}',
+          ),
+          isThreeLine: true,
+          trailing: DropdownButton<TextLanguage>(
+            value: settings.outputLang,
+            onChanged: settings.translationEnabled
+                ? (v) {
+                    if (v != null) controller.setOutputLanguage(v);
+                  }
+                : null,
+            items: [
+              for (final l in TextLanguage.values)
+                DropdownMenuItem(value: l, child: Text(l.label)),
+            ],
+          ),
+        ),
+
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+          child: _LlmTextField(
+            key: const ValueKey('translationModel'),
+            label: 'Modelo de traducción',
+            hint: AppConfig.defaultTranslationModel,
+            initialValue: settings.translationModel,
+            enabled: settings.translationEnabled,
+            onSubmitted: controller.setTranslationModel,
+          ),
+        ),
+
+        ListTile(
+          title: const Text('Probar la traducción'),
+          subtitle: Text(
+            _result ??
+                'Comprueba que ${settings.llmBaseUrl} responde y que el '
+                    'modelo existe.',
+            style: _result == null
+                ? null
+                : TextStyle(
+                    color: _ok ? const Color(0xFF34C759) : scheme.error,
+                  ),
+          ),
+          isThreeLine: _result != null,
+          trailing: _checking
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.play_circle_outline_rounded),
+          onTap: _checking ? null : _check,
+        ),
+      ],
     );
   }
 }
