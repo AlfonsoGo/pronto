@@ -6,138 +6,146 @@ import 'package:pronto/src/data/pronto_database.dart';
 import 'package:pronto/src/data/schema_migrations.dart';
 import 'package:sqlite3/sqlite3.dart';
 
-import 'sqlite_para_tests.dart';
+import 'sqlite_for_tests.dart';
 
 /// El ensayo de actualización, en test: se parte de una carpeta de datos como
 /// la que tiene hoy quien instaló la 0.7.1 —base sin versionar, ajustes y el
 /// modelo de 640 MB— y se abre con el código de hoy.
 void main() {
-  setUpAll(prepararSqliteParaTests);
+  setUpAll(prepareSqliteForTests);
 
-  late Directory raiz;
-  late Directory datos;
-  late Directory copias;
+  late Directory root;
+  late Directory dataDir;
+  late Directory backups;
 
   setUp(() {
-    raiz = Directory.systemTemp.createTempSync('pronto-bd-');
-    datos = Directory(p.join(raiz.path, 'Pronto'))..createSync(recursive: true);
-    copias = Directory(p.join(raiz.path, kCarpetaCopias));
+    root = Directory.systemTemp.createTempSync('pronto-bd-');
+    dataDir = Directory(p.join(root.path, 'Pronto'))
+      ..createSync(recursive: true);
+    backups = Directory(p.join(root.path, kBackupsFolder));
   });
 
   tearDown(() {
-    if (raiz.existsSync()) raiz.deleteSync(recursive: true);
+    if (root.existsSync()) root.deleteSync(recursive: true);
   });
 
-  /// Deja en [datos] la foto de una instalación de la 0.7.1.
-  void instalacionDe071() {
-    final origen = File('test/fixtures/pronto-0.7.1.db');
+  /// Deja en [dataDir] la foto de una instalación de la 0.7.1.
+  void installOf071() {
+    final source = File('test/fixtures/pronto-0.7.1.db');
     expect(
-      origen.existsSync(),
+      source.existsSync(),
       isTrue,
       reason: 'falta test/fixtures/pronto-0.7.1.db '
-          '(dart run tools/generar_fixture_bd_071.dart)',
+          '(dart run tools/generate_071_fixture.dart)',
     );
-    File(p.join(datos.path, kFicheroBd))
-        .writeAsBytesSync(origen.readAsBytesSync());
-    File(p.join(datos.path, 'shared_preferences.json')).writeAsStringSync(
+    File(p.join(dataDir.path, kDatabaseFile))
+        .writeAsBytesSync(source.readAsBytesSync());
+    File(p.join(dataDir.path, 'shared_preferences.json')).writeAsStringSync(
       '{"flutter.app_settings":"{\\"formatPath\\":\\"none\\"}"}',
     );
-    final modelo = Directory(p.join(datos.path, 'models', 'parakeet'))
+    final model = Directory(p.join(dataDir.path, 'models', 'parakeet'))
       ..createSync(recursive: true);
-    File(p.join(modelo.path, 'encoder.int8.onnx')).writeAsStringSync('x' * 500);
+    File(p.join(model.path, 'encoder.int8.onnx')).writeAsStringSync('x' * 500);
   }
 
-  Future<AperturaBaseDeDatos> abrir({
-    List<Migracion> migraciones = kMigracionesPronto,
-    Directory? destinoCopias,
+  Future<OpenedDatabase> open({
+    List<Migration> migrations = kProntoMigrations,
+    Directory? backupsTo,
   }) =>
-      abrirBaseDeDatos(
-        soporte: datos,
-        copiasRaiz: destinoCopias ?? copias,
-        ahora: () => DateTime(2026, 9, 6, 14, 32),
-        migraciones: migraciones,
+      openDatabase(
+        supportDir: dataDir,
+        backupsRoot: backupsTo ?? backups,
+        now: () => DateTime(2026, 9, 6, 14, 32),
+        migrations: migrations,
       );
 
-  List<String> nombresDeCopias() => copias.existsSync()
-      ? copias.listSync().map((e) => p.basename(e.path)).toList()
+  List<String> backupNames() => backups.existsSync()
+      ? backups.listSync().map((e) => p.basename(e.path)).toList()
       : <String>[];
+
+  int countOf(Database db, String table) =>
+      db.select('SELECT count(*) AS n FROM $table').first['n'] as int;
+
+  group('dónde van las copias', () {
+    test('a la carpeta HERMANA de los datos, nunca dentro', () {
+      // Es la ruta que usa la app de verdad (`openProntoDatabase`), y la única
+      // parte de ella que se puede fijar sin arrancar Flutter entero.
+      final support =
+          Directory(r'C:\Users\quien\AppData\Roaming\Pronto\Pronto');
+
+      final where = backupsRootFor(support);
+
+      expect(p.basename(where.path), 'copias');
+      expect(p.dirname(where.path), p.dirname(support.path));
+      expect(p.isWithin(support.path, where.path), isFalse);
+    });
+  });
 
   group('instalación nueva', () {
     test('no hace copia de nada ni cuenta nada al usuario', () async {
-      final a = await abrir();
+      final a = await open();
       addTearDown(a.db.dispose);
 
-      expect(a.informe.instalacionNueva, isTrue);
-      expect(a.informe.rutaCopia, isNull);
-      expect(a.informe.mereceAviso, isFalse);
-      expect(nombresDeCopias(), isEmpty);
-      expect(versionEsquema(a.db), versionObjetivo(kMigracionesPronto));
+      expect(a.report.outcome, OpenOutcome.nothingToSay);
+      expect(a.report.backupPath, isNull);
+      expect(a.report.needsNotice, isFalse);
+      expect(backupNames(), isEmpty);
+      expect(schemaVersion(a.db), targetVersion(kProntoMigrations));
     });
   });
 
   group('actualización de una instalación de la 0.7.1', () {
     test('copia los datos ANTES de migrar y dice dónde quedaron', () async {
-      instalacionDe071();
+      installOf071();
 
-      final a = await abrir();
+      final a = await open();
       addTearDown(a.db.dispose);
 
-      expect(a.informe.instalacionNueva, isFalse);
-      expect(a.informe.huboActualizacion, isTrue);
-      expect(a.informe.mereceAviso, isTrue);
-      expect(a.informe.rutaCopia, isNotNull);
+      expect(a.report.outcome, OpenOutcome.migrated);
+      expect(a.report.didUpgrade, isTrue);
+      expect(a.report.needsNotice, isTrue);
+      expect(a.report.backupPath, isNotNull);
 
-      final copia = Directory(a.informe.rutaCopia!);
-      expect(copia.existsSync(), isTrue);
-      expect(File(p.join(copia.path, kFicheroBd)).existsSync(), isTrue);
+      final backup = Directory(a.report.backupPath!);
+      expect(backup.existsSync(), isTrue);
+      expect(File(p.join(backup.path, kDatabaseFile)).existsSync(), isTrue);
       expect(
-        File(p.join(copia.path, 'shared_preferences.json')).existsSync(),
+        File(p.join(backup.path, 'shared_preferences.json')).existsSync(),
         isTrue,
       );
       // Los 640 MB del modelo no entran en la copia...
-      expect(Directory(p.join(copia.path, 'models')).existsSync(), isFalse);
+      expect(Directory(p.join(backup.path, 'models')).existsSync(), isFalse);
       // ...y siguen intactos donde estaban: nadie se baja el modelo otra vez.
       expect(
-        File(p.join(datos.path, 'models', 'parakeet', 'encoder.int8.onnx'))
+        File(p.join(dataDir.path, 'models', 'parakeet', 'encoder.int8.onnx'))
             .existsSync(),
         isTrue,
       );
     });
 
     test('la copia guarda la base TAL COMO ESTABA, sin versionar', () async {
-      instalacionDe071();
+      installOf071();
 
-      final a = await abrir();
+      final a = await open();
       addTearDown(a.db.dispose);
 
-      final copiada = sqlite3.open(
-        p.join(a.informe.rutaCopia!, kFicheroBd),
-      );
-      addTearDown(copiada.dispose);
+      final copied = sqlite3.open(p.join(a.report.backupPath!, kDatabaseFile));
+      addTearDown(copied.dispose);
       // Si la copia se hubiera hecho DESPUÉS de migrar no serviría de vuelta
       // atrás: tendría ya la versión nueva.
-      expect(versionEsquema(copiada), 0);
-      expect(versionEsquema(a.db), versionObjetivo(kMigracionesPronto));
+      expect(schemaVersion(copied), 0);
+      expect(schemaVersion(a.db), targetVersion(kProntoMigrations));
     });
 
     test('no se pierde ni un dato', () async {
-      instalacionDe071();
+      installOf071();
 
-      final a = await abrir();
+      final a = await open();
       addTearDown(a.db.dispose);
 
-      expect(
-        a.db.select('SELECT count(*) AS n FROM corrections').first['n'],
-        3,
-      );
-      expect(
-        a.db.select('SELECT count(*) AS n FROM vocab_terms').first['n'],
-        4,
-      );
-      expect(
-        a.db.select('SELECT count(*) AS n FROM dictation_log').first['n'],
-        2,
-      );
+      expect(countOf(a.db, 'corrections'), 3);
+      expect(countOf(a.db, 'vocab_terms'), 4);
+      expect(countOf(a.db, 'dictation_log'), 2);
       expect(
         a.db
             .select("SELECT freq FROM corrections WHERE raw = 'txonso'")
@@ -147,78 +155,72 @@ void main() {
     });
 
     test('abrir otra vez no vuelve a copiar ni a avisar', () async {
-      instalacionDe071();
+      installOf071();
 
-      final primera = await abrir();
-      primera.db.dispose();
-      final copiasTrasLaPrimera = nombresDeCopias();
+      final first = await open();
+      first.db.dispose();
+      final afterFirst = backupNames();
 
-      final segunda = await abrir();
-      addTearDown(segunda.db.dispose);
+      final second = await open();
+      addTearDown(second.db.dispose);
 
-      expect(segunda.informe.mereceAviso, isFalse);
-      expect(segunda.informe.rutaCopia, isNull);
-      expect(nombresDeCopias(), copiasTrasLaPrimera);
+      expect(second.report.outcome, OpenOutcome.nothingToSay);
+      expect(second.report.needsNotice, isFalse);
+      expect(second.report.backupPath, isNull);
+      expect(backupNames(), afterFirst);
     });
 
     test('acaba en el MISMO esquema que una instalación nueva', () async {
-      instalacionDe071();
-      final actualizada = await abrir();
-      addTearDown(actualizada.db.dispose);
+      installOf071();
+      final updated = await open();
+      addTearDown(updated.db.dispose);
 
-      final otraRaiz = Directory.systemTemp.createTempSync('pronto-bd-nueva-');
-      addTearDown(() => otraRaiz.deleteSync(recursive: true));
-      final nueva = await abrirBaseDeDatos(
-        soporte: Directory(p.join(otraRaiz.path, 'Pronto')),
-        copiasRaiz: Directory(p.join(otraRaiz.path, kCarpetaCopias)),
+      final otherRoot = Directory.systemTemp.createTempSync('pronto-bd-nueva-');
+      addTearDown(() => otherRoot.deleteSync(recursive: true));
+      final fresh = await openDatabase(
+        supportDir: Directory(p.join(otherRoot.path, 'Pronto')),
+        backupsRoot: Directory(p.join(otherRoot.path, kBackupsFolder)),
       );
-      addTearDown(nueva.db.dispose);
+      addTearDown(fresh.db.dispose);
 
-      String esquema(Database db) => db
-          .select(
-            'SELECT type, name, sql FROM sqlite_master '
-            "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
-          )
-          .map((f) => '${f['type']}|${f['name']}|${f['sql']}')
-          .join('\n');
-
-      expect(esquema(actualizada.db), esquema(nueva.db));
-      expect(versionEsquema(actualizada.db), versionEsquema(nueva.db));
+      expect(dumpSchema(updated.db), dumpSchema(fresh.db));
+      expect(schemaVersion(updated.db), schemaVersion(fresh.db));
     });
   });
 
   group('cuando algo sale mal', () {
     test('sin copia NO se migra, y se dice por qué', () async {
-      instalacionDe071();
+      installOf071();
 
       // Carpeta de copias dentro de la de datos: la copia se rechaza.
-      final a = await abrir(
-        destinoCopias: Directory(p.join(datos.path, kCarpetaCopias)),
+      final a = await open(
+        backupsTo: Directory(p.join(dataDir.path, kBackupsFolder)),
       );
       addTearDown(a.db.dispose);
 
-      expect(a.informe.errorCopia, isNotNull);
-      expect(a.informe.mereceAviso, isTrue);
-      expect(a.informe.rutaCopia, isNull);
+      expect(a.report.outcome, OpenOutcome.untouchedNoBackup);
+      expect(a.report.technicalDetail, isNotNull);
+      expect(a.report.needsNotice, isTrue);
+      expect(a.report.didUpgrade, isFalse);
+      expect(a.report.backupPath, isNull);
       // Lo importante: la base del usuario está EXACTAMENTE como estaba.
-      expect(versionEsquema(a.db), 0);
-      expect(
-        a.db.select('SELECT count(*) AS n FROM corrections').first['n'],
-        3,
-      );
+      expect(schemaVersion(a.db), 0);
+      expect(countOf(a.db, 'corrections'), 3);
     });
 
-    test('si la migración falla, la copia ya está hecha y la base intacta',
+    test('una migración que entra A MEDIAS no dice que no se tocó nada',
         () async {
-      instalacionDe071();
+      // Es la mentira que hay que evitar: la 1 SÍ entró, así que los datos NO
+      // están como estaban, y el aviso no puede decir lo contrario.
+      installOf071();
 
-      final a = await abrir(
-        migraciones: [
-          kMigracionesPronto.first,
-          Migracion(
+      final a = await open(
+        migrations: [
+          kProntoMigrations.first,
+          Migration(
             version: 2,
-            nombre: 'la que revienta',
-            aplicar: (db) {
+            name: 'la que revienta',
+            apply: (db) {
               db.execute('CREATE TABLE a_medias (id INTEGER)');
               throw StateError('disco lleno');
             },
@@ -227,41 +229,58 @@ void main() {
       );
       addTearDown(a.db.dispose);
 
-      expect(a.informe.errorMigracion, isNotNull);
-      expect(a.informe.mereceAviso, isTrue);
+      expect(a.report.outcome, OpenOutcome.migratedThenFailed);
+      expect(a.report.didUpgrade, isTrue);
+      expect(a.report.needsNotice, isTrue);
+      expect(a.report.technicalDetail, contains('disco lleno'));
       // La copia previa existe: hay camino de vuelta.
-      expect(a.informe.rutaCopia, isNotNull);
-      expect(Directory(a.informe.rutaCopia!).existsSync(), isTrue);
-      // La 1 sí entró; la 2 no dejó ni su tabla ni su versión.
-      expect(versionEsquema(a.db), 1);
-      final tablas = a.db
-          .select("SELECT name FROM sqlite_master WHERE type = 'table'")
-          .map((f) => f['name'] as String)
-          .toSet();
-      expect(tablas, isNot(contains('a_medias')));
-      expect(
-        a.db.select('SELECT count(*) AS n FROM corrections').first['n'],
-        3,
-      );
+      expect(a.report.backupPath, isNotNull);
+      expect(Directory(a.report.backupPath!).existsSync(), isTrue);
+      // La 1 entró; la 2 no dejó ni su tabla ni su versión.
+      expect(a.report.fromVersion, 0);
+      expect(a.report.toVersion, 1);
+      expect(schemaVersion(a.db), 1);
+      expect(tableNames(a.db), isNot(contains('a_medias')));
+      expect(countOf(a.db, 'corrections'), 3);
     });
 
-    test('una base más nueva que la app se abre igual, sin degradarla',
-        () async {
-      instalacionDe071();
-      final futura = sqlite3.open(p.join(datos.path, kFicheroBd));
-      futura.execute('PRAGMA user_version = 99');
-      futura.dispose();
+    test('si falla la PRIMERA migración, ahí sí no se tocó nada', () async {
+      installOf071();
 
-      final a = await abrir();
+      final a = await open(
+        migrations: [
+          Migration(
+            version: 1,
+            name: 'la que revienta',
+            apply: (_) => throw StateError('disco lleno'),
+          ),
+        ],
+      );
       addTearDown(a.db.dispose);
 
-      expect(a.informe.baseMasNuevaQueLaApp, isTrue);
-      expect(versionEsquema(a.db), 99);
-      expect(a.informe.rutaCopia, isNull);
-      expect(
-        a.db.select('SELECT count(*) AS n FROM corrections').first['n'],
-        3,
-      );
+      expect(a.report.outcome, OpenOutcome.untouchedAfterError);
+      expect(a.report.didUpgrade, isFalse);
+      expect(a.report.fromVersion, a.report.toVersion);
+      expect(schemaVersion(a.db), 0);
+    });
+
+    test('una base más nueva que la app se abre igual, y se avisa', () async {
+      installOf071();
+      final future = sqlite3.open(p.join(dataDir.path, kDatabaseFile));
+      future.execute('PRAGMA user_version = 99');
+      future.dispose();
+
+      final a = await open();
+      addTearDown(a.db.dispose);
+
+      expect(a.report.outcome, OpenOutcome.databaseFromNewerVersion);
+      // Volver a una versión anterior de Pronto es exactamente el caso que el
+      // ticket llama «camino de vuelta»: el usuario tiene que enterarse.
+      expect(a.report.needsNotice, isTrue);
+      expect(a.report.didUpgrade, isFalse);
+      expect(schemaVersion(a.db), 99);
+      expect(a.report.backupPath, isNull);
+      expect(countOf(a.db, 'corrections'), 3);
     });
   });
 }

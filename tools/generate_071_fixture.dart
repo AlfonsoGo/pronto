@@ -1,7 +1,7 @@
 // Genera `test/fixtures/pronto-0.7.1.db`: una base como la que tiene HOY en su
 // disco cualquiera que instaló Pronto 0.7.1 o anterior.
 //
-//   dart run tools/generar_fixture_bd_071.dart
+//   dart run tools/generate_071_fixture.dart
 //
 // Es el fichero que impide el verde falso del PRNT-20: los tests que crean la
 // base de cero nunca ven el fallo de una instalación ACTUALIZADA, porque en una

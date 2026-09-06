@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:pronto/src/core/config.dart';
 import 'package:pronto/src/features/formatting/text_formatter.dart';
@@ -7,43 +10,33 @@ import 'package:pronto/src/platform/text_injector.dart';
 
 /// Los Ajustes de la app al ACTUALIZAR (PRNT-20).
 ///
-/// Los ajustes de abajo son el `toJson` literal de la 0.7.1 (commit f660b22):
-/// lo que hay hoy en el `shared_preferences.json` de cualquiera que instalara
-/// Pronto antes de esta versión. Lo que se prueba es lo que el ticket pide:
-/// que no se pierda ni un campo y que **lo que estaba apagado siga apagado**
-/// (ADR 0005 vale también al actualizar; nadie se encuentra el Formateo, el
-/// asistente local ni la nube encendidos por sorpresa).
+/// Se parte del `shared_preferences.json` REAL que deja Pronto en Windows
+/// (`test/fixtures/shared_preferences-0.7.1.json`), no de un mapa escrito a
+/// mano: las claves llevan el prefijo `flutter.` y el valor de `app_settings`
+/// es una CADENA con JSON dentro. Ese doble encoding es justo donde se
+/// esconderían los fallos que un mapa a mano nunca vería. Los valores son
+/// inventados; no sale nada de ninguna instalación real.
+///
+/// Lo que se prueba es lo que pide el ticket: que no se pierda ni un campo y
+/// que **lo que estaba apagado siga apagado** (ADR 0005 vale también al
+/// actualizar; nadie se encuentra el Formateo, el asistente local ni la nube
+/// encendidos por sorpresa).
 void main() {
-  /// El fichero de ajustes de un usuario de la 0.7.1 que se lo tenía todo
-  /// configurado a su manera. Ningún valor sale de una instalación real.
-  Map<String, dynamic> ajustes071({bool llmEnabled = false}) => {
-        'modelFile': 'ggml-small.bin',
-        'language': 'es',
-        'injectionMode': 'unicodeSendInput',
-        'triggerMode': 'hold',
-        'autostart': true,
-        'llmEnabled': llmEnabled,
-        'llmBaseUrl': 'http://192.168.1.50:11434',
-        'llmModel': 'qwen2.5:7b',
-        'captureExternalEdits': false,
-        // Ctrl + Shift + F9, no el atajo de fábrica.
-        'hotkey': {
-          'vk': 0x78,
-          'ctrl': true,
-          'alt': false,
-          'shift': true,
-          'win': false,
-        },
-        'pillScale': 1.4,
-        'engine': 'parakeet',
-        'textPolish': false,
-        'sounds': false,
-        'micDeviceId': 'micro-de-mesa',
-      };
+  /// Lee los ajustes como los lee la app: `getString('app_settings')` →
+  /// `jsonDecode` → [AppSettings.fromJson].
+  AppSettings settingsFrom(String fixture) {
+    final file = File('test/fixtures/$fixture');
+    expect(file.existsSync(), isTrue, reason: 'falta test/fixtures/$fixture');
+    final prefs = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+    final raw = prefs['flutter.app_settings'] as String;
+    return AppSettings.fromJson(jsonDecode(raw) as Map<String, dynamic>);
+  }
+
+  AppSettings of071() => settingsFrom('shared_preferences-0.7.1.json');
 
   group('no se pierde ni un campo', () {
     test('todo lo que el usuario había configurado sigue configurado', () {
-      final s = AppSettings.fromJson(ajustes071());
+      final s = of071();
 
       expect(s.modelFile, 'ggml-small.bin');
       expect(s.language, 'es');
@@ -59,9 +52,9 @@ void main() {
     });
 
     test('el Atajo del usuario sigue siendo el suyo, no el de fábrica', () {
-      final s = AppSettings.fromJson(ajustes071());
+      final s = of071();
 
-      expect(s.hotkey.virtualKey, 0x78);
+      expect(s.hotkey.virtualKey, 0x78); // F9
       expect(s.hotkey.ctrl, isTrue);
       expect(s.hotkey.shift, isTrue);
       expect(s.hotkey.alt, isFalse);
@@ -72,36 +65,42 @@ void main() {
     });
 
     test('el atajo sobrevive a guardar y volver a leer tras actualizar', () {
-      final s = AppSettings.fromJson(ajustes071());
-      final tras = AppSettings.fromJson(s.toJson());
+      final s = of071();
+      final after = AppSettings.fromJson(s.toJson());
 
-      expect(tras.hotkey, s.hotkey);
-      expect(tras, equals(s));
+      expect(after.hotkey, s.hotkey);
+      expect(after, equals(s));
     });
   });
 
   group('lo que estaba apagado sigue apagado', () {
     test('quien no tenía formateo no lo tiene después de actualizar', () {
-      final s = AppSettings.fromJson(ajustes071());
-      expect(s.formatPath, FormatPath.none);
+      expect(of071().formatPath, FormatPath.none);
     });
 
     test('quien lo tenía en local se queda en LOCAL, nunca en la nube', () {
-      final s = AppSettings.fromJson(ajustes071(llmEnabled: true));
-      // En la 0.7.1 el LLM solo podía ser Ollama local. Actualizar no puede
-      // meter a nadie en la nube: eso cuesta dinero y saca su texto del equipo.
+      // El mismo fichero con `llmEnabled` a true: en la 0.7.1 el LLM solo podía
+      // ser Ollama local. Actualizar no puede meter a nadie en la nube: eso
+      // cuesta dinero y saca su texto del equipo.
+      final file = File('test/fixtures/shared_preferences-0.7.1.json');
+      final prefs = jsonDecode(file.readAsStringSync()) as Map<String, dynamic>;
+      final raw = jsonDecode(prefs['flutter.app_settings'] as String)
+          as Map<String, dynamic>;
+      raw['llmEnabled'] = true;
+
+      final s = AppSettings.fromJson(raw);
+
       expect(s.formatPath, FormatPath.local);
       expect(s.formatPath, isNot(FormatPath.cloud));
     });
 
     test('la traducción no se enciende sola', () {
-      final s = AppSettings.fromJson(ajustes071());
-      expect(s.translationEnabled, isFalse);
+      expect(of071().translationEnabled, isFalse);
     });
 
     test('los topes de gasto de nube caen a los de fábrica, no a "sin tope"',
         () {
-      final s = AppSettings.fromJson(ajustes071());
+      final s = of071();
       expect(s.cloudDayCapUsd, AppConfig.defaultCloudDayCapUsd);
       expect(s.cloudMonthCapUsd, AppConfig.defaultCloudMonthCapUsd);
       expect(s.cloudModel, AppConfig.defaultFormatCloudModel);
@@ -110,7 +109,7 @@ void main() {
 
   group('un usuario de la 0.6.0, con menos claves todavía', () {
     // La otra versión con la que puede haber gente ahí fuera.
-    Map<String, dynamic> ajustes060() => {
+    Map<String, dynamic> of060() => {
           'modelFile': 'ggml-small.bin',
           'language': 'es',
           'injectionMode': 'clipboardPaste',
@@ -124,7 +123,7 @@ void main() {
         };
 
     test('conserva su atajo aunque le falten claves del JSON', () {
-      final s = AppSettings.fromJson(ajustes060());
+      final s = AppSettings.fromJson(of060());
 
       expect(s.hotkey.virtualKey, 0x79);
       expect(s.hotkey.alt, isTrue);
@@ -137,7 +136,7 @@ void main() {
 
     test('no se le enciende nada y el modelo roto se cambia por uno que existe',
         () {
-      final s = AppSettings.fromJson(ajustes060());
+      final s = AppSettings.fromJson(of060());
 
       expect(s.formatPath, FormatPath.none);
       expect(s.translationEnabled, isFalse);

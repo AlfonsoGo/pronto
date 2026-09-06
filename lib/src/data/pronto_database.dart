@@ -15,100 +15,134 @@ import 'data_backup.dart';
 import 'schema_migrations.dart';
 
 /// Nombre del fichero de la base de datos dentro de la carpeta de datos.
-const String kFicheroBd = 'pronto.db';
+const String kDatabaseFile = 'pronto.db';
 
 /// Carpeta donde se dejan las copias previas: HERMANA de la carpeta de datos
 /// (`%APPDATA%\Pronto\copias`), no dentro. Dentro, cada copia entraría en la
 /// siguiente y crecerían unas sobre otras.
-const String kCarpetaCopias = 'copias';
+const String kBackupsFolder = 'copias';
+
+/// Dónde van las copias de una carpeta de datos dada.
+Directory backupsRootFor(Directory supportDir) =>
+    Directory(p.join(p.dirname(supportDir.path), kBackupsFolder));
+
+/// En qué acabó abrir la base. Es lo que decide QUÉ se le dice al usuario, para
+/// que la pantalla no tenga que adivinarlo cruzando banderas: cada caso tiene
+/// una frase distinta y todas tienen que ser verdad.
+enum OpenOutcome {
+  /// Nada que contar: instalación nueva, o la base ya estaba al día.
+  nothingToSay,
+
+  /// Se migró una instalación que ya tenía datos, y salió bien.
+  migrated,
+
+  /// Se migró EN PARTE y luego falló. Los datos **no** están como estaban:
+  /// decirle al usuario que no se ha tocado nada sería mentirle.
+  migratedThenFailed,
+
+  /// Falló antes de aplicar nada: la base sigue igual que estaba.
+  untouchedAfterError,
+
+  /// No se pudo hacer la copia previa, así que no se migró nada a propósito.
+  untouchedNoBackup,
+
+  /// La base viene de una versión de Pronto más nueva (el usuario volvió a una
+  /// anterior). No se ha degradado.
+  databaseFromNewerVersion,
+
+  /// No se pudo ni abrir la base. Pronto arranca, pero sin aprendizaje: eso el
+  /// usuario tiene que saberlo, no descubrirlo cuando deje de acertar con sus
+  /// palabras.
+  couldNotOpen,
+}
 
 /// Lo que pasó al abrir la base. Es lo que el usuario ve tras actualizar.
-class InformeApertura {
-  final int versionInicial;
-  final int versionFinal;
+class OpenReport {
+  final OpenOutcome outcome;
 
-  final List<String> aplicadas;
-  final bool instalacionNueva;
-  final bool baseMasNuevaQueLaApp;
+  /// Versión de esquema al abrir y con la que queda.
+  final int fromVersion;
+  final int toVersion;
 
   /// Dónde quedó la copia previa, si se hizo.
-  final String? rutaCopia;
+  final String? backupPath;
 
-  /// Por qué no se pudo copiar. Si esto no es null, NO se ha migrado nada: sin
-  /// copia no hay vuelta atrás, y migrar a ciegas sería el único camino sin
-  /// salida.
-  final String? errorCopia;
+  /// El texto crudo del fallo (de SQLite o del sistema de ficheros). Va aparte
+  /// de la frase que se le enseña al usuario: sirve para diagnosticar, no para
+  /// hablarle.
+  final String? technicalDetail;
 
-  /// Por qué falló la migración. La base sigue en [versionInicial]: cada
-  /// migración va en su transacción, así que no queda nada a medias.
-  final String? errorMigracion;
-
-  /// Por qué no se pudo ni abrir la base. Aquí no hay versiones que contar:
-  /// Pronto arranca sin aprendizaje y el usuario tiene que saberlo.
-  final String? errorApertura;
-
-  const InformeApertura({
-    this.versionInicial = 0,
-    this.versionFinal = 0,
-    this.aplicadas = const [],
-    this.instalacionNueva = false,
-    this.baseMasNuevaQueLaApp = false,
-    this.rutaCopia,
-    this.errorCopia,
-    this.errorMigracion,
-    this.errorApertura,
+  const OpenReport({
+    required this.outcome,
+    this.fromVersion = 0,
+    this.toVersion = 0,
+    this.backupPath,
+    this.technicalDetail,
   });
 
-  /// Se migró una instalación que ya tenía datos: hay algo que contarle al
-  /// usuario. Una instalación nueva no cuenta nada.
-  bool get huboActualizacion =>
-      !instalacionNueva && versionFinal > versionInicial;
+  /// Construye el informe de una migración que terminó sin errores.
+  factory OpenReport.fromMigration(MigrationResult r, {String? backupPath}) {
+    final OpenOutcome outcome;
+    if (r.databaseNewerThanApp) {
+      outcome = OpenOutcome.databaseFromNewerVersion;
+    } else if (!r.freshInstall && r.toVersion > r.fromVersion) {
+      outcome = OpenOutcome.migrated;
+    } else {
+      outcome = OpenOutcome.nothingToSay;
+    }
+    return OpenReport(
+      outcome: outcome,
+      fromVersion: r.fromVersion,
+      toVersion: r.toVersion,
+      backupPath: backupPath,
+    );
+  }
 
-  /// Algo salió mal y el usuario tiene que enterarse aunque la app arranque.
-  bool get huboProblema =>
-      errorCopia != null || errorMigracion != null || errorApertura != null;
+  /// ¿Hay que enseñarle algo al usuario?
+  bool get needsNotice => outcome != OpenOutcome.nothingToSay;
 
-  /// ¿Hay que enseñar el aviso?
-  bool get mereceAviso => huboActualizacion || huboProblema;
+  /// ¿Se ha tocado el esquema de una base que ya tenía datos?
+  bool get didUpgrade =>
+      outcome == OpenOutcome.migrated ||
+      outcome == OpenOutcome.migratedThenFailed;
 }
 
 /// La base abierta y lista, con el informe de lo que pasó al abrirla.
-class AperturaBaseDeDatos {
+class OpenedDatabase {
   final Database db;
-  final InformeApertura informe;
+  final OpenReport report;
 
-  const AperturaBaseDeDatos(this.db, this.informe);
+  const OpenedDatabase(this.db, this.report);
 }
 
-/// Abre `pronto.db` de [soporte], copiando y migrando si hace falta.
+/// Abre `pronto.db` de [supportDir], copiando y migrando si hace falta.
 ///
-/// [copiasRaiz] es dónde van las copias previas; [ahora] permite fijar la fecha
+/// [backupsRoot] es dónde van las copias previas; [now] permite fijar la fecha
 /// del nombre de la copia en los tests.
-Future<AperturaBaseDeDatos> abrirBaseDeDatos({
-  required Directory soporte,
-  required Directory copiasRaiz,
-  DateTime Function()? ahora,
-  List<Migracion> migraciones = kMigracionesPronto,
+Future<OpenedDatabase> openDatabase({
+  required Directory supportDir,
+  required Directory backupsRoot,
+  DateTime Function()? now,
+  List<Migration> migrations = kProntoMigrations,
 }) async {
-  soporte.createSync(recursive: true);
-  final ruta = p.join(soporte.path, kFicheroBd);
+  supportDir.createSync(recursive: true);
+  final path = p.join(supportDir.path, kDatabaseFile);
 
-  var db = sqlite3.open(ruta);
+  var db = sqlite3.open(path);
   try {
-    final inicial = versionEsquema(db);
-    final nueva = baseVacia(db);
-    final pendientes = hayMigracionesPendientes(db, migraciones: migraciones);
+    final from = schemaVersion(db);
+    final fresh = databaseIsEmpty(db);
 
-    // Nada que hacer: ni copia ni migración ni aviso.
-    if (!pendientes) {
-      final r = migrarEsquema(db, migraciones: migraciones);
-      return AperturaBaseDeDatos(
+    if (!hasPendingMigrations(db, migrations: migrations)) {
+      // Ni copia ni migración. Solo queda decidir si la base viene del futuro.
+      return OpenedDatabase(
         db,
-        InformeApertura(
-          versionInicial: r.versionInicial,
-          versionFinal: r.versionFinal,
-          instalacionNueva: r.instalacionNueva,
-          baseMasNuevaQueLaApp: r.baseMasNuevaQueLaApp,
+        OpenReport(
+          outcome: from > targetVersion(migrations)
+              ? OpenOutcome.databaseFromNewerVersion
+              : OpenOutcome.nothingToSay,
+          fromVersion: from,
+          toVersion: from,
         ),
       );
     }
@@ -116,55 +150,55 @@ Future<AperturaBaseDeDatos> abrirBaseDeDatos({
     // Hay que migrar. Si ya había datos, primero la copia — y con la base
     // CERRADA, para que lo copiado sea un fichero consistente y no una foto a
     // media escritura.
-    String? rutaCopia;
-    if (!nueva) {
+    String? backupPath;
+    if (!fresh) {
       db.dispose();
       try {
-        rutaCopia = await copiarCarpetaDeDatos(
-          origen: soporte,
-          destinoRaiz: copiasRaiz,
-          fecha: (ahora ?? DateTime.now)(),
+        backupPath = await backUpDataFolder(
+          source: supportDir,
+          backupsRoot: backupsRoot,
+          date: (now ?? DateTime.now)(),
         );
       } catch (e) {
         // Sin copia no se migra. La app arranca con el esquema viejo y el
         // usuario se entera por el aviso, en vez de descubrirlo cuando le
         // falten datos.
-        db = sqlite3.open(ruta);
-        return AperturaBaseDeDatos(
+        db = sqlite3.open(path);
+        return OpenedDatabase(
           db,
-          InformeApertura(
-            versionInicial: inicial,
-            versionFinal: inicial,
-            instalacionNueva: false,
-            errorCopia: '$e',
+          OpenReport(
+            outcome: OpenOutcome.untouchedNoBackup,
+            fromVersion: from,
+            toVersion: from,
+            technicalDetail: '$e',
           ),
         );
       }
-      db = sqlite3.open(ruta);
+      db = sqlite3.open(path);
     }
 
     try {
-      final r = migrarEsquema(db, migraciones: migraciones);
-      return AperturaBaseDeDatos(
+      return OpenedDatabase(
         db,
-        InformeApertura(
-          versionInicial: r.versionInicial,
-          versionFinal: r.versionFinal,
-          aplicadas: r.aplicadas,
-          instalacionNueva: r.instalacionNueva,
-          baseMasNuevaQueLaApp: r.baseMasNuevaQueLaApp,
-          rutaCopia: rutaCopia,
+        OpenReport.fromMigration(
+          migrateSchema(db, migrations: migrations),
+          backupPath: backupPath,
         ),
       );
     } catch (e) {
-      return AperturaBaseDeDatos(
+      // Cada migración va en su transacción, así que la base está entera en
+      // alguna versión — pero puede NO ser la que tenía al empezar.
+      final to = schemaVersion(db);
+      return OpenedDatabase(
         db,
-        InformeApertura(
-          versionInicial: inicial,
-          versionFinal: versionEsquema(db),
-          instalacionNueva: nueva,
-          rutaCopia: rutaCopia,
-          errorMigracion: '$e',
+        OpenReport(
+          outcome: to > from
+              ? OpenOutcome.migratedThenFailed
+              : OpenOutcome.untouchedAfterError,
+          fromVersion: from,
+          toVersion: to,
+          backupPath: backupPath,
+          technicalDetail: '$e',
         ),
       );
     }
@@ -179,11 +213,13 @@ Future<AperturaBaseDeDatos> abrirBaseDeDatos({
   }
 }
 
-/// Igual que [abrirBaseDeDatos] pero resolviendo las carpetas reales de la app:
-/// los datos en `getApplicationSupportDirectory()` y las copias en su hermana
+/// Igual que [openDatabase] pero resolviendo las carpetas reales de la app: los
+/// datos en `getApplicationSupportDirectory()` y las copias en su hermana
 /// `copias/`.
-Future<AperturaBaseDeDatos> abrirBaseDeDatosDePronto() async {
-  final soporte = await getApplicationSupportDirectory();
-  final copias = Directory(p.join(p.dirname(soporte.path), kCarpetaCopias));
-  return abrirBaseDeDatos(soporte: soporte, copiasRaiz: copias);
+Future<OpenedDatabase> openProntoDatabase() async {
+  final supportDir = await getApplicationSupportDirectory();
+  return openDatabase(
+    supportDir: supportDir,
+    backupsRoot: backupsRootFor(supportDir),
+  );
 }

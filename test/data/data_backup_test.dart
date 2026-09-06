@@ -5,27 +5,28 @@ import 'package:path/path.dart' as p;
 import 'package:pronto/src/data/data_backup.dart';
 
 void main() {
-  late Directory raiz;
-  late Directory datos;
-  late Directory copias;
+  late Directory root;
+  late Directory dataDir;
+  late Directory backups;
 
   setUp(() {
-    raiz = Directory.systemTemp.createTempSync('pronto-copia-');
-    datos = Directory(p.join(raiz.path, 'Pronto'))..createSync(recursive: true);
-    copias = Directory(p.join(raiz.path, 'copias'));
+    root = Directory.systemTemp.createTempSync('pronto-copia-');
+    dataDir = Directory(p.join(root.path, 'Pronto'))
+      ..createSync(recursive: true);
+    backups = Directory(p.join(root.path, 'copias'));
   });
 
   tearDown(() {
-    if (raiz.existsSync()) raiz.deleteSync(recursive: true);
+    if (root.existsSync()) root.deleteSync(recursive: true);
   });
 
   /// Deja la carpeta de datos como la de un usuario de verdad: la base, los
   /// ajustes y los 640 MB de modelo (aquí, cuatro ficheros de mentira).
-  void carpetaDeUsuario() {
-    File(p.join(datos.path, 'pronto.db')).writeAsStringSync('base con datos');
-    File(p.join(datos.path, 'shared_preferences.json'))
+  void userDataFolder() {
+    File(p.join(dataDir.path, 'pronto.db')).writeAsStringSync('base con datos');
+    File(p.join(dataDir.path, 'shared_preferences.json'))
         .writeAsStringSync('{"app_settings":"{}"}');
-    final modelo = Directory(p.join(datos.path, 'models', 'parakeet'))
+    final model = Directory(p.join(dataDir.path, 'models', 'parakeet'))
       ..createSync(recursive: true);
     for (final f in [
       'encoder.int8.onnx',
@@ -33,75 +34,87 @@ void main() {
       'joiner.int8.onnx',
       'tokens.txt',
     ]) {
-      File(p.join(modelo.path, f)).writeAsStringSync('x' * 1000);
+      File(p.join(model.path, f)).writeAsStringSync('x' * 1000);
     }
   }
 
-  final fecha = DateTime(2026, 9, 6, 14, 32);
+  final date = DateTime(2026, 9, 6, 14, 32);
+
+  List<String> backupNames() => backups.existsSync()
+      ? backups.listSync().map((e) => p.basename(e.path)).toList()
+      : <String>[];
 
   test('copia los datos del usuario con su contenido intacto', () async {
-    carpetaDeUsuario();
+    userDataFolder();
 
-    final ruta = await copiarCarpetaDeDatos(
-      origen: datos,
-      destinoRaiz: copias,
-      fecha: fecha,
+    final path = await backUpDataFolder(
+      source: dataDir,
+      backupsRoot: backups,
+      date: date,
     );
 
     expect(
-      File(p.join(ruta, 'pronto.db')).readAsStringSync(),
+      File(p.join(path, 'pronto.db')).readAsStringSync(),
       'base con datos',
     );
     expect(
-      File(p.join(ruta, 'shared_preferences.json')).readAsStringSync(),
+      File(p.join(path, 'shared_preferences.json')).readAsStringSync(),
       '{"app_settings":"{}"}',
     );
   });
 
   test('NO copia models/: son 640 MB que se vuelven a descargar', () async {
-    carpetaDeUsuario();
+    userDataFolder();
 
-    final ruta = await copiarCarpetaDeDatos(
-      origen: datos,
-      destinoRaiz: copias,
-      fecha: fecha,
+    final path = await backUpDataFolder(
+      source: dataDir,
+      backupsRoot: backups,
+      date: date,
     );
 
-    expect(Directory(p.join(ruta, 'models')).existsSync(), isFalse);
+    expect(Directory(p.join(path, 'models')).existsSync(), isFalse);
     // Y sobre todo: el modelo sigue donde estaba. Actualizar no puede acabar
     // en una redescarga de 640 MB.
-    expect(
-      File(p.join(datos.path, 'models', 'parakeet', 'encoder.int8.onnx'))
-          .existsSync(),
-      isTrue,
-    );
+    for (final f in [
+      'encoder.int8.onnx',
+      'decoder.int8.onnx',
+      'joiner.int8.onnx',
+      'tokens.txt',
+    ]) {
+      expect(
+        File(p.join(dataDir.path, 'models', 'parakeet', f)).existsSync(),
+        isTrue,
+        reason: 'la copia se ha llevado por delante $f',
+      );
+    }
   });
 
   test('el nombre de la copia lleva la fecha', () async {
-    carpetaDeUsuario();
+    userDataFolder();
 
-    final ruta = await copiarCarpetaDeDatos(
-      origen: datos,
-      destinoRaiz: copias,
-      fecha: fecha,
+    final path = await backUpDataFolder(
+      source: dataDir,
+      backupsRoot: backups,
+      date: date,
     );
 
-    expect(p.basename(ruta), 'copia-2026-09-06-1432');
+    expect(p.basename(path), 'copia-2026-09-06-1432');
   });
 
   test('dos copias en el mismo minuto no se pisan', () async {
-    carpetaDeUsuario();
+    userDataFolder();
 
-    final a = await copiarCarpetaDeDatos(
-      origen: datos,
-      destinoRaiz: copias,
-      fecha: fecha,
+    final a = await backUpDataFolder(
+      source: dataDir,
+      backupsRoot: backups,
+      date: date,
     );
-    File(p.join(datos.path, 'pronto.db')).writeAsStringSync('segunda versión');
-    final b = await copiarCarpetaDeDatos(
-      origen: datos,
-      destinoRaiz: copias,
-      fecha: fecha,
+    File(p.join(dataDir.path, 'pronto.db'))
+        .writeAsStringSync('segunda versión');
+    final b = await backUpDataFolder(
+      source: dataDir,
+      backupsRoot: backups,
+      date: date,
     );
 
     expect(a, isNot(b));
@@ -110,59 +123,59 @@ void main() {
   });
 
   test('copia las subcarpetas que no están excluidas', () async {
-    carpetaDeUsuario();
-    Directory(p.join(datos.path, 'logs')).createSync();
-    File(p.join(datos.path, 'logs', 'ayer.txt')).writeAsStringSync('hola');
+    userDataFolder();
+    Directory(p.join(dataDir.path, 'logs')).createSync();
+    File(p.join(dataDir.path, 'logs', 'ayer.txt')).writeAsStringSync('hola');
 
-    final ruta = await copiarCarpetaDeDatos(
-      origen: datos,
-      destinoRaiz: copias,
-      fecha: fecha,
+    final path = await backUpDataFolder(
+      source: dataDir,
+      backupsRoot: backups,
+      date: date,
     );
 
-    expect(File(p.join(ruta, 'logs', 'ayer.txt')).readAsStringSync(), 'hola');
+    expect(File(p.join(path, 'logs', 'ayer.txt')).readAsStringSync(), 'hola');
   });
 
   group('rotura', () {
     test('nombres con tildes, ñ y emoji sobreviven a la copia', () async {
-      File(p.join(datos.path, 'añoveros — copia (1) 🎤.txt'))
+      File(p.join(dataDir.path, 'añoveros — copia (1) 🎤.txt'))
           .writeAsStringSync('ñandú');
 
-      final ruta = await copiarCarpetaDeDatos(
-        origen: datos,
-        destinoRaiz: copias,
-        fecha: fecha,
+      final path = await backUpDataFolder(
+        source: dataDir,
+        backupsRoot: backups,
+        date: date,
       );
 
       expect(
-        File(p.join(ruta, 'añoveros — copia (1) 🎤.txt')).readAsStringSync(),
+        File(p.join(path, 'añoveros — copia (1) 🎤.txt')).readAsStringSync(),
         'ñandú',
       );
     });
 
     test('una carpeta de datos vacía se copia sin quejarse', () async {
-      final ruta = await copiarCarpetaDeDatos(
-        origen: datos,
-        destinoRaiz: copias,
-        fecha: fecha,
+      final path = await backUpDataFolder(
+        source: dataDir,
+        backupsRoot: backups,
+        date: date,
       );
 
-      expect(Directory(ruta).existsSync(), isTrue);
-      expect(Directory(ruta).listSync(), isEmpty);
+      expect(Directory(path).existsSync(), isTrue);
+      expect(Directory(path).listSync(), isEmpty);
     });
 
     test('una copia interrumpida no queda con nombre de copia buena', () async {
-      carpetaDeUsuario();
-      var copiados = 0;
+      userDataFolder();
+      var copied = 0;
 
       await expectLater(
-        copiarCarpetaDeDatos(
-          origen: datos,
-          destinoRaiz: copias,
-          fecha: fecha,
-          copiarFichero: (f, destino) async {
-            if (copiados++ >= 1) throw const FileSystemException('disco lleno');
-            await f.copy(destino);
+        backUpDataFolder(
+          source: dataDir,
+          backupsRoot: backups,
+          date: date,
+          copyFile: (f, target) async {
+            if (copied++ >= 1) throw const FileSystemException('disco lleno');
+            await f.copy(target);
           },
         ),
         throwsA(isA<FileSystemException>()),
@@ -170,12 +183,7 @@ void main() {
 
       // Ni copia buena ni restos a medias: quien mire la carpeta ve que NO
       // tiene copia, que es la verdad.
-      expect(
-        copias.existsSync()
-            ? copias.listSync().map((e) => p.basename(e.path)).toList()
-            : <String>[],
-        isEmpty,
-      );
+      expect(backupNames(), isEmpty);
     });
 
     test('mientras se copia, la carpeta con nombre bueno NO existe todavía',
@@ -184,65 +192,90 @@ void main() {
       // mitad (que no lanza excepción y no limpia nada) dejaría media copia
       // con pinta de copia entera. Por eso se escribe en `.a-medias` y solo se
       // renombra al terminar.
-      carpetaDeUsuario();
-      final buena = p.join(copias.path, 'copia-2026-09-06-1432');
-      var visto = 0;
+      userDataFolder();
+      final good = p.join(backups.path, 'copia-2026-09-06-1432');
+      var seen = 0;
 
-      await copiarCarpetaDeDatos(
-        origen: datos,
-        destinoRaiz: copias,
-        fecha: fecha,
-        copiarFichero: (f, destino) async {
-          visto++;
+      await backUpDataFolder(
+        source: dataDir,
+        backupsRoot: backups,
+        date: date,
+        copyFile: (f, target) async {
+          seen++;
           expect(
-            Directory(buena).existsSync(),
+            Directory(good).existsSync(),
             isFalse,
             reason: 'a media copia ya había una carpeta con nombre de copia '
                 'buena',
           );
-          await f.copy(destino);
+          await f.copy(target);
         },
       );
 
-      expect(visto, greaterThan(0));
-      expect(Directory(buena).existsSync(), isTrue);
+      expect(seen, greaterThan(0));
+      expect(Directory(good).existsSync(), isTrue);
     });
 
-    test('unos restos a medias de un intento anterior no se toman por copia',
-        () async {
-      carpetaDeUsuario();
-      Directory(p.join(copias.path, 'copia-2026-09-06-1432$kSufijoParcial'))
-          .createSync(recursive: true);
+    test('los restos de una copia que murió a medias se barren', () async {
+      // Matar el proceso NO lanza ninguna excepción, así que nadie limpia. Sin
+      // este barrido esos restos se quedan para siempre y encima empujan el
+      // nombre de las copias buenas a `-2`, `-3`, `-4`…
+      userDataFolder();
+      final leftovers = Directory(
+        p.join(backups.path, 'copia-2026-09-05-1000$kPartialSuffix'),
+      )..createSync(recursive: true);
+      File(p.join(leftovers.path, 'medio.db')).writeAsStringSync('a medias');
 
-      final ruta = await copiarCarpetaDeDatos(
-        origen: datos,
-        destinoRaiz: copias,
-        fecha: fecha,
+      final path = await backUpDataFolder(
+        source: dataDir,
+        backupsRoot: backups,
+        date: date,
       );
 
-      expect(p.basename(ruta), isNot('copia-2026-09-06-1432'));
-      expect(File(p.join(ruta, 'pronto.db')).existsSync(), isTrue);
+      expect(leftovers.existsSync(), isFalse);
+      // Y la copia de hoy se queda con su nombre limpio, sin sufijo numérico.
+      expect(p.basename(path), 'copia-2026-09-06-1432');
+      expect(backupNames(), ['copia-2026-09-06-1432']);
+    });
+
+    test('una copia buena de otro día NO se toca al hacer la de hoy', () async {
+      userDataFolder();
+      final old = Directory(p.join(backups.path, 'copia-2026-09-05-1000'))
+        ..createSync(recursive: true);
+      File(p.join(old.path, 'pronto.db')).writeAsStringSync('la de ayer');
+
+      await backUpDataFolder(
+        source: dataDir,
+        backupsRoot: backups,
+        date: date,
+      );
+
+      expect(
+        File(p.join(old.path, 'pronto.db')).readAsStringSync(),
+        'la de ayer',
+      );
+      expect(backupNames().length, 2);
     });
 
     test('una carpeta de datos que no existe se dice, no se inventa', () async {
       await expectLater(
-        copiarCarpetaDeDatos(
-          origen: Directory(p.join(raiz.path, 'no-existe')),
-          destinoRaiz: copias,
-          fecha: fecha,
+        backUpDataFolder(
+          source: Directory(p.join(root.path, 'no-existe')),
+          backupsRoot: backups,
+          date: date,
         ),
         throwsA(isA<StateError>()),
       );
     });
 
     test('las copias no pueden vivir dentro de la carpeta de datos', () async {
-      carpetaDeUsuario();
+      userDataFolder();
 
       await expectLater(
-        copiarCarpetaDeDatos(
-          origen: datos,
-          destinoRaiz: Directory(p.join(datos.path, 'copias')),
-          fecha: fecha,
+        backUpDataFolder(
+          source: dataDir,
+          backupsRoot: Directory(p.join(dataDir.path, 'copias')),
+          date: date,
         ),
         throwsA(isA<StateError>()),
       );

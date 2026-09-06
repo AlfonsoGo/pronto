@@ -4,39 +4,20 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:pronto/src/data/schema_migrations.dart';
 import 'package:sqlite3/sqlite3.dart';
 
-import 'sqlite_para_tests.dart';
+import 'sqlite_for_tests.dart';
 
 /// Migraciones de juguete para probar la MAQUINARIA (orden, transacción,
 /// idempotencia) sin inventarse migraciones de verdad que Pronto no necesita.
-Migracion _crearTabla(int version, String tabla) => Migracion(
+Migration _createTable(int version, String table) => Migration(
       version: version,
-      nombre: 'crea $tabla',
-      aplicar: (db) => db.execute(
-        'CREATE TABLE IF NOT EXISTS $tabla (id INTEGER PRIMARY KEY)',
+      name: 'crea $table',
+      apply: (db) => db.execute(
+        'CREATE TABLE IF NOT EXISTS $table (id INTEGER PRIMARY KEY)',
       ),
     );
 
-/// Vuelca el esquema completo, ordenado, para comparar dos bases campo a campo.
-String _volcarEsquema(Database db) {
-  final filas = db.select(
-    'SELECT type, name, sql FROM sqlite_master '
-    "WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name",
-  );
-  final partes = <String>[];
-  for (final f in filas) {
-    partes.add('${f['type']}|${f['name']}|${f['sql']}');
-    if (f['type'] == 'table') {
-      for (final c in db.select('PRAGMA table_info(${f['name']})')) {
-        partes.add('  col|${c['name']}|${c['type']}|${c['notnull']}|'
-            '${c['dflt_value']}|${c['pk']}');
-      }
-    }
-  }
-  return partes.join('\n');
-}
-
 void main() {
-  setUpAll(prepararSqliteParaTests);
+  setUpAll(prepareSqliteForTests);
 
   late Database db;
 
@@ -45,24 +26,18 @@ void main() {
 
   group('instalación nueva', () {
     test('crea el esquema y deja la versión en la última migración', () {
-      final r = migrarEsquema(db);
+      final r = migrateSchema(db);
 
-      expect(r.instalacionNueva, isTrue);
-      expect(r.versionInicial, 0);
-      expect(r.versionFinal, versionObjetivo(kMigracionesPronto));
-      expect(versionEsquema(db), versionObjetivo(kMigracionesPronto));
-      // Una instalación nueva NO ha migrado nada de nadie: no hay aviso.
-      expect(r.huboActualizacion, isFalse);
+      expect(r.freshInstall, isTrue);
+      expect(r.fromVersion, 0);
+      expect(r.toVersion, targetVersion(kProntoMigrations));
+      expect(schemaVersion(db), targetVersion(kProntoMigrations));
     });
 
     test('las tres tablas de Pronto existen tras migrar', () {
-      migrarEsquema(db);
-      final tablas = db
-          .select("SELECT name FROM sqlite_master WHERE type = 'table'")
-          .map((f) => f['name'] as String)
-          .toSet();
+      migrateSchema(db);
       expect(
-        tablas,
+        tableNames(db),
         containsAll(['corrections', 'vocab_terms', 'dictation_log']),
       );
     });
@@ -74,69 +49,56 @@ void main() {
     // `CREATE TABLE IF NOT EXISTS` que no añade columnas a una tabla ya
     // existente pasa la suite en verde y revienta en el disco del usuario.
     late Directory tmp;
-    late Database vieja;
+    late Database old;
 
     setUp(() {
       tmp = Directory.systemTemp.createTempSync('pronto-mig-');
-      final origen = File('test/fixtures/pronto-0.7.1.db');
+      final source = File('test/fixtures/pronto-0.7.1.db');
       expect(
-        origen.existsSync(),
+        source.existsSync(),
         isTrue,
         reason: 'falta test/fixtures/pronto-0.7.1.db '
-            '(dart run tools/generar_fixture_bd_071.dart)',
+            '(dart run tools/generate_071_fixture.dart)',
       );
-      final copia = File('${tmp.path}/pronto.db');
-      copia.writeAsBytesSync(origen.readAsBytesSync());
-      vieja = sqlite3.open(copia.path);
+      final copy = File('${tmp.path}/pronto.db');
+      copy.writeAsBytesSync(source.readAsBytesSync());
+      old = sqlite3.open(copy.path);
     });
 
     tearDown(() {
-      vieja.dispose();
+      old.dispose();
       tmp.deleteSync(recursive: true);
     });
 
     test('la base de la 0.7.1 llega sin versión de esquema y con tablas', () {
-      expect(versionEsquema(vieja), 0);
-      expect(baseVacia(vieja), isFalse);
-      expect(hayMigracionesPendientes(vieja), isTrue);
+      expect(schemaVersion(old), 0);
+      expect(databaseIsEmpty(old), isFalse);
+      expect(hasPendingMigrations(old), isTrue);
     });
 
     test('migrar no la reconoce como instalación nueva', () {
-      final r = migrarEsquema(vieja);
-      expect(r.instalacionNueva, isFalse);
-      expect(r.huboActualizacion, isTrue);
-      expect(r.aplicadas, isNotEmpty);
+      final r = migrateSchema(old);
+      expect(r.freshInstall, isFalse);
+      expect(r.toVersion, greaterThan(r.fromVersion));
+      expect(r.applied, isNotEmpty);
     });
 
     test('no se pierde ni un dato al migrar', () {
-      final antesCorr = vieja.select('SELECT * FROM corrections ORDER BY raw');
-      final antesVocab =
-          vieja.select('SELECT * FROM vocab_terms ORDER BY term');
-      final antesLog = vieja.select('SELECT * FROM dictation_log ORDER BY id');
+      String rows(String sql) =>
+          old.select(sql).map((f) => f.values.join('|')).join('\n');
 
-      migrarEsquema(vieja);
+      final beforeCorr = rows('SELECT * FROM corrections ORDER BY raw');
+      final beforeVocab = rows('SELECT * FROM vocab_terms ORDER BY term');
+      final beforeLog = rows('SELECT * FROM dictation_log ORDER BY id');
 
-      expect(
-        vieja
-            .select('SELECT * FROM corrections ORDER BY raw')
-            .map((f) => f.values.join('|')),
-        antesCorr.map((f) => f.values.join('|')),
-      );
-      expect(
-        vieja
-            .select('SELECT * FROM vocab_terms ORDER BY term')
-            .map((f) => f.values.join('|')),
-        antesVocab.map((f) => f.values.join('|')),
-      );
-      expect(
-        vieja
-            .select('SELECT * FROM dictation_log ORDER BY id')
-            .map((f) => f.values.join('|')),
-        antesLog.map((f) => f.values.join('|')),
-      );
+      migrateSchema(old);
+
+      expect(rows('SELECT * FROM corrections ORDER BY raw'), beforeCorr);
+      expect(rows('SELECT * FROM vocab_terms ORDER BY term'), beforeVocab);
+      expect(rows('SELECT * FROM dictation_log ORDER BY id'), beforeLog);
       // Tildes y ñ del vocabulario propio sobreviven al viaje.
       expect(
-        vieja
+        old
             .select("SELECT freq FROM vocab_terms WHERE term = 'Añoveros'")
             .first['freq'],
         3,
@@ -147,31 +109,31 @@ void main() {
         () {
       // Es el criterio de aceptación literal del ticket: el usuario que
       // actualiza tiene que quedar con lo mismo que el que instala hoy.
-      migrarEsquema(vieja);
-      final nueva = sqlite3.openInMemory();
-      addTearDown(nueva.dispose);
-      migrarEsquema(nueva);
+      migrateSchema(old);
+      final fresh = sqlite3.openInMemory();
+      addTearDown(fresh.dispose);
+      migrateSchema(fresh);
 
-      expect(_volcarEsquema(vieja), _volcarEsquema(nueva));
-      expect(versionEsquema(vieja), versionEsquema(nueva));
+      expect(dumpSchema(old), dumpSchema(fresh));
+      expect(schemaVersion(old), schemaVersion(fresh));
     });
   });
 
   group('idempotencia', () {
     test('migrar dos veces deja el mismo esquema y no aplica nada la segunda',
         () {
-      final primera = migrarEsquema(db);
-      final esquema = _volcarEsquema(db);
+      final first = migrateSchema(db);
+      final schema = dumpSchema(db);
 
-      final segunda = migrarEsquema(db);
+      final second = migrateSchema(db);
 
-      expect(primera.aplicadas, isNotEmpty);
-      expect(segunda.aplicadas, isEmpty);
-      expect(segunda.versionFinal, primera.versionFinal);
+      expect(first.applied, isNotEmpty);
+      expect(second.applied, isEmpty);
+      expect(second.toVersion, first.toVersion);
+      expect(dumpSchema(db), schema);
       // Estar al día NO es venir del futuro: confundirlas haría que Pronto
       // dejara de migrar en cuanto llegase la siguiente versión.
-      expect(segunda.baseMasNuevaQueLaApp, isFalse);
-      expect(_volcarEsquema(db), esquema);
+      expect(second.databaseNewerThanApp, isFalse);
     });
 
     test('para cualquier punto intermedio, terminar da el mismo resultado', () {
@@ -179,173 +141,193 @@ void main() {
       // 0.7.1, a medio camino de una tanda de migraciones futuras); al acabar
       // todas, el esquema es el mismo. Se prueba con una lista sintética
       // porque hoy solo hay una migración de verdad.
-      final lista = [
-        _crearTabla(1, 'uno'),
-        _crearTabla(2, 'dos'),
-        _crearTabla(3, 'tres'),
+      final list = [
+        _createTable(1, 'uno'),
+        _createTable(2, 'dos'),
+        _createTable(3, 'tres'),
       ];
 
-      final completa = sqlite3.openInMemory();
-      addTearDown(completa.dispose);
-      migrarEsquema(completa, migraciones: lista);
-      final referencia = _volcarEsquema(completa);
+      final full = sqlite3.openInMemory();
+      addTearDown(full.dispose);
+      migrateSchema(full, migrations: list);
+      final reference = dumpSchema(full);
 
-      for (var corte = 0; corte <= lista.length; corte++) {
-        final parcial = sqlite3.openInMemory();
-        addTearDown(parcial.dispose);
-        migrarEsquema(parcial, migraciones: lista.sublist(0, corte));
-        final r = migrarEsquema(parcial, migraciones: lista);
+      for (var cut = 0; cut <= list.length; cut++) {
+        final partial = sqlite3.openInMemory();
+        addTearDown(partial.dispose);
+        migrateSchema(partial, migrations: list.sublist(0, cut));
+        final r = migrateSchema(partial, migrations: list);
 
-        expect(_volcarEsquema(parcial), referencia, reason: 'corte $corte');
-        expect(versionEsquema(parcial), 3, reason: 'corte $corte');
-        expect(
-          r.aplicadas.length,
-          lista.length - corte,
-          reason: 'corte $corte',
-        );
+        expect(dumpSchema(partial), reference, reason: 'corte $cut');
+        expect(schemaVersion(partial), 3, reason: 'corte $cut');
+        expect(r.applied.length, list.length - cut, reason: 'corte $cut');
       }
-    });
-
-    test('anadirColumnaSiFalta añade una vez y calla la segunda', () {
-      db.execute('CREATE TABLE t (a INTEGER)');
-
-      anadirColumnaSiFalta(db, 't', 'b', 'TEXT');
-      anadirColumnaSiFalta(db, 't', 'b', 'TEXT');
-
-      final cols = db
-          .select('PRAGMA table_info(t)')
-          .map((f) => f['name'] as String)
-          .toList();
-      expect(cols, ['a', 'b']);
-    });
-
-    test('anadirColumnaSiFalta no pisa los datos de la columna que ya está',
-        () {
-      db.execute('CREATE TABLE t (a INTEGER, b TEXT)');
-      db.execute("INSERT INTO t VALUES (1, 'valor del usuario')");
-
-      anadirColumnaSiFalta(db, 't', 'b', 'TEXT');
-
-      expect(db.select('SELECT b FROM t').first['b'], 'valor del usuario');
     });
   });
 
   group('orden y numeración', () {
     test('las migraciones se aplican en orden', () {
-      final orden = <int>[];
-      final lista = [
+      final order = <int>[];
+      final list = [
         for (var i = 1; i <= 3; i++)
-          Migracion(
+          Migration(
             version: i,
-            nombre: 'm$i',
-            aplicar: (db) {
-              orden.add(i);
+            name: 'm$i',
+            apply: (db) {
+              order.add(i);
               db.execute('CREATE TABLE IF NOT EXISTS t$i (id INTEGER)');
             },
           ),
       ];
 
-      final r = migrarEsquema(db, migraciones: lista);
+      final r = migrateSchema(db, migrations: list);
 
-      expect(orden, [1, 2, 3]);
-      expect(r.aplicadas, ['m1', 'm2', 'm3']);
-      expect(versionEsquema(db), 3);
+      expect(order, [1, 2, 3]);
+      expect(r.applied, ['m1', 'm2', 'm3']);
+      expect(schemaVersion(db), 3);
     });
 
     test('una lista desordenada se rechaza en vez de aplicarse a lo loco', () {
-      final lista = [_crearTabla(2, 'dos'), _crearTabla(1, 'uno')];
+      final list = [_createTable(2, 'dos'), _createTable(1, 'uno')];
       expect(
-        () => migrarEsquema(db, migraciones: lista),
+        () => migrateSchema(db, migrations: list),
         throwsA(isA<StateError>()),
       );
-      expect(versionEsquema(db), 0);
+      expect(schemaVersion(db), 0);
     });
 
     test('un número saltado se rechaza (renumerar rompe bases ya migradas)',
         () {
-      final lista = [_crearTabla(1, 'uno'), _crearTabla(3, 'tres')];
+      final list = [_createTable(1, 'uno'), _createTable(3, 'tres')];
       expect(
-        () => migrarEsquema(db, migraciones: lista),
+        () => migrateSchema(db, migrations: list),
         throwsA(isA<StateError>()),
       );
     });
 
     test('dos migraciones con el mismo número se rechazan', () {
-      final lista = [_crearTabla(1, 'uno'), _crearTabla(1, 'otra')];
+      final list = [_createTable(1, 'uno'), _createTable(1, 'otra')];
       expect(
-        () => migrarEsquema(db, migraciones: lista),
+        () => migrateSchema(db, migrations: list),
         throwsA(isA<StateError>()),
       );
     });
 
     test('la lista real de Pronto está bien numerada', () {
-      expect(() => migrarEsquema(db), returnsNormally);
-      expect(versionObjetivo(kMigracionesPronto), kMigracionesPronto.length);
+      expect(() => migrateSchema(db), returnsNormally);
+      expect(targetVersion(kProntoMigrations), kProntoMigrations.length);
     });
   });
 
   group('rotura', () {
+    test('SQLite deshace el PRAGMA user_version con la transacción', () {
+      // Es el supuesto sobre el que se apoya todo lo demás: si el bump de
+      // versión NO viajara dentro de la transacción, una migración a medias
+      // dejaría la base marcada como migrada sin estarlo, y el arranque
+      // siguiente ya no la volvería a intentar.
+      db.execute('PRAGMA user_version = 1');
+      db.execute('BEGIN IMMEDIATE');
+      db.execute('CREATE TABLE t (a INTEGER)');
+      db.execute('PRAGMA user_version = 2');
+      expect(schemaVersion(db), 2);
+
+      db.execute('ROLLBACK');
+
+      expect(schemaVersion(db), 1);
+      expect(tableNames(db), isNot(contains('t')));
+    });
+
     test('una migración que falla no deja la base a medias', () {
-      // Simula que matan el proceso (o falla el disco) DENTRO de la segunda
-      // migración: lo suyo se deshace entero y la versión se queda en la 1.
-      final lista = [
-        _crearTabla(1, 'uno'),
-        Migracion(
+      // Simula que falla el disco DENTRO de la segunda migración: lo suyo se
+      // deshace entero y la versión se queda en la 1.
+      final list = [
+        _createTable(1, 'uno'),
+        Migration(
           version: 2,
-          nombre: 'la que revienta',
-          aplicar: (db) {
+          name: 'la que revienta',
+          apply: (db) {
             db.execute('CREATE TABLE dos (id INTEGER)');
             throw StateError('disco lleno');
           },
         ),
-        _crearTabla(3, 'tres'),
+        _createTable(3, 'tres'),
       ];
 
       expect(
-        () => migrarEsquema(db, migraciones: lista),
+        () => migrateSchema(db, migrations: list),
         throwsA(isA<StateError>()),
       );
 
       // La 1 quedó aplicada y confirmada; la 2 no dejó ni su tabla ni su
       // versión; la 3 ni se intentó.
-      expect(versionEsquema(db), 1);
-      final tablas = db
-          .select("SELECT name FROM sqlite_master WHERE type = 'table'")
-          .map((f) => f['name'] as String)
-          .toSet();
-      expect(tablas, contains('uno'));
-      expect(tablas, isNot(contains('dos')));
-      expect(tablas, isNot(contains('tres')));
+      expect(schemaVersion(db), 1);
+      expect(tableNames(db), contains('uno'));
+      expect(tableNames(db), isNot(contains('dos')));
+      expect(tableNames(db), isNot(contains('tres')));
     });
 
-    test('reintentar tras el fallo termina el trabajo', () {
-      var falla = true;
-      final lista = [
-        _crearTabla(1, 'uno'),
-        Migracion(
+    test('en un FICHERO, la migración rota tampoco sobrevive al cierre', () {
+      // El mismo caso pero con una base en disco que se cierra y se vuelve a
+      // abrir: es lo que le pasa al usuario cuando el actualizador MATA la app
+      // a mitad. Una base en memoria no demuestra esto.
+      final tmp = Directory.systemTemp.createTempSync('pronto-mig-file-');
+      addTearDown(() => tmp.deleteSync(recursive: true));
+      final path = '${tmp.path}/pronto.db';
+
+      final list = [
+        _createTable(1, 'uno'),
+        Migration(
           version: 2,
-          nombre: 'falla la primera vez',
-          aplicar: (db) {
-            db.execute('CREATE TABLE IF NOT EXISTS dos (id INTEGER)');
-            if (falla) throw StateError('disco lleno');
+          name: 'la que revienta',
+          apply: (db) {
+            db.execute('CREATE TABLE dos (id INTEGER)');
+            throw StateError('el proceso se fue');
           },
         ),
       ];
 
-      expect(() => migrarEsquema(db, migraciones: lista), throwsStateError);
-      falla = false;
-      final r = migrarEsquema(db, migraciones: lista);
+      final first = sqlite3.open(path);
+      expect(
+        () => migrateSchema(first, migrations: list),
+        throwsA(isA<StateError>()),
+      );
+      first.dispose();
 
-      expect(versionEsquema(db), 2);
-      expect(r.versionInicial, 1);
-      expect(r.aplicadas, ['falla la primera vez']);
+      final reopened = sqlite3.open(path);
+      addTearDown(reopened.dispose);
+      expect(schemaVersion(reopened), 1);
+      expect(tableNames(reopened), contains('uno'));
+      expect(tableNames(reopened), isNot(contains('dos')));
+    });
+
+    test('reintentar tras el fallo termina el trabajo', () {
+      var fails = true;
+      final list = [
+        _createTable(1, 'uno'),
+        Migration(
+          version: 2,
+          name: 'falla la primera vez',
+          apply: (db) {
+            db.execute('CREATE TABLE IF NOT EXISTS dos (id INTEGER)');
+            if (fails) throw StateError('disco lleno');
+          },
+        ),
+      ];
+
+      expect(() => migrateSchema(db, migrations: list), throwsStateError);
+      fails = false;
+      final r = migrateSchema(db, migrations: list);
+
+      expect(schemaVersion(db), 2);
+      expect(r.fromVersion, 1);
+      expect(r.applied, ['falla la primera vez']);
     });
 
     test('una lista vacía no toca nada', () {
-      final r = migrarEsquema(db, migraciones: const []);
-      expect(r.versionFinal, 0);
-      expect(r.aplicadas, isEmpty);
-      expect(baseVacia(db), isTrue);
+      final r = migrateSchema(db, migrations: const []);
+      expect(r.toVersion, 0);
+      expect(r.applied, isEmpty);
+      expect(databaseIsEmpty(db), isTrue);
     });
 
     test('una base más nueva que la app no se degrada', () {
@@ -353,23 +335,18 @@ void main() {
       db.execute('CREATE TABLE corrections (raw TEXT)');
       db.execute('PRAGMA user_version = 7');
 
-      final r = migrarEsquema(db, migraciones: [_crearTabla(1, 'uno')]);
+      final r = migrateSchema(db, migrations: [_createTable(1, 'uno')]);
 
-      expect(r.baseMasNuevaQueLaApp, isTrue);
-      expect(r.aplicadas, isEmpty);
-      expect(versionEsquema(db), 7);
-      expect(r.huboActualizacion, isFalse);
+      expect(r.databaseNewerThanApp, isTrue);
+      expect(r.applied, isEmpty);
+      expect(schemaVersion(db), 7);
       // No se ha creado la tabla de la migración vieja encima de la base nueva.
-      final tablas = db
-          .select("SELECT name FROM sqlite_master WHERE type = 'table'")
-          .map((f) => f['name'] as String)
-          .toSet();
-      expect(tablas, isNot(contains('uno')));
+      expect(tableNames(db), isNot(contains('uno')));
     });
 
-    test('hayMigracionesPendientes dice que no si la base va por delante', () {
+    test('hasPendingMigrations dice que no si la base va por delante', () {
       db.execute('PRAGMA user_version = 99');
-      expect(hayMigracionesPendientes(db), isFalse);
+      expect(hasPendingMigrations(db), isFalse);
     });
   });
 }

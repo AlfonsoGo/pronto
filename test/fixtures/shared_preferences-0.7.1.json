@@ -1,0 +1,5 @@
+{
+  "flutter.pronto_first_run_done": true,
+  "flutter.pronto_engine_ready_once": true,
+  "flutter.app_settings": "{\"modelFile\":\"ggml-small.bin\",\"language\":\"es\",\"injectionMode\":\"unicodeSendInput\",\"triggerMode\":\"hold\",\"autostart\":true,\"llmEnabled\":false,\"llmBaseUrl\":\"http://192.168.1.50:11434\",\"llmModel\":\"qwen2.5:7b\",\"captureExternalEdits\":false,\"hotkey\":{\"vk\":120,\"ctrl\":true,\"alt\":false,\"shift\":true,\"win\":false},\"pillScale\":1.4,\"engine\":\"parakeet\",\"textPolish\":false,\"sounds\":false,\"micDeviceId\":\"micro-de-mesa\"}"
+}

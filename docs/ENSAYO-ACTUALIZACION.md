@@ -61,8 +61,10 @@ versión con la que puede haber gente ahí fuera.
 
 8. Con la versión nueva ya instalada y migrada, **instala la 0.7.1 encima**.
 9. Comprueba que arranca y que no ha perdido datos (los mismos contadores).
-10. Restaura la copia previa encima de `%APPDATA%\Pronto\Pronto` y comprueba que vuelves al estado
-    exacto de antes de actualizar.
+10. Restaura la copia previa **encima** de `%APPDATA%\Pronto\Pronto` —copiar y sobrescribir, nunca
+    reemplazar la carpeta— y comprueba que vuelves al estado exacto de antes de actualizar.
+    🔴 La copia **no lleva `models/`**: si reemplazas la carpeta en vez de copiar encima, te
+    quedas sin el modelo de voz y Pronto se baja 640 MB otra vez.
 11. Si algo de esto **no** funciona, se dice en las notas de versión **antes** de publicar. Una
     vuelta atrás que no existe se avisa; no se descubre.
 

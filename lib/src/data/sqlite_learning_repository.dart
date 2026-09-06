@@ -15,9 +15,9 @@ import 'pronto_database.dart';
 /// instancia se cachea para reutilizarla. Todas las consultas usan parámetros
 /// enlazados (prepared statements), nunca interpolación de strings.
 ///
-/// Abrir es MÁS que abrir un fichero: [abrirBaseDeDatosDePronto] copia la
-/// carpeta de datos y migra el esquema si hace falta (PRNT-20). Lo que pasó
-/// queda en [informe], que es lo que se le enseña al usuario tras actualizar.
+/// Abrir es MÁS que abrir un fichero: [openProntoDatabase] copia la carpeta de
+/// datos y migra el esquema si hace falta (PRNT-20). Lo que pasó queda en
+/// [openReport], que es lo que se le enseña al usuario tras actualizar.
 class SqliteLearningRepository implements LearningRepository {
   /// Instancia cacheada de la BD (se crea en la primera llamada a [_db]).
   Database? _database;
@@ -26,18 +26,23 @@ class SqliteLearningRepository implements LearningRepository {
   /// varias operaciones concurrentes antes de terminar la primera apertura.
   Future<Database>? _opening;
 
-  final Completer<InformeApertura> _informe = Completer<InformeApertura>();
+  final Completer<OpenReport> _report = Completer<OpenReport>();
 
   /// Lo que pasó al abrir la base: si se migró, dónde quedó la copia previa y
   /// qué falló, si algo falló. Se completa en la primera apertura.
-  Future<InformeApertura> get informe => _informe.future;
+  Future<OpenReport> get openReport => _report.future;
 
   /// Fuerza la apertura (y con ella la copia y la migración) sin esperar a que
   /// alguien dicte. Se llama al arrancar: migrar tiene que pasar ANTES de que
   /// nada toque la base, no la primera vez que el usuario habla.
-  Future<InformeApertura> asegurarAbierta() async {
-    await _db();
-    return informe;
+  Future<OpenReport> ensureOpen() async {
+    try {
+      await _db();
+    } catch (_) {
+      // El informe ya lleva el fallo (lo completa [_open]); quien espera el
+      // aviso no tiene por qué gestionar además la excepción.
+    }
+    return openReport;
   }
 
   /// Devuelve la BD abriéndola de forma perezosa la primera vez, con su copia
@@ -52,17 +57,19 @@ class SqliteLearningRepository implements LearningRepository {
 
   Future<Database> _open() async {
     try {
-      final apertura = await abrirBaseDeDatosDePronto();
-      _database = apertura.db;
-      if (!_informe.isCompleted) _informe.complete(apertura.informe);
-      return apertura.db;
+      final opened = await openProntoDatabase();
+      _database = opened.db;
+      if (!_report.isCompleted) _report.complete(opened.report);
+      return opened.db;
     } catch (e) {
       // Si falla la apertura, limpia el future en curso para reintentar luego.
       _opening = null;
       // El informe se completa igual: si no, quien lo espere para enseñar el
       // aviso se quedaría colgado para siempre.
-      if (!_informe.isCompleted) {
-        _informe.complete(InformeApertura(errorApertura: '$e'));
+      if (!_report.isCompleted) {
+        _report.complete(
+          OpenReport(outcome: OpenOutcome.couldNotOpen, technicalDetail: '$e'),
+        );
       }
       throw StateError('No se pudo abrir la base de datos de aprendizaje: $e');
     } finally {

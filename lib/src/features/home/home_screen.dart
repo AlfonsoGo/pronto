@@ -157,7 +157,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               children: [
                 // Aviso de que la actualización tocó la base de datos y dónde
                 // quedó la copia previa (PRNT-20).
-                const MigracionBanner(),
+                const MigrationBanner(),
 
                 // Aviso de actualización disponible (auto-actualizador).
                 const _UpdateBanner(),

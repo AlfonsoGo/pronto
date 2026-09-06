@@ -21,22 +21,26 @@ library;
 import 'package:sqlite3/sqlite3.dart';
 
 /// Una migración numerada del esquema.
-class Migracion {
+class Migration {
   /// Número consecutivo desde 1. No se renumera jamás: es lo que queda escrito
   /// en `PRAGMA user_version` de las bases de los usuarios.
   final int version;
 
   /// Nombre corto para el informe y los logs.
-  final String nombre;
+  final String name;
 
   /// Los cambios. DEBE ser idempotente: puede correr sobre una base donde el
   /// cambio ya esté hecho (por ejemplo una instalación nueva).
-  final void Function(Database db) aplicar;
+  ///
+  /// Para ampliar una tabla, SQLite no tiene `ADD COLUMN IF NOT EXISTS`: hay
+  /// que mirar antes `PRAGMA table_info(<tabla>)` y saltarse la columna que ya
+  /// esté. Sin eso, la migración revienta al segundo intento.
+  final void Function(Database db) apply;
 
-  const Migracion({
+  const Migration({
     required this.version,
-    required this.nombre,
-    required this.aplicar,
+    required this.name,
+    required this.apply,
   });
 }
 
@@ -46,15 +50,15 @@ class Migracion {
 /// base existente no cambia nada (`IF NOT EXISTS`), sobre una nueva lo crea.
 /// Eso es lo que hace que una instalación nueva y una actualizada acaben en el
 /// mismo estado.
-const List<Migracion> kMigracionesPronto = [
-  Migracion(
+const List<Migration> kProntoMigrations = [
+  Migration(
     version: 1,
-    nombre: 'esquema base (correcciones, vocabulario, log de dictados)',
-    aplicar: _v1EsquemaBase,
+    name: 'esquema base (correcciones, vocabulario, log de dictados)',
+    apply: _v1BaseSchema,
   ),
 ];
 
-void _v1EsquemaBase(Database db) {
+void _v1BaseSchema(Database db) {
   db.execute('''
     CREATE TABLE IF NOT EXISTS corrections (
       raw TEXT,
@@ -81,149 +85,128 @@ void _v1EsquemaBase(Database db) {
   ''');
 }
 
-/// Lo que pasó al migrar. Es lo que se le enseña al usuario.
-class ResultadoMigracion {
+/// Lo que pasó al migrar el esquema.
+class MigrationResult {
   /// Versión de esquema que tenía la base al abrirla.
-  final int versionInicial;
+  final int fromVersion;
 
   /// Versión de esquema con la que queda.
-  final int versionFinal;
+  final int toVersion;
 
   /// Nombres de las migraciones que se aplicaron, en orden.
-  final List<String> aplicadas;
+  final List<String> applied;
 
   /// La base estaba vacía: es una instalación NUEVA, no una actualización.
   /// Aquí no hay nada que salvar ni nada que contarle al usuario.
-  final bool instalacionNueva;
+  final bool freshInstall;
 
   /// La base venía de una versión de Pronto MÁS NUEVA que esta. No se ha
   /// tocado: degradar el esquema perdería datos.
-  final bool baseMasNuevaQueLaApp;
+  final bool databaseNewerThanApp;
 
-  const ResultadoMigracion({
-    required this.versionInicial,
-    required this.versionFinal,
-    required this.aplicadas,
-    required this.instalacionNueva,
-    this.baseMasNuevaQueLaApp = false,
+  const MigrationResult({
+    required this.fromVersion,
+    required this.toVersion,
+    required this.applied,
+    required this.freshInstall,
+    this.databaseNewerThanApp = false,
   });
-
-  /// Se ha tocado el esquema de una base que ya tenía datos: esto es lo que el
-  /// usuario merece saber (y lo que justifica haber hecho una copia antes).
-  bool get huboActualizacion =>
-      !instalacionNueva && versionFinal > versionInicial;
 }
 
 /// Versión de esquema escrita en la base (`PRAGMA user_version`). 0 = sin
 /// versionar, que es como salieron todas las instalaciones hasta la 0.7.1.
-int versionEsquema(Database db) =>
+int schemaVersion(Database db) =>
     db.select('PRAGMA user_version').first.values.first! as int;
 
 /// ¿Tiene la base tablas nuestras? Distingue una instalación NUEVA (fichero
 /// recién creado, sin tablas) de una de la 0.7.1 (tablas sin `user_version`).
 /// Sin esta distinción las dos se verían iguales —`user_version = 0`— y le
 /// contaríamos una migración a quien acaba de instalar Pronto por primera vez.
-bool baseVacia(Database db) {
-  final filas = db.select(
+bool databaseIsEmpty(Database db) {
+  final rows = db.select(
     'SELECT count(*) AS n FROM sqlite_master '
     "WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
   );
-  return (filas.first['n'] as int) == 0;
+  return (rows.first['n'] as int) == 0;
 }
 
 /// La versión a la que lleva la lista de migraciones (0 si está vacía).
-int versionObjetivo(List<Migracion> migraciones) =>
-    migraciones.isEmpty ? 0 : migraciones.last.version;
+int targetVersion(List<Migration> migrations) =>
+    migrations.isEmpty ? 0 : migrations.last.version;
 
 /// ¿Hay algo que migrar en esta base? Se responde ANTES de tocar nada para
 /// decidir si hace falta la copia de seguridad previa.
-bool hayMigracionesPendientes(
+bool hasPendingMigrations(
   Database db, {
-  List<Migracion> migraciones = kMigracionesPronto,
+  List<Migration> migrations = kProntoMigrations,
 }) {
-  _validarLista(migraciones);
-  return versionEsquema(db) < versionObjetivo(migraciones);
+  _validateList(migrations);
+  return schemaVersion(db) < targetVersion(migrations);
 }
 
 /// Aplica las migraciones pendientes, en orden, cada una en su transacción.
 ///
-/// No hace copias ni sabe de ficheros: eso es de `abrirBaseDeDatos`. Aquí solo
-/// se mueve el esquema.
-ResultadoMigracion migrarEsquema(
+/// No hace copias ni sabe de ficheros: eso es de `openDatabase`. Aquí solo se
+/// mueve el esquema.
+MigrationResult migrateSchema(
   Database db, {
-  List<Migracion> migraciones = kMigracionesPronto,
+  List<Migration> migrations = kProntoMigrations,
 }) {
-  _validarLista(migraciones);
+  _validateList(migrations);
 
-  final vacia = baseVacia(db);
-  final inicial = versionEsquema(db);
-  final objetivo = versionObjetivo(migraciones);
+  final empty = databaseIsEmpty(db);
+  final from = schemaVersion(db);
+  final target = targetVersion(migrations);
 
-  if (inicial > objetivo) {
+  if (from > target) {
     // El usuario ha vuelto a una versión anterior de Pronto. Su base ya sabe
     // más que este código. Degradarla borraría columnas con datos dentro, así
     // que no se toca: SQLite ignora las columnas que no consulta.
-    return ResultadoMigracion(
-      versionInicial: inicial,
-      versionFinal: inicial,
-      aplicadas: const [],
-      instalacionNueva: vacia,
-      baseMasNuevaQueLaApp: true,
+    return MigrationResult(
+      fromVersion: from,
+      toVersion: from,
+      applied: const [],
+      freshInstall: empty,
+      databaseNewerThanApp: true,
     );
   }
 
-  final aplicadas = <String>[];
-  for (final m in migraciones) {
-    if (m.version <= inicial) continue;
+  final applied = <String>[];
+  for (final m in migrations) {
+    if (m.version <= from) continue;
     // Transacción por migración: el `PRAGMA user_version` viaja DENTRO, así que
     // o se ven los cambios y la versión nueva, o no se ve ninguna de las dos.
     // Matar el proceso aquí en medio no deja una base a medias.
     db.execute('BEGIN IMMEDIATE');
     try {
-      m.aplicar(db);
+      m.apply(db);
       db.execute('PRAGMA user_version = ${m.version}');
       db.execute('COMMIT');
     } catch (_) {
       db.execute('ROLLBACK');
       rethrow;
     }
-    aplicadas.add(m.nombre);
+    applied.add(m.name);
   }
 
-  return ResultadoMigracion(
-    versionInicial: inicial,
-    versionFinal: versionEsquema(db),
-    aplicadas: aplicadas,
-    instalacionNueva: vacia,
+  return MigrationResult(
+    fromVersion: from,
+    toVersion: schemaVersion(db),
+    applied: applied,
+    freshInstall: empty,
   );
-}
-
-/// Añade una columna solo si no está ya. Es la herramienta con la que se
-/// escriben las migraciones que amplían una tabla: SQLite no tiene
-/// `ADD COLUMN IF NOT EXISTS`, y sin esta comprobación una migración correcta
-/// deja de ser idempotente y revienta al segundo intento.
-void anadirColumnaSiFalta(
-  Database db,
-  String tabla,
-  String columna,
-  String declaracion,
-) {
-  final cols = db.select('PRAGMA table_info($tabla)');
-  final existe = cols.any((f) => f['name'] == columna);
-  if (existe) return;
-  db.execute('ALTER TABLE $tabla ADD COLUMN $columna $declaracion');
 }
 
 /// Una lista mal formada es un error de programación, no del usuario: dos
 /// migraciones con el mismo número, o desordenadas, dejarían bases distintas en
 /// máquinas distintas según el orden en que se aplicaran.
-void _validarLista(List<Migracion> migraciones) {
-  for (var i = 0; i < migraciones.length; i++) {
-    final esperada = i + 1;
-    if (migraciones[i].version != esperada) {
+void _validateList(List<Migration> migrations) {
+  for (var i = 0; i < migrations.length; i++) {
+    final expected = i + 1;
+    if (migrations[i].version != expected) {
       throw StateError(
         'Migraciones mal numeradas: en la posición $i se esperaba la versión '
-        '$esperada y hay la ${migraciones[i].version}. Deben ser consecutivas '
+        '$expected y hay la ${migrations[i].version}. Deben ser consecutivas '
         'desde 1 y no se renumeran nunca.',
       );
     }
