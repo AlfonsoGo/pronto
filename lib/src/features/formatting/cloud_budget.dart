@@ -1,4 +1,7 @@
-import 'package:flutter/foundation.dart';
+// `meta` y no `flutter/foundation`: lo único que se usa aquí es `@immutable`,
+// y `foundation` arrastra `dart:ui`, que deja el banco de pruebas de `tools/`
+// sin poder compilar con `dart run` (no hay motor de Flutter en una consola).
+import 'package:meta/meta.dart';
 
 import 'cloud_cost.dart';
 

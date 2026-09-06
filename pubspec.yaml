@@ -53,6 +53,11 @@ dependencies:
   # Verificación de integridad (SHA-256) del modelo Parakeet descargado.
   crypto: ^3.0.0
 
+  # Anotaciones (@immutable) SIN arrastrar dart:ui. Las clases que también usa
+  # el banco de pruebas de `tools/` no pueden importar `flutter/foundation`:
+  # ahí no hay motor de Flutter y el banco no compilaría con `dart run`.
+  meta: ^1.15.0
+
   # VersiÃ³n actual de la app (para el auto-actualizador desde GitHub Releases).
   package_info_plus: ^8.0.0
 

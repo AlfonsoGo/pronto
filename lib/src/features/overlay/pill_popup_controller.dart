@@ -51,6 +51,13 @@ class PillPopup {
   /// respuesta de un modelo.
   final String notice;
 
+  /// Quién arregló este dictado y cuánto tardó: «En tu equipo · qwen2.5:7b ·
+  /// 1,2 s». Vacío cuando no hubo Formateo o cuando ya habla [notice].
+  ///
+  /// Se construye con [etiquetaAsistente] a partir de lo que de verdad pasó en
+  /// ESTE dictado, no de lo que digan los Ajustes ahora mismo.
+  final String assistant;
+
   /// Contador que sube en cada aparición: sirve de `key` para re-disparar la
   /// animación de entrada aunque la caja ya estuviera visible.
   final int seq;
@@ -64,6 +71,7 @@ class PillPopup {
     this.altLang,
     this.altPending = false,
     this.notice = '',
+    this.assistant = '',
     this.seq = 0,
   });
 
@@ -79,6 +87,7 @@ class PillPopup {
     TextLanguage? altLang,
     bool? altPending,
     String? notice,
+    String? assistant,
     int? seq,
   }) {
     return PillPopup(
@@ -90,6 +99,7 @@ class PillPopup {
       altLang: altLang ?? this.altLang,
       altPending: altPending ?? this.altPending,
       notice: notice ?? this.notice,
+      assistant: assistant ?? this.assistant,
       seq: seq ?? this.seq,
     );
   }
@@ -122,6 +132,7 @@ class PillPopupController extends Notifier<PillPopup> {
     TextLanguage? altLang,
     bool altPending = false,
     String? notice,
+    String assistant = '',
   }) {
     _show(
       text,
@@ -131,6 +142,7 @@ class PillPopupController extends Notifier<PillPopup> {
       altLang: altLang,
       altPending: altPending,
       notice: notice,
+      assistant: assistant,
     );
   }
 
@@ -143,6 +155,7 @@ class PillPopupController extends Notifier<PillPopup> {
     TextLanguage? altLang,
     bool altPending = false,
     String? notice,
+    String assistant = '',
   }) {
     _show(
       text,
@@ -152,6 +165,7 @@ class PillPopupController extends Notifier<PillPopup> {
       altLang: altLang,
       altPending: altPending,
       notice: notice,
+      assistant: assistant,
     );
   }
 
@@ -193,6 +207,7 @@ class PillPopupController extends Notifier<PillPopup> {
     TextLanguage? altLang,
     bool altPending = false,
     String? notice,
+    String assistant = '',
   }) {
     final t = text.trim();
     if (t.isEmpty) return;
@@ -208,6 +223,7 @@ class PillPopupController extends Notifier<PillPopup> {
       altLang: altLang,
       altPending: altPending,
       notice: notice?.trim() ?? '',
+      assistant: assistant.trim(),
       seq: state.seq + 1,
     );
     _timer = Timer(_visibleFor, hide);

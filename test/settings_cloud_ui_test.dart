@@ -2,7 +2,11 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 import 'package:pronto/src/features/formatting/cloud_key.dart';
+import 'package:pronto/src/features/formatting/formatter_provider.dart';
+import 'package:pronto/src/features/formatting/ollama_catalog.dart';
 import 'package:pronto/src/features/formatting/text_formatter.dart';
 import 'package:pronto/src/features/settings/settings_controller.dart';
 import 'package:pronto/src/features/settings/settings_screen.dart';
@@ -17,8 +21,10 @@ import 'package:pronto/src/platform/credential_store.dart';
 // en el Administrador de credenciales de quien corra los tests), el buscador de
 // actualizaciones (deja un temporizador de dos horas que revienta el test al
 // desmontar) y la persistencia de los ajustes (el plugin de preferencias no
-// existe en un test y su futuro no vuelve nunca). Todo lo demás es la pantalla
-// de verdad.
+// existe en un test y su futuro no vuelve nunca). Y el cliente de Ollama, que
+// sin sustituir saldría a la red de verdad: en el PC de quien corra los tests
+// puede haber un Ollama escuchando, y entonces el resultado dependería de qué
+// modelos tenga instalados. Todo lo demás es la pantalla de verdad.
 
 void main() {
   late InMemoryCredentialStore almacen;
@@ -39,6 +45,13 @@ void main() {
     container = ProviderContainer(
       overrides: [
         credentialStoreProvider.overrideWithValue(almacen),
+        ollamaClientProvider.overrideWithValue(
+          OllamaClient(
+            httpClient: MockClient(
+              (_) async => http.Response('{"models":[]}', 200),
+            ),
+          ),
+        ),
         updateProvider.overrideWith(_SinActualizaciones.new),
         settingsProvider.overrideWith(
           () => _AjustesFijos(

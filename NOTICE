@@ -1,0 +1,63 @@
+Pronto — avisos de terceros
+===========================
+
+Pronto se publica bajo licencia MIT (ver LICENSE). Este fichero recoge lo que NO
+es nuestro: los modelos y los componentes de terceros que Pronto distribuye,
+descarga o propone, con su licencia y el día en que se comprobó en su ficha.
+
+Se comprueba **en la ficha del modelo, el día que se elige** — no de memoria y
+no de un blog. La razón es que Pronto es MIT y público y descarga cosas en
+nombre del usuario: la licencia de lo que proponemos es un problema nuestro, no
+suyo. Hay trampas reales ahí fuera (Qwen2.5-3B es licencia de investigación
+aunque sus hermanos sean Apache; Llama 3.2 obliga a poner «Built with Llama»).
+
+Puerta, vigilada por `test/formatting/format_preset_test.dart`: en la tabla de
+modelos que Pronto propone (`kModelosMedidos`) **solo entra Apache-2.0 o MIT**.
+
+
+Motor de voz (se distribuye con el instalador)
+---------------------------------------------
+
+NVIDIA Parakeet TDT 0.6b v3 (int8), reempaquetado para sherpa-onnx
+  Licencia: cc-by-4.0, la del modelo original de NVIDIA
+  Ficha del original: https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3
+  De donde se descarga:
+    https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8
+  Comprobada: 2026-09-06. ⚠ El repo del reempaquetado NO declara licencia en su
+  ficha; se toma la del original de NVIDIA, que es de quien es el modelo.
+
+sherpa-onnx (k2-fsa)
+  Licencia: Apache-2.0
+  Proyecto: https://github.com/k2-fsa/sherpa-onnx
+
+whisper.cpp (ggerganov) — retirado de la selección desde la 0.7.1; la interfaz
+  sigue en el código pero la DLL no viaja en el instalador.
+  Licencia: MIT
+  Proyecto: https://github.com/ggerganov/whisper.cpp
+
+
+Modelos de formateo local
+-------------------------
+
+Pronto NO descarga hoy ningún modelo de formateo: usa el que ya tenga instalado
+el Ollama del usuario (ADR 0010). Lo que sí hacemos es **proponer** uno de los
+que hemos medido, y por eso su licencia es asunto nuestro.
+
+Modelos medidos y propuestos (misma lista que `kModelosMedidos`):
+
+Qwen2.5-7B-Instruct (tag de Ollama: qwen2.5:7b)
+  Licencia: apache-2.0
+  Ficha: https://huggingface.co/Qwen/Qwen2.5-7B-Instruct
+  Comprobada: 2026-09-06
+  Medido: 100 dictados en español, 2026-09-06, en un PC con RTX 4070 Ti.
+
+⚠ Bajados para medirlos y NO medidos todavía (la corrida se paró): Qwen3-1.7B
+  y Qwen3-4B, los dos apache-2.0 comprobado el 2026-09-06 en
+  https://huggingface.co/Qwen/Qwen3-1.7B-GGUF y
+  https://huggingface.co/Qwen/Qwen3-4B-GGUF. No están en `kModelosMedidos`
+  porque ahí solo entra lo medido.
+
+Ollama, el servidor local contra el que habla Pronto, no se distribuye ni se
+instala desde Pronto: lo pone el usuario.
+  Licencia: MIT
+  Proyecto: https://github.com/ollama/ollama

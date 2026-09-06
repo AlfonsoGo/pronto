@@ -11,6 +11,7 @@ import '../../platform/audio_capture.dart';
 import '../../platform/global_hotkey_service.dart';
 import '../../platform/platform_services.dart';
 import '../../platform/text_injector.dart';
+import '../formatting/assistant_comparator.dart';
 import '../formatting/cloud_budget_provider.dart';
 import '../formatting/cloud_cost.dart';
 import '../formatting/cloud_key.dart';
@@ -228,38 +229,16 @@ class SettingsScreen extends ConsumerWidget {
           // --- Formateo del dictado ---
           _SectionHeader('Formateo del dictado (opcional)', theme: theme),
 
-          // Los tres caminos del ticket PRNT-1. La nube es el único que saca
-          // algo del equipo, y solo el TEXTO ya transcrito: nunca el audio.
-          ListTile(
-            title: const Text('Camino de formateo'),
-            subtitle: const Text(
-              'Sin formateo pega tal cual y es instantáneo. Local arregla '
-              'puntuación, muletillas, mayúsculas y tildes sin salir del '
-              'equipo, a cambio de algo de espera. Nube manda el texto '
-              'dictado a un proveedor con tu clave: es el que mejor escribe '
-              'en español, y el único que sale de tu ordenador',
-            ),
-            trailing: DropdownButton<FormatPath>(
-              key: const ValueKey('formatPath'),
-              value: settings.formatPath,
-              onChanged: (value) {
-                if (value != null) controller.setFormatPath(value);
-              },
-              items: const [
-                DropdownMenuItem(
-                  value: FormatPath.none,
-                  child: Text('Sin formateo'),
-                ),
-                DropdownMenuItem(
-                  value: FormatPath.local,
-                  child: Text('Local (Ollama)'),
-                ),
-                DropdownMenuItem(
-                  value: FormatPath.cloud,
-                  child: Text('Nube (OpenRouter)'),
-                ),
-              ],
-            ),
+          // Los tres caminos del ticket PRNT-1, comparados uno al lado del otro
+          // (PRNT-18): cada uno con su espera, su coste, su descarga, su
+          // privacidad y su licencia. La nube es el único que saca algo del
+          // equipo, y solo el TEXTO ya transcrito: nunca el audio.
+          //
+          // La lista de modelos locales vive DENTRO del comparador y sale de
+          // preguntarle a Ollama qué tiene, no de escribir un nombre a mano.
+          const Padding(
+            padding: EdgeInsets.fromLTRB(16, 4, 16, 8),
+            child: AssistantComparator(key: ValueKey('formatPath')),
           ),
 
           Padding(
@@ -277,17 +256,9 @@ class SettingsScreen extends ConsumerWidget {
               onSubmitted: controller.setLlmBaseUrl,
             ),
           ),
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-            child: _LlmTextField(
-              key: const ValueKey('formatModel'),
-              label: 'Modelo de formateo',
-              hint: AppConfig.defaultFormatLocalModel,
-              initialValue: settings.formatModel,
-              enabled: settings.formatPath == FormatPath.local,
-              onSubmitted: controller.setFormatModel,
-            ),
-          ),
+          // El «Modelo de formateo» ya no es una caja de texto: escribir el
+          // nombre a mano es lo que producía el 404 del PRNT-18. Ahora se elige
+          // de la lista que devuelve la propia máquina, dentro del comparador.
 
           if (settings.formatPath == FormatPath.cloud) const _CloudTiles(),
 

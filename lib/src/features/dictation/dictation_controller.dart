@@ -19,6 +19,7 @@ import '../history/history_repository.dart';
 import '../learning/learning_service.dart';
 import '../overlay/pill_popup_controller.dart';
 import '../formatting/cloud_budget_provider.dart';
+import '../formatting/assistant_label.dart';
 import '../formatting/formatter_provider.dart';
 import '../formatting/text_formatter.dart';
 import '../settings/settings_controller.dart';
@@ -316,13 +317,26 @@ class DictationController extends Notifier<DictationState> {
       //    El aviso de que el texto sale del equipo lo dispara la PETICIÓN, no
       //    la intención: si el tope de gasto la frena o falta la clave, no se
       //    enciende nada porque no ha salido nada.
-      final formato = await ref.read(textFormatterProvider).format(
-            finalText,
-            onLeavingDevice: () => state = state.copyWith(
-              status: DictationStatus.sendingToCloud,
-            ),
-          );
+      //    El formateador se lee UNA vez y se guarda: de él salen el camino y
+      //    el modelo que de verdad hicieron el trabajo. Preguntárselos luego a
+      //    los ajustes haría que un cambio a mitad del dictado se apuntara en
+      //    el Historial como si hubiera sido este.
+      final formateador = ref.read(textFormatterProvider);
+      final formato = await formateador.format(
+        finalText,
+        onLeavingDevice: () => state = state.copyWith(
+          status: DictationStatus.sendingToCloud,
+        ),
+      );
       finalText = formato.text;
+
+      // Quién arregló ESTE dictado y cuánto tardó, para la caja de la píldora.
+      final asistente = etiquetaAsistente(
+        path: formateador.path,
+        modelo: formateador.activeModel,
+        outcome: formato.outcome,
+        elapsed: formato.elapsed,
+      );
 
       // Prueba del asistente: aquí se acaba el camino. El texto se enseña en la
       // caja del asistente y NO se pega, NO se traduce, NO cuenta como Historial
@@ -341,6 +355,7 @@ class DictationController extends Notifier<DictationState> {
           spoken: Duration(milliseconds: result.audioMs),
           transcribe: relojMotor.elapsed,
           format: formato,
+          formatter: formateador,
           target: null,
           translated: false,
           source: DictationSource.prueba,
@@ -385,6 +400,7 @@ class DictationController extends Notifier<DictationState> {
           altLang: plan.altLang,
           altPending: plan.altPending,
           notice: formato.notice,
+          assistant: asistente,
         );
       } else {
         popup.showTranscription(
@@ -394,6 +410,7 @@ class DictationController extends Notifier<DictationState> {
           altLang: plan.altLang,
           altPending: plan.altPending,
           notice: formato.notice,
+          assistant: asistente,
         );
       }
 
@@ -413,6 +430,7 @@ class DictationController extends Notifier<DictationState> {
         spoken: Duration(milliseconds: result.audioMs),
         transcribe: relojMotor.elapsed,
         format: formato,
+          formatter: formateador,
         target: destino,
         translated: plan.translated,
       );
@@ -462,6 +480,7 @@ class DictationController extends Notifier<DictationState> {
     required Duration spoken,
     required Duration transcribe,
     required FormatResult format,
+    required TextFormatter formatter,
     required ForegroundApp? target,
     required bool translated,
     DictationSource source = DictationSource.dictado,
@@ -477,15 +496,15 @@ class DictationController extends Notifier<DictationState> {
           at: DateTime.now(),
           source: source,
           engine: settings.engine.name,
-          formatPath: settings.formatPath.name,
-          // El modelo que de verdad iba a hacer el trabajo. Con el formateo
-          // apagado no hay ninguno, y decir el que está configurado haría
-          // pensar que corrió.
-          formatModel: switch (settings.formatPath) {
-            FormatPath.none => null,
-            FormatPath.local => settings.formatModel,
-            FormatPath.cloud => settings.cloudModel,
-          },
+          // El camino y el modelo salen del formateador que ACABA de correr, no
+          // de los ajustes de ahora: si el usuario cambió de camino mientras se
+          // transcribía, los ajustes ya cuentan otra cosa y el Historial —que
+          // es el corpus con el que se mide el Formateo— apuntaría el modelo
+          // equivocado. Con el formateo apagado no hay modelo que decir.
+          formatPath: formatter.path.name,
+          formatModel: formatter.path == FormatPath.none
+              ? null
+              : formatter.activeModel,
           formatNotice: format.notice,
           appName: target?.appName,
           windowTitle: target?.windowTitle,

@@ -18,12 +18,14 @@ import 'audio_capture.dart';
 import 'clipboard_watcher.dart';
 import 'foreground_app.dart';
 import 'global_hotkey_service.dart';
+import 'system_memory.dart';
 import 'system_permissions.dart';
 import 'text_injector.dart';
 import 'whisper_engine.dart';
 import 'windows/windows_clipboard_watcher.dart';
 import 'windows/windows_foreground_app.dart';
 import 'windows/windows_hotkey_service.dart';
+import 'windows/windows_system_memory.dart';
 import 'windows/windows_system_permissions.dart';
 import 'windows/windows_text_injector.dart';
 
@@ -50,6 +52,14 @@ final systemPermissionsProvider = Provider<SystemPermissions>((ref) {
     return WindowsSystemPermissions(ref.watch(audioCaptureProvider));
   }
   throw UnimplementedError('Permisos del sistema solo en Windows (MVP).');
+});
+
+/// Memoria del equipo. La usa el catálogo de modelos locales para no proponer
+/// uno que no cabe: fuera de Windows todavía no sabemos leerla, y entonces no
+/// se filtra ni se enseña ningún número.
+final systemMemoryProvider = Provider<SystemMemory>((ref) {
+  if (Platform.isWindows) return const WindowsSystemMemory();
+  return const UnknownSystemMemory();
 });
 
 final textInjectorProvider = Provider<TextInjector>((ref) {

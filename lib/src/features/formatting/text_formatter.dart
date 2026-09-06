@@ -8,7 +8,7 @@ import '../../core/llm_output.dart';
 import 'cloud_budget.dart';
 import 'cloud_cost.dart';
 import 'content_drift.dart';
-import 'format_prompt.dart';
+import 'format_preset.dart';
 
 /// Por dónde formatea el dictado. Hoy es un ajuste global; en PRNT-3 pasa a ser
 /// un campo del Modo y cada Modo elegirá el suyo.
@@ -111,11 +111,16 @@ class TextFormatter {
     this.cloudModel = AppConfig.defaultFormatCloudModel,
     this.cloudApiKey,
     this.budget,
+    this.preset = FormatPreset.limpio,
     this.timeout = AppConfig.formatTimeout,
     http.Client? httpClient,
   }) : _client = httpClient ?? http.Client();
 
   final FormatPath path;
+
+  /// Qué trabajo se le pide al modelo y qué se le tolera a su salida. Los topes
+  /// del guardia son SUYOS, no globales: ver [FormatPreset].
+  final FormatPreset preset;
   final String localBaseUrl;
   final String localModel;
   final String cloudBaseUrl;
@@ -264,7 +269,7 @@ class TextFormatter {
     }
 
     final drift = measureContentDrift(text, limpio);
-    if (drift.added > AppConfig.formatMaxAddedContent) {
+    if (drift.added > preset.maxAddedContent) {
       return FormatResult(
         text: text,
         outcome: FormatOutcome.rejected,
@@ -274,7 +279,7 @@ class TextFormatter {
         drift: drift,
       );
     }
-    if (drift.deleted > AppConfig.formatMaxDeletedContent) {
+    if (drift.deleted > preset.maxDeletedContent) {
       return FormatResult(
         text: text,
         outcome: FormatOutcome.rejected,
@@ -321,8 +326,8 @@ class TextFormatter {
     if (_useCloud) headers['Authorization'] = 'Bearer $clave';
 
     final mensajes = [
-      {'role': 'system', 'content': kFormatSystemPrompt},
-      for (final ejemplo in kFormatFewShots) ...[
+      {'role': 'system', 'content': preset.prompt},
+      for (final ejemplo in preset.fewShots) ...[
         {'role': 'user', 'content': ejemplo['user']!},
         {'role': 'assistant', 'content': ejemplo['assistant']!},
       ],
@@ -368,8 +373,15 @@ class TextFormatter {
       );
     }
     if (res.statusCode == 404) {
+      // El 404 que dio nombre al PRNT-18. Desde la 0.9 la lista de modelos sale
+      // de preguntarle a Ollama qué tiene, así que llegar aquí significa que el
+      // modelo se borró DESPUÉS de elegirlo — y aun así se dice con todas las
+      // letras, con dónde se arregla, en vez de dejar «el Formateo no sirve».
       return _Respuesta.error(
-        'Sin formatear: el modelo $model no está instalado',
+        _useCloud
+            ? 'Sin formatear: el proveedor no conoce el modelo $model'
+            : 'Sin formatear: $model ya no está en Ollama. Elige otro en '
+                'Ajustes, de los que sí tienes',
       );
     }
     if (res.statusCode != 200) {

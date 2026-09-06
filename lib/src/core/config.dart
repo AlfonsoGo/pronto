@@ -120,30 +120,24 @@ class AppConfig {
   /// pega el texto sin formatear en vez de dejar al usuario mirando la píldora.
   static const Duration formatTimeout = Duration(seconds: 12);
 
-  /// Fracción máxima de contenido AÑADIDO (palabras insertadas o sustituidas)
-  /// que se le tolera al formateador antes de descartar su salida.
-  ///
-  /// MEDIDO sobre 443 dictados reales en español (Wispr Flow, abr–jun 2026):
-  /// un guardia SIMÉTRICO al 0,15 — el que había — descartaba el **10,2 %** del
-  /// formateo legítimo, porque contaba las muletillas borradas como si fueran
-  /// alucinación. Midiendo solo lo añadido, este umbral descarta el **1,6 %**
-  /// con la misma protección: una alucinación añade palabras, no las quita.
-  static const double formatMaxAddedContent = 0.20;
+  // Los topes del guardia de deriva NO viven aquí: son propiedad del Preset
+  // (ADR 0004), y están en `FormatPreset.limpio`. Se midieron sobre 443
+  // dictados formateados al estilo «Limpio» y solo valen para ese trabajo:
+  // «Nota» reestructura en viñetas a propósito y con el tope de Limpio se le
+  // descartaría su salida buena. Mientras fueran globales, ese fallo estaba
+  // garantizado en cuanto existiera el segundo Preset.
 
-  /// Fracción máxima de contenido BORRADO. Quitar muletillas es formateo
-  /// correcto, pero un modelo que se come media frase no está formateando:
-  /// está resumiendo, y eso sí pierde texto del usuario.
+  /// Modelo local de formateo con el que se ARRANCA cuando no se sabe nada más.
   ///
-  /// El tope NO es un percentil: es la frontera entre dos comportamientos.
-  /// Medido sobre el mismo corpus, el borrado legítimo llega hasta **0,52** (un
-  /// dictado que era medio muletillas); un modelo que RESUME se va por encima
-  /// de 0,80. 0,60 cae en medio: no descarta ni un solo caso legítimo del
-  /// corpus real y sigue cazando al que se come el dictado.
-  static const double formatMaxDeletedContent = 0.60;
-
-  /// Modelo local de formateo por defecto (Ollama). `qwen3:4b`, el defecto
-  /// anterior, no existe en el registro público de Ollama: encender el formateo
-  /// daba 404 y parecía que la función no servía.
+  /// ⚠ Es un último recurso, no una propuesta: desde el PRNT-18 la lista de
+  /// modelos sale de preguntarle a Ollama qué tiene (`/api/tags`, ver
+  /// [OllamaCatalog]) y lo que Pronto propone es siempre algo instalado. Este
+  /// valor solo sobrevive en unos ajustes que nunca se tocaron.
+  ///
+  /// Historia: hasta la 0.9 el nombre se escribía a mano y no se comprobaba
+  /// nunca. `qwen3:4b`, el defecto de la 0.7.1, no existía en el registro
+  /// público de Ollama: encender el Formateo daba 404 y en pantalla parecía
+  /// que la función no servía.
   static const String defaultFormatLocalModel = 'qwen2.5:7b';
 
   /// Raíz del proveedor de nube (compatible OpenAI). OpenRouter a propósito:

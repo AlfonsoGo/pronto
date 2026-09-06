@@ -3,8 +3,8 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:pronto/src/core/config.dart';
 import 'package:pronto/src/features/formatting/content_drift.dart';
+import 'package:pronto/src/features/formatting/format_preset.dart';
 
 // Tests PUROS del guardia de contenido: sin red, sin plugins, sin ficheros de
 // la app. Lo único que se lee de disco es el corpus de regresión saneado.
@@ -154,12 +154,12 @@ void main() {
         );
         expect(
           d.added,
-          lessThanOrEqualTo(AppConfig.formatMaxAddedContent),
+          lessThanOrEqualTo(FormatPreset.limpio.maxAddedContent),
           reason: 'DESCARTADO por añadido: ${c['caso']} · $d',
         );
         expect(
           d.deleted,
-          lessThanOrEqualTo(AppConfig.formatMaxDeletedContent),
+          lessThanOrEqualTo(FormatPreset.limpio.maxDeletedContent),
           reason: 'DESCARTADO por borrado: ${c['caso']} · $d',
         );
       }
@@ -174,8 +174,8 @@ void main() {
           c['crudo'] as String,
           c['formateado'] as String,
         );
-        final descartada = d.added > AppConfig.formatMaxAddedContent ||
-            d.deleted > AppConfig.formatMaxDeletedContent;
+        final descartada = d.added > FormatPreset.limpio.maxAddedContent ||
+            d.deleted > FormatPreset.limpio.maxDeletedContent;
         expect(
           descartada,
           isTrue,
@@ -271,8 +271,8 @@ void main() {
   });
 
   group('calibración: los umbrales medidos están FIJADOS', () {
-    // Sin estos tests, aflojar formatMaxAddedContent de 0,20 a 0,60 no rompía
-    // nada: la calibración medida no estaba protegida por ninguna prueba.
+    // Sin estos tests, aflojar maxAddedContent de 0,20 a 0,60 no rompía nada:
+    // la calibración medida no estaba protegida por ninguna prueba.
     test('un parafraseo MODERADO se descarta (añadido ~0,47)', () {
       const crudo = 'el lunes montamos la reunion con el equipo y revisamos '
           'los tickets abiertos antes de la entrega';
@@ -280,7 +280,7 @@ void main() {
           'departamento y analizaremos las incidencias pendientes antes de la '
           'entrega.';
       final d = measureContentDrift(crudo, parafraseado);
-      expect(d.added, greaterThan(AppConfig.formatMaxAddedContent));
+      expect(d.added, greaterThan(FormatPreset.limpio.maxAddedContent));
       expect(d.added, lessThan(0.60),
           reason: 'si sube de 0,60 este caso deja de fijar el umbral');
     });
@@ -290,15 +290,15 @@ void main() {
         'manda el informe el viernes',
         'Manda el informe el viernes, siempre que el cliente haya confirmado.',
       );
-      expect(d.added, greaterThan(AppConfig.formatMaxAddedContent));
+      expect(d.added, greaterThan(FormatPreset.limpio.maxAddedContent));
       expect(d.added, lessThan(0.60));
     });
 
     test('el tope de añadido es exactamente el medido', () {
       // Los números salen de 443 dictados reales: 0,20 descarta el 1,6 % del
       // formateo legítimo; 0,15 descartaría el 3,6 %; 0,10 el 9,3 %.
-      expect(AppConfig.formatMaxAddedContent, 0.20);
-      expect(AppConfig.formatMaxDeletedContent, 0.60);
+      expect(FormatPreset.limpio.maxAddedContent, 0.20);
+      expect(FormatPreset.limpio.maxDeletedContent, 0.60);
     });
   });
 }

@@ -212,4 +212,29 @@ void main() {
       });
     });
   });
+
+  group('el asistente de ESTE dictado (PRNT-18)', () {
+    test('se guarda quién lo arregló y cuánto tardó', () {
+      ctrl().showTranscription(
+        'Hola',
+        assistant: 'En tu equipo · qwen2.5:7b · 1,2 s',
+      );
+      expect(get().assistant, 'En tu equipo · qwen2.5:7b · 1,2 s');
+    });
+
+    test('no se hereda del dictado anterior', () {
+      // El mismo fallo que ya tenían el aviso y la otra versión: un dictado
+      // sin Formateo enseñando el asistente del anterior diría que corrió algo
+      // que no corrió.
+      ctrl().showTranscription('Uno', assistant: 'Nube · gpt-5-nano · 800 ms');
+      ctrl().showTranscription('Dos');
+      expect(get().assistant, '');
+    });
+
+    test('un aviso del sistema no arrastra asistente', () {
+      ctrl().showTranscription('Uno', assistant: 'En tu equipo · x · 1,0 s');
+      ctrl().showNotice('Ahora se pega en inglés');
+      expect(get().assistant, '');
+    });
+  });
 }

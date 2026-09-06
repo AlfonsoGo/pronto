@@ -65,18 +65,31 @@ void main(List<String> args) async {
     );
   }
 
+  // Cada fila se imprime EN CUANTO se mide, no solo en la tabla del final.
+  // Una corrida de tres modelos son horas de GPU, y si el proceso se cae en el
+  // segundo —pasó: un tiempo agotado en un dictado largo— la tabla no llega a
+  // imprimirse y se pierde también lo que YA estaba medido.
   final filas = <_Fila>[];
+  void anotar(_Fila f) {
+    filas.add(f);
+    stdout.writeln(
+      'FILA · ${f.etiqueta} · TER ${f.ter.toStringAsFixed(4)} · '
+      'p50 ${f.p50ms} ms · p95 ${f.p95ms} ms · '
+      'ok/rech/caido ${f.formateados}/${f.rechazados}/${f.caidos} · '
+      'n=${f.total}',
+    );
+  }
 
   // Escalón 1: el crudo del reconocedor, sin tocar nada. Es el suelo.
-  filas.add(_medirCrudo(corpus));
+  anotar(_medirCrudo(corpus));
 
   // Escalón 2: lo que Pronto pega HOY con el formateo apagado — el pulido
   // determinista ya corre siempre. Es la línea base honesta: el LLM tiene que
   // mejorar ESTO, no el crudo, o no está aportando nada que no fuera gratis.
-  filas.add(_medirPulido(corpus));
+  anotar(_medirPulido(corpus));
 
   for (final modelo in opciones.local) {
-    filas.add(
+    anotar(
       await _medir(
         etiqueta: 'local · $modelo',
         corpus: corpus,
@@ -107,7 +120,7 @@ void main(List<String> args) async {
       stdout.writeln(
         '· $modelo: coste estimado \$${estimado.toStringAsFixed(4)}',
       );
-      filas.add(
+      anotar(
         await _medir(
           etiqueta: 'nube · $modelo',
           corpus: corpus,

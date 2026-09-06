@@ -8,8 +8,7 @@ import '../../platform/platform_services.dart';
 import '../../platform/system_permissions.dart';
 import '../dictation/dictation_controller.dart';
 import '../dictation/dictation_state.dart';
-import '../formatting/cloud_key.dart';
-import '../formatting/text_formatter.dart';
+import '../formatting/assistant_comparator.dart';
 import '../overlay/window_mode_controller.dart';
 import '../settings/settings_controller.dart';
 import '../splash/parakeet_model_downloader.dart';
@@ -261,7 +260,7 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
                 _bloqueMotor(progreso),
                 _bloquePermisos(permisosOk),
                 _bloquePrueba(progreso, dictado),
-                _bloqueFormateo(progreso, ajustes),
+                _bloqueFormateo(progreso),
               ],
             ),
           ),
@@ -791,76 +790,21 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
 
   // --- 5) Formateo ---------------------------------------------------------
 
-  Widget _bloqueFormateo(OnboardingProgress progreso, AppSettings ajustes) {
-    final hayClave = ref.watch(cloudKeyPresenceProvider);
-    const opciones = [
-      (
-        camino: FormatPath.none,
-        nombre: 'Sin Formateo',
-        detalle: 'El texto sale tal y como lo oye el motor. '
-            'Cero espera y cero coste. Es lo de fábrica.',
-      ),
-      (
-        camino: FormatPath.local,
-        nombre: 'Local, en tu equipo',
-        detalle: 'Un modelo pequeño arregla tildes, comas y muletillas. '
-            'Necesita Ollama corriendo en el equipo; no sale nada del PC.',
-      ),
-      (
-        camino: FormatPath.cloud,
-        nombre: 'Nube, con tu clave',
-        detalle: 'Sale el TEXTO ya transcrito, nunca el audio, y con tope de '
-            'gasto. Necesita tu propia clave: se pone en Ajustes.',
-      ),
-    ];
-
+  /// El mismo comparador de tres caminos que hay en Ajustes (PRNT-18).
+  ///
+  /// Es a propósito el MISMO widget y no una versión reducida: la decisión de
+  /// quién te arregla el texto se toma una vez aquí y se revisa mil veces en
+  /// Ajustes, y dos pantallas distintas para la misma decisión obligarían a
+  /// aprenderla dos veces. Además, la lista de modelos locales sale de
+  /// preguntarle a Ollama qué tiene, y eso tiene que valer igual en los dos.
+  Widget _bloqueFormateo(OnboardingProgress progreso) {
     return _bloque(
       ok: progreso.formateoElegido,
       titulo: 'Formateo con IA',
       etiqueta: 'apagado de fábrica',
-      cuerpo: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final o in opciones)
-                _Pildora(
-                  texto: o.nombre,
-                  seleccionado: ajustes.formatPath == o.camino,
-                  // Sin clave, la nube no se puede elegir: encenderla dejaría
-                  // un camino que falla en el primer dictado.
-                  onTap: (o.camino == FormatPath.cloud && !hayClave)
-                      ? null
-                      : () async {
-                          await ref
-                              .read(settingsProvider.notifier)
-                              .setFormatPath(o.camino);
-                          await ref
-                              .read(onboardingProvider.notifier)
-                              .marcarFormateoElegido();
-                        },
-                ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            opciones
-                .firstWhere((o) => o.camino == ajustes.formatPath)
-                .detalle,
-            style: const TextStyle(color: _apagado, fontSize: 12),
-          ),
-          if (!hayClave)
-            const Padding(
-              padding: EdgeInsets.only(top: 6),
-              child: Text(
-                'La nube está en gris porque no hay ninguna clave guardada. '
-                'Puedes dejarlo para luego: se configura en Ajustes.',
-                style: TextStyle(color: _apagado, fontSize: 11.5),
-              ),
-            ),
-        ],
+      cuerpo: AssistantComparator(
+        onElegido: () =>
+            ref.read(onboardingProvider.notifier).marcarFormateoElegido(),
       ),
     );
   }

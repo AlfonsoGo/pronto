@@ -215,8 +215,17 @@ class _OverlayPillScreenState extends ConsumerState<OverlayPillScreen> {
 
   /// Tamaño de la ventana en modo lectura: más alto si la caja tiene que
   /// enseñar también la otra versión del dictado (traducción).
-  Size _readingSize() =>
-      ref.read(pillPopupProvider).hasAlt ? kPillReadingDual : kPillReading;
+  ///
+  /// Las líneas extra de la caja —el aviso y la del asistente— también piden su
+  /// hueco AQUÍ. La caja crece con ellas, y si la ventana no crece a la vez, lo
+  /// último se queda fuera del recorte: se ve media línea o ninguna.
+  Size _readingSize() {
+    final popup = ref.read(pillPopupProvider);
+    final base = popup.hasAlt ? kPillReadingDual : kPillReading;
+    final extra = (popup.notice.isEmpty ? 0.0 : 34.0) +
+        (popup.assistant.isEmpty ? 0.0 : 20.0);
+    return Size(base.width, base.height + extra);
+  }
 
   /// Aplica el tamaño anclando la esquina INFERIOR-IZQUIERDA: al crecer en alto
   /// la ventana se expande hacia arriba (no hacia abajo, fuera de la pantalla)
@@ -755,6 +764,9 @@ class _PopupBox extends StatelessWidget {
   /// Hay un aviso que acompaña al texto (p. ej. que no se pudo formatear).
   bool get _hasWarning => popup.notice.isNotEmpty;
 
+  /// Este dictado pasó por un asistente y se puede decir cuál y cuánto tardó.
+  bool get _hasAssistant => popup.assistant.isNotEmpty;
+
   /// Solo se ofrece copiar cuando hay algo que copiar (un aviso no lo es).
   bool get _canCopy => !_notice && !_copied;
 
@@ -763,7 +775,9 @@ class _PopupBox extends StatelessWidget {
     // Con dos versiones la caja necesita más alto; el tamaño de la VENTANA lo
     // acompaña desde _readingSize().
     final double base = popup.hasAlt ? 292.0 : 200.0;
-    final double maxHeight = expanded ? (base + (_hasWarning ? 34 : 0)) : 44;
+    final double maxHeight = expanded
+        ? (base + (_hasWarning ? 34 : 0) + (_hasAssistant ? 20 : 0))
+        : 44;
 
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
@@ -844,6 +858,10 @@ class _PopupBox extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _header(),
+        if (_hasAssistant) ...[
+          const SizedBox(height: 4),
+          _assistantLine(),
+        ],
         if (_hasWarning) ...[
           const SizedBox(height: 6),
           _warningLine(),
@@ -874,6 +892,30 @@ class _PopupBox extends StatelessWidget {
                   _altBlock(),
                 ],
               ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Quién arregló este dictado y cuánto tardó (PRNT-18). Se dibuja apagada:
+  /// es un dato para cuando lo buscas, no algo que te grite en cada dictado.
+  Widget _assistantLine() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        const Icon(Icons.auto_fix_high_rounded, size: 12, color: _altTextColor),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            popup.assistant,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              color: _altTextColor,
+              fontSize: 11,
+              height: 1.2,
             ),
           ),
         ),

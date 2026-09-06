@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
+import 'package:pronto/src/features/formatting/format_preset.dart';
 import 'package:pronto/src/features/formatting/text_formatter.dart';
 
 // Tests del formateo contra un cliente HTTP falso, pero con las respuestas
@@ -155,7 +156,11 @@ void main() {
           await conRespuesta((_) async => http.Response('not found', 404));
       expect(r.text, crudo);
       expect(r.outcome, FormatOutcome.unavailable);
-      expect(r.notice, contains('no está instalado'));
+      // El 404 que da nombre al PRNT-18. Tiene que nombrar el modelo y decir
+      // dónde se arregla: «el Formateo no sirve» era exactamente el mensaje
+      // que hacía abandonar la función.
+      expect(r.notice, contains('ya no está en Ollama'));
+      expect(r.notice, contains('Ajustes'));
     });
 
     test('clave rechazada (401)', () async {
@@ -224,6 +229,32 @@ void main() {
       expect(r.text, crudo, reason: 'se pega lo dictado, no lo inventado');
       expect(r.outcome, FormatOutcome.rejected);
       expect(r.notice, contains('añadió texto'));
+    });
+
+    test('un parafraseo MODERADO también se descarta (el tope de AÑADIDO)',
+        () async {
+      // Discrimina los DOS topes del Preset. Su desviación añadida (~0,47)
+      // pasa de sobra el 0,20 de «Limpio» pero se queda por debajo del 0,60
+      // de borrado: si el guardia mirase el tope equivocado, esta reescritura
+      // se colaría y el usuario se encontraría un texto que no dictó.
+      final f = TextFormatter(
+        path: FormatPath.local,
+        httpClient: MockClient(
+          (_) async => _ollama(
+            'El lunes celebraremos una sesión con el departamento y '
+            'analizaremos las incidencias pendientes antes de la entrega.',
+          ),
+        ),
+      );
+      const dictado = 'el lunes montamos la reunion con el equipo y revisamos '
+          'los tickets abiertos antes de la entrega';
+      final r = await f.format(dictado);
+      expect(r.outcome, FormatOutcome.rejected);
+      expect(r.notice, contains('añadió texto'));
+      expect(r.drift!.added, greaterThan(FormatPreset.limpio.maxAddedContent));
+      expect(r.drift!.added,
+          lessThan(FormatPreset.limpio.maxDeletedContent),
+          reason: 'si sube del tope de borrado deja de distinguir los dos');
     });
 
     test('el modelo resume: se descarta', () async {

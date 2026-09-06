@@ -219,6 +219,10 @@ tal cual. Ver [ROADMAP.md](ROADMAP.md).
    enciendes se ejecuta siempre, y un guardia asimétrico descarta la salida si
    el modelo añade texto que no dictaste o se come parte del dictado.
    Desactivado por defecto; a la nube solo va el texto, nunca el audio.
+   **El modelo local se elige de la lista que devuelve tu propio Ollama**, no se
+   escribe a mano: si no está corriendo, Pronto lo dice y sigue funcionando
+   (se pega lo que oyó el motor). Ver
+   [ADR 0010](docs/adr/0010-el-modelo-de-formateo-local-lo-dice-la-maquina.md).
 
 ---
 
