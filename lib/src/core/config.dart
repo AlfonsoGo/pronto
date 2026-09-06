@@ -104,14 +104,80 @@ class AppConfig {
   /// tokenizer del modelo original y viaja junto al modelo.
   static const String bpeVocabFile = 'bpe.vocab';
 
-  // --- Post-corrección LLM (opcional, off por defecto) ---
-  /// Por debajo de esta confianza (avgLogProb) se permite la post-corrección.
-  /// Por encima (texto muy seguro) se salta para evitar parafraseo.
-  static const double llmConfidenceGate = -0.35;
+  // --- Formateo del dictado (opcional, off por defecto) ---
+  //
+  // HISTORIA, para que no se vuelva a montar la misma trampa:
+  // hasta la 0.7.1 la post-corrección LLM estaba gateada por confianza
+  // (`llmConfidenceGate = -0.35`, se saltaba si el motor iba seguro). Pero
+  // [ParakeetEngine] — el ÚNICO motor desde la 0.7.0 — devuelve `avgLogProb: 0`
+  // fijo, y `0 >= -0.35` siempre. Resultado: el formateo NUNCA se ejecutaba,
+  // aunque el usuario lo encendiera. La puerta se ha quitado entera: mientras
+  // ningún motor emita una confianza de verdad, un gate por confianza es un
+  // control inerte, no una protección.
 
-  /// Si el LLM cambió más de esta fracción de palabras-contenido, se descarta
-  /// su salida (protección contra alucinación).
-  static const double llmMaxContentDrift = 0.15;
+  /// Tope de espera de una llamada de formateo. Más corto que el de traducción
+  /// porque el formateo está en el camino crítico del pegado: si tarda más, se
+  /// pega el texto sin formatear en vez de dejar al usuario mirando la píldora.
+  static const Duration formatTimeout = Duration(seconds: 12);
+
+  /// Fracción máxima de contenido AÑADIDO (palabras insertadas o sustituidas)
+  /// que se le tolera al formateador antes de descartar su salida.
+  ///
+  /// MEDIDO sobre 443 dictados reales en español (Wispr Flow, abr–jun 2026):
+  /// un guardia SIMÉTRICO al 0,15 — el que había — descartaba el **10,2 %** del
+  /// formateo legítimo, porque contaba las muletillas borradas como si fueran
+  /// alucinación. Midiendo solo lo añadido, este umbral descarta el **1,6 %**
+  /// con la misma protección: una alucinación añade palabras, no las quita.
+  static const double formatMaxAddedContent = 0.20;
+
+  /// Fracción máxima de contenido BORRADO. Quitar muletillas es formateo
+  /// correcto, pero un modelo que se come media frase no está formateando:
+  /// está resumiendo, y eso sí pierde texto del usuario.
+  ///
+  /// El tope NO es un percentil: es la frontera entre dos comportamientos.
+  /// Medido sobre el mismo corpus, el borrado legítimo llega hasta **0,52** (un
+  /// dictado que era medio muletillas); un modelo que RESUME se va por encima
+  /// de 0,80. 0,60 cae en medio: no descarta ni un solo caso legítimo del
+  /// corpus real y sigue cazando al que se come el dictado.
+  static const double formatMaxDeletedContent = 0.60;
+
+  /// Modelo local de formateo por defecto (Ollama). `qwen3:4b`, el defecto
+  /// anterior, no existe en el registro público de Ollama: encender el formateo
+  /// daba 404 y parecía que la función no servía.
+  static const String defaultFormatLocalModel = 'qwen2.5:7b';
+
+  /// Raíz del proveedor de nube (compatible OpenAI). OpenRouter a propósito:
+  /// es el único cuyo gasto ve el vigilante que ya corre en el VPS2.
+  static const String openRouterBaseUrl = 'https://openrouter.ai/api';
+
+  /// Modelo de nube por defecto. El más barato de la lista blanca
+  /// (`kCloudPrices`): un mes de dictado normal cuesta menos de un céntimo.
+  static const String defaultFormatCloudModel = 'openai/gpt-5-nano';
+
+  /// Tope de gasto de nube por DÍA, en dólares.
+  ///
+  /// Los números que lo justifican: con el volumen real de Txonso (~161
+  /// dictados/mes ≈ 8/día) un día cuesta entre 0,0007 $ y 0,004 $ según el
+  /// modelo. 0,10 $ deja unas 25 veces el uso normal y aun así corta un bucle
+  /// enloquecido en el sitio. El tope de 2 $/día del vigilante del VPS son
+  /// CINCUENTA MESES de uso normal: no puede detectar nada, y por eso el freno
+  /// está aquí dentro y el vigilante es solo la red de último recurso.
+  static const double defaultCloudDayCapUsd = 0.10;
+
+  /// Tope de gasto de nube por MES, en dólares. Un mes normal son céntimos.
+  static const double defaultCloudMonthCapUsd = 1.00;
+
+  /// Tope POR DICTADO: por encima de esto no se manda a la nube (se pega sin
+  /// formatear). Es el tope "por llamada": sin él, un solo dictado disparatado
+  /// se comería el tope del día de una sentada.
+  static const int cloudMaxChars = 4000;
+
+  /// Lo más alto que se puede poner un tope de gasto, en dólares.
+  ///
+  /// Existe por un resbalón de dedo: teclear `100` donde se quería `1,00` fija
+  /// cien dólares al día sin que nada chille. Cien veces el tope por defecto ya
+  /// es de sobra para cualquier uso imaginable de dictado.
+  static const double cloudMaxCapUsd = 10.0;
 
   // --- Traducción al dictar (español ⇄ inglés, opcional) ---
   /// Modelo por defecto para traducir. Se usa contra el mismo servidor LLM que

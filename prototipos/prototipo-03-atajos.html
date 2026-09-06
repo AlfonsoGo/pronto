@@ -1,0 +1,307 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Prototipo 03 — Atajos y remapeo</title>
+<!--
+  PROTOTIPO DESECHABLE. Pregunta: ¿cómo se configura un Atajo cuando hay N Modos, tres modos de
+  activación (toggle / mantener / automático) y el ratón también vale?
+  El grabador de atajos ES funcional: escucha teclas de verdad (incluido izquierda/derecha) y
+  botones del ratón. Es la pieza que hay que sentir antes de escribirla en Dart.
+    A — Tabla de Modos, un atajo por fila, edición en línea
+    B — Ficha por Modo, con el grabador grande y el modo de activación explicado con un dibujo
+    C — Mapa del teclado: pintas los atajos sobre un teclado y ves los conflictos
+-->
+<style>
+  :root{--violet:#8B5CF6;--violet-deep:#6D28D9;--violet-soft:#A78BFA;--yellow:#FDE047;
+        --bg:#0B0810;--surface:#0F0B16;--surface-hi:#161021;--ink:#F5F3FF;--muted:#9C93AE;
+        --green:#34D399;--red:#F87171;--orange:#FB923C;--line:rgba(245,243,255,.10)}
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--ink);font:14px/1.5 "Segoe UI",system-ui,sans-serif;
+       display:flex;align-items:center;justify-content:center;padding:20px 20px 96px}
+  button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+  .mut{color:var(--muted)} .oculto{display:none!important}
+  .ventana{width:1000px;height:640px;background:var(--surface);border:1px solid var(--line);
+           border-radius:16px;overflow:hidden;display:flex;flex-direction:column;
+           box-shadow:0 40px 90px rgba(0,0,0,.6)}
+  .top{padding:22px 28px 16px;border-bottom:1px solid var(--line)}
+  .top h2{margin:0;font-size:20px} .top .mut{font-size:12.5px}
+  .cuerpo{flex:1;overflow:auto;padding:20px 28px}
+  .btn{padding:8px 14px;border-radius:9px;font-weight:600;
+       background:linear-gradient(180deg,var(--violet),var(--violet-deep));color:#fff}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--muted)}
+  .btn.sm{padding:5px 11px;font-size:12.5px}
+  .tecla{display:inline-block;padding:3px 9px;border-radius:7px;font:600 12.5px/1.4 Consolas,monospace;
+         background:var(--surface-hi);border:1px solid var(--line);border-bottom-width:2px}
+  .chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700;
+        background:rgba(139,92,246,.18);color:var(--violet-soft)}
+  .chip.err{background:rgba(248,113,113,.16);color:var(--red)}
+  .chip.ok{background:rgba(52,211,153,.15);color:var(--green)}
+  .grab{border:1.5px dashed var(--violet);border-radius:11px;padding:18px;text-align:center;
+        background:rgba(139,92,246,.07)}
+  .grab.act{border-style:solid;background:rgba(139,92,246,.16)}
+
+  #switcher{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:99;display:flex;
+    align-items:center;gap:4px;padding:6px;background:#fff;color:#111;border-radius:999px;
+    box-shadow:0 10px 30px rgba(0,0,0,.5);font-weight:650;font-size:13px}
+  #switcher button{width:30px;height:30px;border-radius:999px;font-size:15px;color:#111}
+  #switcher .lbl{padding:0 12px;white-space:nowrap}
+
+  /* A */
+  .tabla{width:100%;border-collapse:collapse}
+  .tabla th{text-align:left;font-size:11px;letter-spacing:.05em;text-transform:uppercase;
+            color:var(--muted);padding:0 10px 9px;font-weight:700}
+  .tabla td{padding:11px 10px;border-top:1px solid var(--line);vertical-align:middle}
+  .tabla tr.sel td{background:rgba(139,92,246,.08)}
+  select{background:var(--surface-hi);color:var(--ink);border:1px solid var(--line);
+         border-radius:8px;padding:6px 9px;font:inherit}
+
+  /* B */
+  .cols{display:grid;grid-template-columns:220px 1fr;gap:22px;height:100%}
+  .listaModos{display:flex;flex-direction:column;gap:5px}
+  .listaModos .it{padding:10px 12px;border-radius:9px;cursor:pointer;font-size:13.5px}
+  .listaModos .it.sel{background:rgba(139,92,246,.16)}
+  .listaModos .it .k{font-size:11px;color:var(--muted);font-family:Consolas,monospace}
+  .radios{display:grid;gap:9px;margin-top:6px}
+  .radio{display:flex;gap:12px;padding:13px 15px;border-radius:11px;border:1px solid var(--line);
+         background:var(--surface-hi);cursor:pointer}
+  .radio.sel{border-color:var(--violet);background:rgba(139,92,246,.10)}
+  .radio .bola{width:17px;height:17px;border-radius:99px;border:2px solid var(--muted);margin-top:2px;flex:none}
+  .radio.sel .bola{border-color:var(--violet);background:radial-gradient(circle,var(--violet) 45%,transparent 47%)}
+  .linea{display:flex;align-items:center;gap:4px;margin-top:9px;font-size:10.5px;color:var(--muted)}
+  .linea .seg{height:7px;border-radius:99px}
+
+  /* C */
+  .teclado{display:flex;flex-direction:column;gap:6px;align-items:center;margin-top:10px}
+  .fila{display:flex;gap:6px}
+  .kc{min-width:40px;height:40px;border-radius:8px;background:var(--surface-hi);
+      border:1px solid var(--line);border-bottom-width:2px;display:grid;place-items:center;
+      font-size:11.5px;color:var(--muted);cursor:pointer;padding:0 8px;position:relative}
+  .kc.usada{background:rgba(139,92,246,.22);border-color:var(--violet);color:var(--ink);font-weight:650}
+  .kc.choca{background:rgba(248,113,113,.2);border-color:var(--red);color:#fff}
+  .kc.pulsada{background:var(--yellow);color:#111;border-color:var(--yellow)}
+  .kc .mini{position:absolute;bottom:-16px;font-size:9.5px;white-space:nowrap;color:var(--violet-soft)}
+</style>
+</head>
+<body>
+<div class="ventana" id="app"></div>
+<div id="switcher"><button id="prev">‹</button><span class="lbl" id="lbl"></span><button id="next">›</button></div>
+
+<script>
+const ACTIV = [
+  {id:'hold', nom:'Mantener', desc:'Graba solo mientras aguantas la tecla. Lo de hoy.',
+   dib:[['pulsar',0],['grabando',1],['soltar',0]]},
+  {id:'toggle', nom:'Alternar', desc:'Un toque arranca, otro toque para. Para dictados largos.',
+   dib:[['toque',0],['grabando…',1],['toque',0]]},
+  {id:'auto', nom:'Automático', desc:'Toque corto = alternar. Mantener = mantener. El mismo atajo hace las dos. Umbral: 250 ms.',
+   dib:[['<250 ms → alterna',1],['>250 ms → mantiene',1]]},
+];
+let S = {
+  modos:[
+    {n:'Por defecto', atajo:'Ctrl + Espacio', act:'auto'},
+    {n:'Correo',      atajo:'Ctrl + Alt + C', act:'hold'},
+    {n:'Terminal',    atajo:'Ctrl + Alt + T', act:'hold'},
+    {n:'Nota',        atajo:'Ratón 4',        act:'toggle'},
+  ],
+  sel:0, grabando:false, capturado:'', pulsadas:new Set(), hoverTecla:null,
+};
+
+const CONFLICTOS_WIN = {'Ctrl + Alt + Supr':'Windows','Ctrl + Alt + T':null,'Win + V':'Windows'};
+function conflicto(atajo, i){
+  if(CONFLICTOS_WIN[atajo]) return 'Lo usa '+CONFLICTOS_WIN[atajo];
+  const otro = S.modos.findIndex((m,j)=>j!==i && m.atajo===atajo);
+  return otro>=0 ? 'Ya lo usa «'+S.modos[otro].n+'»' : '';
+}
+
+// ---- grabador real: lee teclas de verdad, distinguiendo izquierda y derecha
+const NOMBRE_LADO = {ControlLeft:'Ctrl izq', ControlRight:'Ctrl der', AltLeft:'Alt izq',
+  AltRight:'Alt der', ShiftLeft:'Mayús izq', ShiftRight:'Mayús der',
+  MetaLeft:'Win izq', MetaRight:'Win der', Space:'Espacio'};
+function nombreTecla(e){
+  if(NOMBRE_LADO[e.code]) return NOMBRE_LADO[e.code];
+  if(e.code.startsWith('Key')) return e.code.slice(3);
+  if(e.code.startsWith('Digit')) return e.code.slice(5);
+  return e.code;
+}
+function capturarTeclado(e){
+  if(!S.grabando) return;
+  e.preventDefault();
+  S.pulsadas.add(nombreTecla(e));
+  S.capturado = [...S.pulsadas].join(' + ');
+  pinta();
+}
+function soltarTeclado(e){
+  if(!S.grabando) return;
+  e.preventDefault();
+  // al soltar la última tecla, se fija el atajo
+  setTimeout(()=>{
+    if(!S.grabando) return;
+    S.modos[S.sel].atajo = S.capturado || S.modos[S.sel].atajo;
+    S.grabando=false; S.pulsadas.clear(); pinta();
+  }, 260);
+}
+function capturarRaton(e){
+  if(!S.grabando) return;
+  if(e.button<3) return;                    // botones 4 y 5 del ratón
+  e.preventDefault();
+  S.modos[S.sel].atajo = 'Ratón ' + (e.button+1);
+  S.grabando=false; S.pulsadas.clear(); pinta();
+}
+
+function dibujoActivacion(a){
+  const A = ACTIV.find(x=>x.id===a);
+  return `<div class="linea">${A.dib.map(([t,on])=>`
+    <span class="seg" style="width:${on?70:26}px;background:${on?'var(--violet)':'rgba(245,243,255,.15)'}"></span>
+    <span>${t}</span>`).join('')}</div>`;
+}
+
+function grabador(alto){
+  const m = S.modos[S.sel], c = conflicto(m.atajo, S.sel);
+  return `<div class="grab ${S.grabando?'act':''}" id="grab" style="padding:${alto}px 18px">
+    ${S.grabando
+      ? `<div style="font-size:13px" class="mut">Pulsa la combinación… (o un botón lateral del ratón)</div>
+         <div style="font-size:22px;font-weight:700;margin-top:8px;min-height:30px">${S.capturado||'…'}</div>
+         <button class="btn ghost sm" id="cancelarGrab" style="margin-top:10px">Cancelar</button>`
+      : `<div style="font-size:22px;font-weight:700">${m.atajo}</div>
+         <div class="mut" style="font-size:12px;margin-top:4px">${ACTIV.find(x=>x.id===m.act).nom}</div>
+         <button class="btn sm" id="empezarGrab" style="margin-top:12px">Cambiar atajo</button>`}
+    ${c?`<div class="chip err" style="margin-top:10px">⚠ ${c}</div>`:''}
+  </div>`;
+}
+
+// ---------------------------------------------------------------- VARIANTE A
+function variantA(){
+  return `<div class="top"><h2>Atajos</h2>
+    <div class="mut">Un atajo por Modo. Pulsar el atajo de un Modo graba con ese Modo.</div></div>
+  <div class="cuerpo">
+    <table class="tabla"><thead><tr>
+      <th>Modo</th><th>Atajo</th><th>Cómo se activa</th><th></th></tr></thead><tbody>
+      ${S.modos.map((m,i)=>{
+        const c=conflicto(m.atajo,i);
+        return `<tr class="${S.sel===i?'sel':''}" data-sel="${i}">
+          <td style="font-weight:600">${m.n}</td>
+          <td>${S.grabando&&S.sel===i
+                ? `<span class="tecla" style="border-color:var(--violet)">${S.capturado||'pulsa…'}</span>`
+                : `<span class="tecla">${m.atajo}</span>`}
+             ${c?`<span class="chip err" style="margin-left:8px">⚠ ${c}</span>`:''}</td>
+          <td><select data-act="${i}">${ACTIV.map(a=>
+                `<option value="${a.id}" ${m.act===a.id?'selected':''}>${a.nom}</option>`).join('')}</select></td>
+          <td style="text-align:right">
+            ${S.grabando&&S.sel===i
+              ? `<button class="btn ghost sm" id="cancelarGrab">Cancelar</button>`
+              : `<button class="btn ghost sm" data-grabar="${i}">Cambiar</button>`}</td>
+        </tr>`;}).join('')}
+    </tbody></table>
+    <div style="margin-top:18px;padding:14px 16px;border-radius:11px;background:var(--surface-hi);
+                border:1px solid var(--line)">
+      <div style="font-weight:650;margin-bottom:6px">${ACTIV.find(a=>a.id===S.modos[S.sel].act).nom}</div>
+      <div class="mut" style="font-size:12.5px">${ACTIV.find(a=>a.id===S.modos[S.sel].act).desc}</div>
+      ${dibujoActivacion(S.modos[S.sel].act)}
+    </div>
+    <p class="mut" style="font-size:11.5px;margin-top:16px">El grabador es real: prueba
+    <b>Ctrl derecho</b> y <b>Ctrl izquierdo</b> — se distinguen. Los botones 4 y 5 del ratón también.</p>
+  </div>`;
+}
+
+// ---------------------------------------------------------------- VARIANTE B
+function variantB(){
+  const m=S.modos[S.sel];
+  return `<div class="top"><h2>Atajos</h2><div class="mut">Elige un Modo y dale su tecla.</div></div>
+  <div class="cuerpo"><div class="cols">
+    <div class="listaModos">${S.modos.map((x,i)=>`
+      <div class="it ${S.sel===i?'sel':''}" data-sel="${i}">
+        <div>${x.n}</div><div class="k">${x.atajo}</div></div>`).join('')}</div>
+    <div>
+      ${grabador(26)}
+      <div style="margin-top:20px;font-weight:650">¿Cómo quieres activarlo?</div>
+      <div class="radios">${ACTIV.map(a=>`
+        <div class="radio ${m.act===a.id?'sel':''}" data-actb="${a.id}">
+          <span class="bola"></span>
+          <div style="flex:1"><div style="font-weight:650">${a.nom}</div>
+            <div class="mut" style="font-size:12.5px">${a.desc}</div>
+            ${m.act===a.id?dibujoActivacion(a.id):''}</div>
+        </div>`).join('')}</div>
+    </div>
+  </div></div>`;
+}
+
+// ---------------------------------------------------------------- VARIANTE C
+function variantC(){
+  const FILAS = [
+    ['Esc','F1','F2','F3','F4','F5','F6','F7','F8','F9','F10','F11','F12'],
+    ['1','2','3','4','5','6','7','8','9','0'],
+    ['Q','W','E','R','T','Y','U','I','O','P'],
+    ['A','S','D','F','G','H','J','K','L','Ñ'],
+    ['Z','X','C','V','B','N','M'],
+    ['Ctrl izq','Win izq','Alt izq','Espacio','Alt der','Ctrl der'],
+  ];
+  const usadaPor = t => S.modos.filter(m=>m.atajo.split(' + ').includes(t));
+  return `<div class="top"><h2>Mapa de atajos</h2>
+    <div class="mut">Lo que está pintado ya está cogido. Pulsa una tecla de verdad y se enciende.</div></div>
+  <div class="cuerpo">
+    <div class="teclado">${FILAS.map(f=>`<div class="fila">${f.map(t=>{
+      const u=usadaPor(t);
+      const choca = u.length>1;
+      const pul = S.pulsadas.has(t);
+      return `<div class="kc ${pul?'pulsada':u.length?(choca?'choca':'usada'):''}" data-tecla="${t}">
+        ${t}${u.length?`<span class="mini">${u.map(x=>x.n).join(', ')}</span>`:''}</div>`;
+    }).join('')}</div>`).join('')}</div>
+    <div style="margin-top:38px;display:grid;grid-template-columns:1fr 1fr;gap:14px">
+      ${S.modos.map((m,i)=>{const c=conflicto(m.atajo,i);
+        return `<div data-sel="${i}" style="padding:13px 15px;border-radius:11px;cursor:pointer;
+          border:1px solid ${S.sel===i?'var(--violet)':'var(--line)'};background:var(--surface-hi)">
+          <div style="display:flex;justify-content:space-between;align-items:center">
+            <b>${m.n}</b><span class="tecla">${m.atajo}</span></div>
+          <div class="mut" style="font-size:12px;margin-top:5px">${ACTIV.find(a=>a.id===m.act).nom}
+            ${c?`<span class="chip err">⚠ ${c}</span>`:''}</div>
+        </div>`;}).join('')}
+    </div>
+    <div style="margin-top:16px">${grabador(16)}</div>
+    <p class="mut" style="font-size:11.5px">Los botones del ratón no caben en un teclado: se añaden
+    con el grabador. Ese es justo el problema de esta variante.</p>
+  </div>`;
+}
+
+const VARIANTES=[['A','Tabla de Modos con edición en línea',variantA],
+                 ['B','Ficha por Modo, grabador grande',variantB],
+                 ['C','Mapa del teclado con conflictos pintados',variantC]];
+function clave(){const v=(new URLSearchParams(location.search).get('variant')||'A').toUpperCase();
+  return VARIANTES.some(x=>x[0]===v)?v:'A';}
+function irVariante(k){const u=new URL(location);u.searchParams.set('variant',k);
+  history.replaceState({},'',u);S.grabando=false;pinta();}
+function pinta(){const k=clave(),v=VARIANTES.find(x=>x[0]===k);
+  document.getElementById('app').innerHTML=v[2]();
+  document.getElementById('lbl').textContent=`${k} — ${v[1]}`;}
+
+document.addEventListener('click',e=>{
+  const t=e.target.closest('[data-sel],[data-grabar],[data-actb],#empezarGrab,#cancelarGrab,#prev,#next');
+  if(!t) return;
+  if(t.id==='prev'||t.id==='next'){const i=VARIANTES.findIndex(x=>x[0]===clave());
+    return irVariante(VARIANTES[(i+(t.id==='next'?1:-1)+3)%3][0]);}
+  if(t.id==='cancelarGrab'){S.grabando=false;S.pulsadas.clear();S.capturado='';return pinta();}
+  if(t.id==='empezarGrab'){S.grabando=true;S.capturado='';S.pulsadas.clear();return pinta();}
+  if(t.dataset.grabar!==undefined){S.sel=+t.dataset.grabar;S.grabando=true;S.capturado='';
+    S.pulsadas.clear();return pinta();}
+  if(t.dataset.actb){S.modos[S.sel].act=t.dataset.actb;return pinta();}
+  if(t.dataset.sel!==undefined){S.sel=+t.dataset.sel;return pinta();}
+});
+document.addEventListener('change',e=>{
+  if(e.target.dataset.act!==undefined){S.modos[+e.target.dataset.act].act=e.target.value;pinta();}
+});
+document.addEventListener('keydown',e=>{
+  if(S.grabando) return capturarTeclado(e);
+  if(clave()==='C'){ S.pulsadas.add(nombreTecla(e)); pinta();
+    setTimeout(()=>{S.pulsadas.delete(nombreTecla(e));pinta();},400); }
+  if(e.key==='ArrowLeft'||e.key==='ArrowRight'){
+    const i=VARIANTES.findIndex(x=>x[0]===clave());
+    irVariante(VARIANTES[(i+(e.key==='ArrowRight'?1:-1)+3)%3][0]);}
+});
+document.addEventListener('keyup',soltarTeclado);
+document.addEventListener('mousedown',capturarRaton);
+document.addEventListener('contextmenu',e=>{ if(S.grabando) e.preventDefault(); });
+pinta();
+</script>
+</body>
+</html>

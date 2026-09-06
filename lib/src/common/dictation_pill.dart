@@ -415,6 +415,17 @@ class _PillVisuals {
           icon: Icons.graphic_eq_rounded,
           label: 'Transcribiendo',
         );
+      case DictationStatus.sendingToCloud:
+        // Naranja y con todas las letras: es el único estado en el que algo del
+        // dictado sale del ordenador.
+        const nube = Color(0xFFFF9500);
+        return _PillVisuals(
+          accent: nube,
+          background: nube.withValues(alpha: 0.16),
+          foreground: scheme.onSurface,
+          icon: Icons.cloud_upload_rounded,
+          label: 'Saliendo del equipo',
+        );
       case DictationStatus.translating:
         return _PillVisuals(
           accent: scheme.secondary,

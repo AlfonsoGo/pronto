@@ -44,6 +44,13 @@ class PillPopup {
   /// insignia).
   final bool altPending;
 
+  /// Aviso corto del sistema que acompaña al texto (p. ej. «Sin formatear: el
+  /// servidor local no responde»). Vacío cuando no hay nada que decir.
+  ///
+  /// Es SIEMPRE una cadena nuestra: aquí no entra jamás un trozo de la
+  /// respuesta de un modelo.
+  final String notice;
+
   /// Contador que sube en cada aparición: sirve de `key` para re-disparar la
   /// animación de entrada aunque la caja ya estuviera visible.
   final int seq;
@@ -56,6 +63,7 @@ class PillPopup {
     this.altText = '',
     this.altLang,
     this.altPending = false,
+    this.notice = '',
     this.seq = 0,
   });
 
@@ -70,6 +78,7 @@ class PillPopup {
     String? altText,
     TextLanguage? altLang,
     bool? altPending,
+    String? notice,
     int? seq,
   }) {
     return PillPopup(
@@ -80,6 +89,7 @@ class PillPopup {
       altText: altText ?? this.altText,
       altLang: altLang ?? this.altLang,
       altPending: altPending ?? this.altPending,
+      notice: notice ?? this.notice,
       seq: seq ?? this.seq,
     );
   }
@@ -111,6 +121,7 @@ class PillPopupController extends Notifier<PillPopup> {
     String altText = '',
     TextLanguage? altLang,
     bool altPending = false,
+    String? notice,
   }) {
     _show(
       text,
@@ -119,6 +130,7 @@ class PillPopupController extends Notifier<PillPopup> {
       altText: altText,
       altLang: altLang,
       altPending: altPending,
+      notice: notice,
     );
   }
 
@@ -130,6 +142,7 @@ class PillPopupController extends Notifier<PillPopup> {
     String altText = '',
     TextLanguage? altLang,
     bool altPending = false,
+    String? notice,
   }) {
     _show(
       text,
@@ -138,6 +151,7 @@ class PillPopupController extends Notifier<PillPopup> {
       altText: altText,
       altLang: altLang,
       altPending: altPending,
+      notice: notice,
     );
   }
 
@@ -178,12 +192,13 @@ class PillPopupController extends Notifier<PillPopup> {
     String altText = '',
     TextLanguage? altLang,
     bool altPending = false,
+    String? notice,
   }) {
     final t = text.trim();
     if (t.isEmpty) return;
     _timer?.cancel();
     // Estado nuevo COMPLETO (no copyWith): así la otra versión del dictado
-    // anterior no se cuela en este.
+    // anterior —ni su aviso— se cuela en este.
     state = PillPopup(
       visible: true,
       kind: kind,
@@ -192,6 +207,7 @@ class PillPopupController extends Notifier<PillPopup> {
       altText: altText.trim(),
       altLang: altLang,
       altPending: altPending,
+      notice: notice?.trim() ?? '',
       seq: state.seq + 1,
     );
     _timer = Timer(_visibleFor, hide);

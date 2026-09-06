@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Pronto — 3 versiones del sistema</title>
+<!--
+  Indice de los estudios de estilo. Tres VERSIONES (los tres estilos de taste-skill)
+  por tres PANTALLAS (pildora, interfaz principal, instalacion).
+  La paleta de lib/src/core/theme.dart esta congelada en las nueve.
+-->
+<style>
+  :root{
+    --violet:#8B5CF6; --violet-soft:#A78BFA; --yellow:#FDE047;
+    --bg:#0B0810; --surface:#0F0B16; --surface-hi:#161021;
+    --ink:#F5F3FF; --muted:#9C93AE; --green:#34D399; --red:#F87171;
+    --linea:rgba(245,243,255,.09);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font:14.5px/1.6 "Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+       padding:52px 32px 80px;display:flex;justify-content:center}
+  .wrap{width:100%;max-width:1040px}
+  h1{margin:0;font:600 30px/1.15 "Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;
+     letter-spacing:-.02em}
+  .lead{margin:12px 0 0;color:var(--muted);max-width:72ch}
+  .paleta{display:flex;align-items:center;gap:9px;margin:20px 0 42px;font-size:12px;color:var(--muted)}
+  .paleta i{width:22px;height:22px;border-radius:5px;display:block;border:1px solid var(--linea)}
+  code{font:12px/1 "Cascadia Mono",Consolas,monospace;background:var(--surface-hi);
+       padding:2px 6px;border-radius:4px}
+
+  h2.sec{margin:0 0 6px;font-size:12px;font-weight:600;letter-spacing:.14em;
+         text-transform:uppercase;color:var(--muted)}
+
+  /* ---- matriz 3 versiones x 3 pantallas ---- */
+  .matriz{display:grid;grid-template-columns:190px repeat(3,1fr);gap:12px;margin-bottom:14px}
+  .cabc{font-size:11px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;
+        color:var(--muted);padding:0 4px 4px;align-self:end}
+  .fila-t{display:grid;gap:5px;align-self:center;padding-right:8px}
+  .fila-t b{font-size:15px;font-weight:600;letter-spacing:-.01em}
+  .fila-t span{font-size:11.5px;color:var(--muted);line-height:1.45}
+  .cel{display:block;padding:0;border:1px solid var(--linea);border-radius:10px;
+       background:var(--surface);text-decoration:none;color:inherit;overflow:hidden;
+       transition:border-color 160ms cubic-bezier(.2,0,0,1),transform 160ms cubic-bezier(.2,0,0,1)}
+  .cel:hover{border-color:rgba(245,243,255,.24);transform:translateY(-2px)}
+  .cel .m{height:76px;display:grid;place-items:center;font-size:11px;
+          letter-spacing:.08em;text-transform:uppercase;border-bottom:1px solid var(--linea)}
+  .cel .n{padding:10px 13px;font-size:12.5px;color:var(--muted)}
+  .cel:hover .n{color:var(--ink)}
+
+  /* muestras: cada una imita su version */
+  .mA{background:#0F0B16;color:#F5F3FF;font:400 17px/1 "Instrument Serif",Georgia,serif;
+      text-transform:none;letter-spacing:0}
+  .mB{background:#0F0B16;color:#EAE7F5;font:400 10px/1 "Cascadia Mono",Consolas,monospace;
+      letter-spacing:.18em}
+  .mC{background:radial-gradient(70% 120% at 30% 0%,rgba(139,92,246,.4),rgba(5,5,5,.92));
+      color:#F5F3FF;box-shadow:inset 0 1px 1px rgba(255,255,255,.15);font-weight:600}
+
+  .extra{margin-top:40px;display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .extra a{display:block;padding:16px 18px;border:1px solid var(--linea);border-radius:10px;
+    background:var(--surface);text-decoration:none;color:inherit;
+    transition:border-color 160ms ease}
+  .extra a:hover{border-color:rgba(245,243,255,.24)}
+  .extra b{display:block;font-size:14.5px;font-weight:600;margin-bottom:3px}
+  .extra span{font-size:12.5px;color:var(--muted)}
+
+  .verdicto{margin-top:44px;border:1px solid var(--linea);border-radius:10px;
+            background:var(--surface);padding:24px 26px}
+  .verdicto h3{margin:0 0 14px;font-size:15px;font-weight:600}
+  .verdicto ul{margin:0;padding-left:20px;color:var(--muted);font-size:13.5px}
+  .verdicto li{margin-bottom:9px}
+  .verdicto b{color:var(--ink);font-weight:600}
+  .rojo{color:var(--red)}
+  .pie{margin-top:34px;font-size:12px;color:var(--muted);line-height:1.75}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Tres versiones del sistema Pronto</h1>
+<p class="lead">Las tres <b>versiones</b> son los tres estilos de <code>taste-skill</code>. Las tres
+<b>pantallas</b> son las que forman el sistema: la Píldora que ves mientras dictas, la ventana
+principal y la primera puesta en marcha. Mismo contenido en las nueve — el de
+<code>home_screen.dart</code>, <code>dictation_pill.dart</code> y el PRNT-13, no inventado.
+Dentro de cada fichero se cambia de versión con <b>← →</b>.</p>
+<div class="paleta">
+  <span>Paleta congelada en las nueve:</span>
+  <i style="background:#8B5CF6"></i><i style="background:#6D28D9"></i><i style="background:#A78BFA"></i>
+  <i style="background:#FDE047"></i><i style="background:#34D399"></i><i style="background:#0B0810"></i>
+  <span>— la de <code>lib/src/core/theme.dart</code>, sin tocar.</span>
+</div>
+
+<div class="matriz">
+  <div></div>
+  <div class="cabc">Píldora — mientras dictas</div>
+  <div class="cabc">Interfaz principal</div>
+  <div class="cabc">Instalación</div>
+
+  <div class="fila-t"><b>1 · Editorial oscuro</b>
+    <span><code>minimalist-ui</code><br>Serif + mono, 1px, cero sombras, cero degradados.</span></div>
+  <a class="cel" href="sistema-pildora.html?variant=A"><div class="m mA">Escrito</div>
+    <div class="n">Regla horizontal, marca de color a la izquierda</div></a>
+  <a class="cel" href="sistema-app.html?variant=A"><div class="m mA">Pronto</div>
+    <div class="n">Documento: secciones separadas por una línea</div></a>
+  <a class="cel" href="taste-01-editorial.html"><div class="m mA">Poner en marcha</div>
+    <div class="n">Cinco bloques, juicios en palabras</div></a>
+
+  <div class="fila-t"><b>2 · Telemetría táctica</b>
+    <span><code>industrial-brutalist-ui</code><br>Cero radios, mono en mayúsculas, scanlines.</span></div>
+  <a class="cel" href="sistema-pildora.html?variant=B"><div class="m mB">[ OK ]</div>
+    <div class="n">Compartimentos con LED y nivel en bloques</div></a>
+  <a class="cel" href="sistema-app.html?variant=B"><div class="m mB">PRONTO</div>
+    <div class="n">Consola: divisorias de 1px, <code>&lt;output&gt;</code></div></a>
+  <a class="cel" href="taste-02-telemetria.html"><div class="m mB">[ EMPEZAR ]</div>
+    <div class="n">Tabla real, ordinales <code>▮▮▮▯▯</code></div></a>
+
+  <div class="fila-t"><b>3 · Cristal etéreo</b>
+    <span><code>high-end-visual-design</code><br>Doble bisel, bento, orbes, píldoras.</span></div>
+  <a class="cel" href="sistema-pildora.html?variant=C"><div class="m mC">Escrito</div>
+    <div class="n">Píldora de cristal con orbe que cambia de color</div></a>
+  <a class="cel" href="sistema-app.html?variant=C"><div class="m mC">Pronto escucha</div>
+    <div class="n">Bento asimétrico, botón-dentro-de-botón</div></a>
+  <a class="cel" href="taste-03-cristal.html"><div class="m mC">Empezar &nearr;</div>
+    <div class="n">Bento de cinco tarjetas, entrada con desenfoque</div></a>
+</div>
+
+<h2 class="sec" style="margin-top:38px">Fuera de la matriz — el control y las otras dos skills</h2>
+<div class="extra">
+  <a href="comparador-estilos.html?estilo=actual"><b>0 · El original</b>
+    <span>Lo que hay hoy, sin tocar: degradado violeta, sombra de 90px, emoji.</span></a>
+  <a href="comparador-estilos.html?estilo=imp"><b><code>/impeccable</code> — Operate</b>
+    <span>Nativo Windows 11: Segoe UI Variable, radios 4/8/12, botón plano.</span></a>
+  <a href="comparador-estilos.html?estilo=pmx"><b><code>ui-ux-pro-max</code></b>
+    <span>Su ficha literal: Dark OLED, Inter, glow, filas de 44px.</span></a>
+</div>
+
+<div class="verdicto">
+  <h3>Lo que hay que saber antes de elegir</h3>
+  <ul>
+    <li><b class="rojo">La versión 3 es la que más se parece al slop de IA de 2025.</b> Cristal + orbe
+        violeta + radios de 32px es el default. No es un fallo de la skill: es su propio arquetipo
+        «Ethereal Glass». Míralo sabiéndolo.</li>
+    <li><b>Ninguna de las tres skills respetó la paleta por su cuenta.</b>
+        <code>minimalist-ui</code> pidió blanco hueso y pasteles claros;
+        <code>industrial-brutalist-ui</code> pidió rojo aviación <code>#E61919</code>;
+        <code>ui-ux-pro-max</code> pidió slate + verde. Las tres anuladas a mano, y anotado en la
+        cabecera de cada fichero. <b>Ese override lo tienes que sostener tú en cada ejecución.</b></li>
+    <li><b>La versión 1 es la única que aguanta la Píldora sin pedir permiso.</b> Una regla de 1px
+        sobre el documento no compite con lo que estás escribiendo. La 3 mete un orbe con halo
+        encima de tu texto.</li>
+    <li><b>La 2 es la única que resuelve gratis la trampa del PRNT-13</b>: no hay WER medido en
+        español, y sus bloques <code>▮▮▮▯▯</code> son ordinales, no porcentajes. La 1 lo resuelve
+        con palabras («Instantáneo / Alta»). La 3 vuelve a pintar barras.</li>
+    <li><b>Cuidado con juzgar la Píldora en la pantalla de la app.</b> Se decide sobre el Bloc de
+        notas falso: una píldora sola siempre parece bonita.</li>
+  </ul>
+</div>
+
+<div class="pie">
+  Prototipos desechables: sin tests, sin persistencia, sin manejo de errores. Cuando gane una versión
+  se reescribe en condiciones dentro de <code>lib/</code> y estos ficheros se tiran.<br>
+  Teclas: <b>← →</b> cambia de versión · en la Píldora <b>1-5</b> los estados y <b>M</b> los Modos ·
+  en la interfaz <b>A</b> el aviso de actualización y <b>E</b> el error de modelo.<br>
+  <code>taste-skill</code> de Leonxlnx, MIT — cinco de sus trece skills instaladas en
+  <code>~/.claude/skills/</code>.
+</div>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,475 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sistema · Interfaz principal — 3 versiones taste</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Instrument+Serif&family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<!--
+  PROTOTIPO DESECHABLE — sin tests, sin persistencia, sin manejo de errores.
+
+  Pregunta: la ventana principal de Pronto, ¿cómo se ve en cada versión de estilo?
+  Tres variantes en la misma ruta: ?variant=A|B|C, o las flechas.
+    A — Editorial oscuro    (taste / minimalist-ui)
+    B — Telemetría táctica  (taste / industrial-brutalist-ui)
+    C — Cristal etéreo      (taste / high-end-visual-design)
+
+  CONTENIDO REAL, sacado de lib/src/features/home/home_screen.dart — no inventado:
+    · cabecera con icono, "Pronto", version y Configuracion
+    · "Cómo quieres dictar": Alternar / Pulsar y hablar, con su explicacion
+    · "Probar dictado"
+    · "Última transcripción" + "Guardar corrección"
+      ("Pronto aprenderá del cambio y mejorará la próxima vez.")
+    · aviso de actualizacion ("Hay una actualización disponible / Pronto se cerrará
+      y se reiniciará solo.")
+    · el estado feo real: "El modelo de voz no está cargado"
+
+  Tecla A: alterna el aviso de actualizacion.  Tecla E: alterna el error de modelo.
+
+  PALETA CONGELADA: lib/src/core/theme.dart. Las tres skills pedian otra
+  (blanco hueso / rojo aviacion / esmeralda) y las tres estan anuladas a mano.
+-->
+<style>
+  :root{
+    --violet:#8B5CF6; --violet-deep:#6D28D9; --violet-soft:#A78BFA; --yellow:#FDE047;
+    --bg:#0B0810; --surface:#0F0B16; --surface-hi:#161021;
+    --ink:#F5F3FF; --muted:#9C93AE; --green:#34D399; --red:#F87171; --orange:#FB923C;
+    --mono:"JetBrains Mono","Cascadia Mono",Consolas,monospace;
+    --jak:"Plus Jakarta Sans","Segoe UI",system-ui,sans-serif;
+    --serif:"Instrument Serif",Georgia,serif;
+    --black:"Archivo Black",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0}
+  body{background:#08060C;color:var(--ink);font:14px/1.55 var(--jak);
+       display:flex;align-items:flex-start;justify-content:center;padding:30px 22px 96px}
+  button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+  .mut{color:var(--muted)}
+  svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.8;
+        stroke-linecap:round;stroke-linejoin:round;flex:none}
+
+  #switcher{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:99;display:flex;
+    align-items:center;gap:4px;padding:6px;background:#fff;color:#111;border-radius:999px;
+    box-shadow:0 10px 30px rgba(0,0,0,.5);font:650 13px/1 system-ui}
+  #switcher button{width:30px;height:30px;border-radius:999px;font-size:15px;color:#111}
+  #switcher button:hover{background:#eee}
+  #switcher .lbl{padding:0 12px;white-space:nowrap}
+  #switcher .k{opacity:.45;font-weight:500;font-size:11.5px;padding-right:6px}
+  #switcher a{color:#111;text-decoration:none;padding:0 10px;opacity:.5;font-size:12px}
+
+  /* ==================================================================
+     A · EDITORIAL OSCURO   (taste / minimalist-ui)
+     Serif editorial para los titulares, mono para los metadatos, 1px de
+     borde exacto, radios de 8px maximo, cero sombras, cero degradados,
+     macro-espacio de 32px, <kbd> como teclas fisicas, tags en mayusculas.
+     La eleccion Alternar/Pulsar-y-hablar es un acordeon sin caja: solo
+     una linea inferior los separa (regla 5 de la skill).
+     ================================================================== */
+  .A-win{width:900px;background:var(--surface);border:1px solid rgba(245,243,255,.08);
+    border-radius:8px;overflow:hidden}
+  .A-chrome{height:36px;border-bottom:1px solid rgba(245,243,255,.08);display:flex;
+    align-items:center;gap:8px;padding:0 14px}
+  .A-chrome i{width:9px;height:9px;border-radius:99px;background:rgba(245,243,255,.13);display:block}
+  .A-chrome .n{margin-left:8px;font:500 10.5px/1 var(--mono);letter-spacing:.09em;
+    text-transform:uppercase;color:var(--muted)}
+  .A-top{padding:34px 40px 24px;display:flex;justify-content:space-between;align-items:flex-end;
+    border-bottom:1px solid rgba(245,243,255,.08)}
+  .A-top h1{margin:0;font:400 40px/1.05 var(--serif);letter-spacing:-.02em}
+  .A-top .v{font:500 10.5px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;
+    color:var(--muted);margin-top:9px}
+  .A-body{padding:0 40px 36px}
+  .A-sec{padding:32px 0;border-bottom:1px solid rgba(245,243,255,.08)}
+  .A-sec:last-child{border-bottom:0}
+  .A-et{font:500 10.5px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;
+    color:var(--muted);margin-bottom:12px;display:flex;align-items:center;gap:9px}
+  .A-et .n{color:var(--violet-soft)}
+  .A-sec h2{margin:0 0 6px;font:400 24px/1.15 var(--serif)}
+  .A-sec p{margin:0;color:var(--muted);font-size:13.5px;max-width:64ch}
+  .A-op{display:grid;grid-template-columns:22px 1fr;gap:14px;padding:18px 0;
+    border-top:1px solid rgba(245,243,255,.08);cursor:pointer}
+  .A-op .r{width:16px;height:16px;border-radius:99px;border:1px solid rgba(245,243,255,.2);
+    margin-top:3px}
+  .A-op.sel .r{border-color:var(--violet);box-shadow:inset 0 0 0 4px var(--violet)}
+  .A-op b{font-weight:600;font-size:15px}
+  .A-btn{padding:9px 18px;border-radius:5px;font:600 13.5px/1 var(--jak);
+    background:var(--ink);color:var(--bg);transition:background 200ms ease}
+  .A-btn:hover{background:#fff}
+  .A-btn:active{transform:scale(.98)}
+  .A-btn.g{background:transparent;color:var(--ink);border:1px solid rgba(245,243,255,.14)}
+  .A-btn.g:hover{background:rgba(245,243,255,.05)}
+  .A-caja{border:1px solid rgba(245,243,255,.08);border-radius:8px;background:var(--surface-hi);
+    padding:20px 22px;margin-top:16px;font:400 16px/1.6 var(--serif)}
+  .A-tag{font:500 9.5px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;
+    padding:4px 9px;border-radius:999px;background:rgba(245,243,255,.06);color:var(--muted)}
+  .A-tag.ok{background:rgba(52,211,153,.13);color:var(--green)}
+  .A-tag.warn{background:rgba(251,146,60,.13);color:var(--orange)}
+  .A-aviso{display:flex;align-items:center;gap:16px;padding:16px 40px;
+    border-bottom:1px solid rgba(245,243,255,.08);font-size:13.5px}
+  .A-aviso.err{background:rgba(248,113,113,.07)}
+  kbd{font:500 11px/1 var(--mono);border:1px solid rgba(245,243,255,.13);border-radius:4px;
+    background:var(--surface-hi);padding:5px 7px}
+
+  /* ==================================================================
+     B · TELEMETRIA TACTICA   (taste / industrial-brutalist-ui)
+     Cero border-radius. Archivo Black para el macro-titular, todo lo
+     demas mono 10-11px en mayusculas. Divisorias de 1px por gap del
+     grid. Framing ASCII. Scanlines + grano. <output>, <kbd>, <samp>.
+     El rojo aviacion #E61919 de la skill -> nuestro violeta.
+     ================================================================== */
+  .B-wrap *{border-radius:0!important}
+  .B-win{width:940px;background:var(--surface);border:1px solid #241C33;position:relative;
+    font:400 11.5px/1.4 var(--mono);letter-spacing:.05em}
+  .B-win::before,.B-win::after{content:"+";position:absolute;color:var(--violet);
+    font:400 13px/1 var(--mono)}
+  .B-win::before{top:-7px;left:-5px} .B-win::after{bottom:-8px;right:-5px}
+  .B-franja{display:flex;justify-content:space-between;padding:7px 16px;
+    border-bottom:1px solid #241C33;font-size:10px;letter-spacing:.11em;
+    text-transform:uppercase;color:var(--muted)}
+  .B-franja .s{color:var(--violet)}
+  .B-top{padding:24px 18px 20px;display:grid;grid-template-columns:1fr auto;align-items:end;
+    gap:20px;border-bottom:1px solid #241C33}
+  .B-top h1{margin:0;font:400 clamp(28px,4vw,46px)/.9 var(--black);letter-spacing:-.04em;
+    text-transform:uppercase}
+  .B-top .lema{margin-top:9px;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--muted)}
+  .B-top .v{text-align:right;font-size:10px;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--muted);line-height:1.8}
+  .B-grid{display:grid;gap:1px;background:#241C33;border-bottom:1px solid #241C33}
+  .B-sec{background:var(--surface);padding:16px 18px 18px}
+  .B-marca{display:flex;align-items:center;gap:10px;font-size:10px;letter-spacing:.13em;
+    text-transform:uppercase;color:var(--muted);margin-bottom:12px}
+  .B-marca .id{color:var(--violet)}
+  .B-marca .est{margin-left:auto;padding:2px 7px;border:1px solid #241C33}
+  .B-marca .est.ok{color:var(--green);border-color:rgba(52,211,153,.4)}
+  .B-marca .est.warn{color:var(--orange);border-color:rgba(251,146,60,.45)}
+  .B-op{display:grid;grid-template-columns:16px 1fr;gap:12px;padding:12px 0;
+    border-top:1px solid #241C33;cursor:pointer;text-transform:uppercase;
+    font-size:10.5px;letter-spacing:.09em;color:var(--muted)}
+  .B-op .r{width:11px;height:11px;border:1px solid #3A2E52;margin-top:2px}
+  .B-op.sel .r{background:var(--violet);border-color:var(--violet)}
+  .B-op.sel{color:var(--ink)}
+  .B-op b{font-weight:700;font-size:11.5px;color:var(--ink);letter-spacing:.06em}
+  .B-btn{padding:7px 13px;border:1px solid #241C33;background:var(--surface-hi);
+    font:500 10.5px/1 var(--mono);letter-spacing:.11em;text-transform:uppercase;
+    transition:background 120ms linear,border-color 120ms linear}
+  .B-btn:hover{border-color:var(--violet);background:rgba(139,92,246,.1)}
+  .B-btn.on{background:var(--violet);border-color:var(--violet);color:#fff}
+  .B-win output{display:block;border:1px solid #241C33;background:var(--bg);padding:14px;
+    margin-top:10px;color:var(--ink);font-size:11px;letter-spacing:.04em;line-height:1.65;
+    text-transform:none}
+  .B-aviso{padding:10px 18px;border-bottom:1px solid #241C33;display:flex;align-items:center;
+    gap:14px;font-size:10px;letter-spacing:.11em;text-transform:uppercase}
+  .B-aviso.upd{background:rgba(139,92,246,.09);color:var(--violet-soft)}
+  .B-aviso.err{background:rgba(248,113,113,.09);color:var(--red)}
+  .B-pie{display:flex;justify-content:space-between;align-items:center;padding:11px 18px;
+    font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+  .B-wrap .grano{position:fixed;inset:0;z-index:60;pointer-events:none;opacity:.05;
+    background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/></filter><rect width='140' height='140' filter='url(%23n)'/></svg>")}
+  .B-wrap .scan{position:fixed;inset:0;z-index:59;pointer-events:none;
+    background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.15) 2px,rgba(0,0,0,.15) 4px)}
+
+  /* ==================================================================
+     C · CRISTAL ETEREO   (taste / high-end-visual-design)
+     Doble bisel en TODA tarjeta, bento asimetrico, pill con
+     boton-dentro-de-boton, eyebrow tag, orbes radiales de fondo,
+     entrada con desenfoque, cubic-bezier(.32,.72,0,1).
+     Los orbes "purple/emerald" de la skill -> violeta + amarillo.
+     ================================================================== */
+  .C-malla{position:fixed;inset:0;pointer-events:none;
+    background:radial-gradient(46vw 40vw at 16% 6%,rgba(139,92,246,.20),transparent 62%),
+               radial-gradient(36vw 32vw at 86% 78%,rgba(109,40,217,.17),transparent 64%),
+               radial-gradient(22vw 20vw at 74% 10%,rgba(253,224,71,.05),transparent 66%)}
+  .C-shell{position:relative;width:960px;padding:6px;border-radius:32px;
+    background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.08);
+    box-shadow:0 40px 120px rgba(0,0,0,.7)}
+  .C-core{border-radius:26px;background:rgba(10,8,14,.72);border:1px solid rgba(255,255,255,.08);
+    box-shadow:inset 0 1px 1px rgba(255,255,255,.15);
+    backdrop-filter:blur(28px) saturate(1.25);overflow:hidden}
+  .C-top{padding:40px 40px 30px;display:grid;grid-template-columns:1fr auto;align-items:end;
+    gap:24px;border-bottom:1px solid rgba(255,255,255,.08)}
+  .C-eye{display:inline-flex;align-items:center;gap:8px;padding:5px 13px;border-radius:999px;
+    background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);
+    font:600 10px/1 var(--jak);letter-spacing:.2em;text-transform:uppercase;color:var(--violet-soft)}
+  .C-eye .pt{width:5px;height:5px;border-radius:99px;background:var(--green)}
+  .C-top h1{margin:15px 0 0;font-size:38px;font-weight:800;letter-spacing:-.03em;line-height:1.05}
+  .C-top h1 span{background:linear-gradient(100deg,var(--ink) 34%,var(--violet-soft));
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .C-bento{display:grid;grid-template-columns:repeat(12,1fr);gap:14px;padding:26px 40px 36px}
+  .C-card{position:relative;padding:5px;border-radius:24px;background:rgba(255,255,255,.035);
+    border:1px solid rgba(255,255,255,.08);
+    opacity:0;transform:translateY(16px);filter:blur(6px);
+    animation:Csube 800ms cubic-bezier(.32,.72,0,1) forwards;animation-delay:calc(var(--i) * 90ms)}
+  @keyframes Csube{to{opacity:1;transform:none;filter:none}}
+  .C-card > .in{border-radius:19px;background:rgba(255,255,255,.028);
+    border:1px solid rgba(255,255,255,.08);box-shadow:inset 0 1px 1px rgba(255,255,255,.15);
+    padding:24px 26px;height:100%}
+  .c12{grid-column:span 12} .c7{grid-column:span 7} .c5{grid-column:span 5}
+  .C-cap{display:flex;align-items:center;gap:10px;font:700 10px/1 var(--jak);letter-spacing:.2em;
+    text-transform:uppercase;color:var(--muted);margin-bottom:14px}
+  .C-cap .est{margin-left:auto;padding:4px 10px;border-radius:999px;font-size:9px;
+    letter-spacing:.14em;background:rgba(255,255,255,.05)}
+  .C-cap .est.ok{background:rgba(52,211,153,.14);color:var(--green)}
+  .C-cap .est.warn{background:rgba(251,146,60,.15);color:var(--orange)}
+  .C-card h3{margin:0 0 6px;font-size:19px;font-weight:700;letter-spacing:-.015em}
+  .C-card p{margin:0;color:var(--muted);font-size:13.5px}
+  .C-op{display:flex;align-items:flex-start;gap:13px;padding:6px;border-radius:18px;
+    background:rgba(255,255,255,.03);margin-top:11px;cursor:pointer;border:1px solid transparent;
+    transition:background 400ms cubic-bezier(.32,.72,0,1),border-color 400ms cubic-bezier(.32,.72,0,1)}
+  .C-op:hover{background:rgba(255,255,255,.06)}
+  .C-op.sel{background:rgba(139,92,246,.13);border-color:rgba(139,92,246,.42);
+    box-shadow:inset 0 1px 1px rgba(255,255,255,.15)}
+  .C-op > .in{display:flex;gap:13px;padding:13px 15px;border-radius:13px;
+    background:rgba(255,255,255,.025);border:1px solid rgba(255,255,255,.08);width:100%}
+  .C-op .r{width:16px;height:16px;border-radius:99px;border:1px solid rgba(255,255,255,.22);
+    flex:none;margin-top:2px}
+  .C-op.sel .r{border-color:var(--violet);box-shadow:inset 0 0 0 4px var(--violet)}
+  .C-op b{font-weight:700;font-size:14.5px}
+  .C-op small{display:block;color:var(--muted);font-size:12.5px;margin-top:3px;line-height:1.5}
+  .C-pill{display:inline-flex;align-items:center;gap:12px;padding:10px 10px 10px 20px;
+    border-radius:999px;background:linear-gradient(180deg,var(--violet),var(--violet-deep));
+    color:#fff;font-weight:600;font-size:14px;
+    box-shadow:inset 0 1px 1px rgba(255,255,255,.15),0 8px 30px rgba(109,40,217,.4);
+    transition:transform 400ms cubic-bezier(.32,.72,0,1)}
+  .C-pill .circ{width:28px;height:28px;border-radius:999px;background:rgba(255,255,255,.16);
+    display:grid;place-items:center;transition:transform 400ms cubic-bezier(.32,.72,0,1)}
+  .C-pill:hover .circ{transform:translate(4px,-1px) scale(1.06);background:rgba(255,255,255,.26)}
+  .C-pill:active{transform:scale(.98)}
+  .C-chip{padding:9px 17px;border-radius:999px;background:rgba(255,255,255,.05);
+    border:1px solid rgba(255,255,255,.08);font-size:13px;font-weight:600;
+    transition:transform 300ms cubic-bezier(.32,.72,0,1),background 300ms cubic-bezier(.32,.72,0,1)}
+  .C-chip:hover{background:rgba(255,255,255,.09)}
+  .C-chip:active{transform:scale(.98)}
+  .C-caja{border-radius:16px;background:rgba(0,0,0,.35);border:1px solid rgba(255,255,255,.08);
+    box-shadow:inset 0 1px 1px rgba(255,255,255,.15);padding:18px;margin-top:14px;
+    font-size:14.5px;line-height:1.6}
+  .C-aviso{margin:0 40px;padding:5px;border-radius:20px;background:rgba(255,255,255,.04);
+    border:1px solid rgba(255,255,255,.08)}
+  .C-aviso .in{display:flex;align-items:center;gap:16px;padding:14px 18px;border-radius:15px;
+    box-shadow:inset 0 1px 1px rgba(255,255,255,.15);font-size:13.5px}
+  .C-aviso.upd .in{background:rgba(139,92,246,.14)}
+  .C-aviso.err .in{background:rgba(248,113,113,.13)}
+  .C-kbd{font:600 11px/1 var(--jak);border:1px solid rgba(255,255,255,.14);border-radius:7px;
+    background:rgba(255,255,255,.07);box-shadow:inset 0 1px 1px rgba(255,255,255,.15);padding:5px 8px}
+
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}
+    .C-card{opacity:1;transform:none;filter:none}}
+</style>
+</head>
+<body>
+
+<svg style="display:none" aria-hidden="true">
+  <symbol id="i-cog" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 7 19.4a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a1.7 1.7 0 0 0-1.6-1H1a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 2.7 9a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 9 3V3a2 2 0 1 1 4 0v.1A1.7 1.7 0 0 0 15 4.6a1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 9h.1a2 2 0 1 1 0 4H21a1.7 1.7 0 0 0-1.6 1z"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9.5" y="2.5" width="5" height="11" rx="2.5"/><path d="M18.5 11a6.5 6.5 0 0 1-13 0M12 17.5V21"/></symbol>
+  <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 3h11l3 3v15H5z"/><path d="M8 3v6h7M8 21v-6h8v6"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 20V4m-6 6 6-6 6 6"/></symbol>
+  <symbol id="i-warn" viewBox="0 0 24 24"><path d="M12 3 2 20h20L12 3z"/><path d="M12 10v4M12 17.5v.01"/></symbol>
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M7 17 17 7M9 7h8v8"/></symbol>
+</svg>
+
+<div id="app"></div>
+<div id="switcher">
+  <button id="prev" title="Anterior (flecha izquierda)">&lsaquo;</button>
+  <span class="lbl" id="lbl"></span>
+  <span class="k">A actualización · E error</span>
+  <button id="next" title="Siguiente (flecha derecha)">&rsaquo;</button>
+  <a href="index.html">índice</a>
+</div>
+
+<script>
+// ------------------------------------------------ contenido REAL de home_screen.dart
+const VERSION = 'v0.9.0';
+const MODOS_ACT = [
+  {id:'alternar', n:'Alternar',
+   d:'Pulsa <kbd>Ctrl</kbd> <kbd>Espacio</kbd> una vez para empezar y otra vez para parar, en CUALQUIER app. El texto se escribe donde tengas el cursor.'},
+  {id:'pulsar', n:'Pulsar y hablar',
+   d:'Mantén pulsado <kbd>Ctrl</kbd> <kbd>Espacio</kbd> mientras hablas y suéltalo, en CUALQUIER app. El texto se escribe donde tengas el cursor.'},
+];
+const TRANSCRIPCION = 'Prepárame el resumen de la reunión con Serviforn y mándaselo a Celia antes de las seis.';
+const VARIANTES = [
+  ['A','Editorial oscuro — taste / minimalist-ui'],
+  ['B','Telemetría táctica — taste / industrial-brutalist-ui'],
+  ['C','Cristal etéreo — taste / high-end-visual-design'],
+];
+let S = { modo:'alternar', update:true, error:false };
+
+function ico(id){ return '<svg class="i"><use href="#i-'+id+'"></use></svg>'; }
+function clave(){
+  const v=(new URLSearchParams(location.search).get('variant')||'A').toUpperCase();
+  return VARIANTES.some(function(x){return x[0]===v;}) ? v : 'A';
+}
+function irVariante(k){
+  const u=new URL(location); u.searchParams.set('variant',k);
+  history.replaceState({},'',u); pinta();
+}
+
+// ------------------------------------------------ A · editorial oscuro
+function variantA(){
+  return '<div class="A-win">'+
+    '<div class="A-chrome"><i></i><i></i><i></i><span class="n">Pronto — dictado</span></div>'+
+    (S.update ? '<div class="A-aviso">'+ico('up')+
+      '<span><b>Hay una actualización disponible.</b> <span class="mut">Pronto se cerrará y se reiniciará solo.</span></span>'+
+      '<span style="margin-left:auto;display:flex;gap:9px">'+
+      '<button class="A-btn g">Ahora no</button><button class="A-btn">Actualizar</button></span></div>' : '')+
+    (S.error ? '<div class="A-aviso err">'+ico('warn')+
+      '<span><b>El modelo de voz no está cargado.</b> <span class="mut">Descarga o compila el modelo: ver BUILD_WHISPER.md y SETUP.md.</span></span></div>' : '')+
+
+    '<div class="A-top"><div><h1>Pronto</h1><div class="v">'+VERSION+' · dictado en cualquier app</div></div>'+
+      '<button class="A-btn g">'+ico('cog')+' Configuración</button></div>'+
+
+    '<div class="A-body">'+
+
+      '<div class="A-sec"><div class="A-et"><span class="n">01</span> Cómo quieres dictar</div>'+
+        '<h2>El gesto</h2>'+
+        MODOS_ACT.map(function(m){
+          return '<div class="A-op '+(S.modo===m.id?'sel':'')+'" data-modo="'+m.id+'">'+
+            '<span class="r"></span><div><b>'+m.n+'</b><p style="margin-top:5px">'+m.d+'</p></div></div>';
+        }).join('')+'</div>'+
+
+      '<div class="A-sec"><div class="A-et"><span class="n">02</span> Probar dictado'+
+        '<span class="A-tag ok" style="margin-left:auto">Motor listo</span></div>'+
+        '<h2>Suelta para transcribir</h2>'+
+        '<p>No hace falta salir de aquí para comprobarlo.</p>'+
+        '<div style="margin-top:16px"><button class="A-btn">'+ico('mic')+' Probar dictado</button></div></div>'+
+
+      '<div class="A-sec"><div class="A-et"><span class="n">03</span> Última transcripción'+
+        '<span class="A-tag" style="margin-left:auto">hace 2 min</span></div>'+
+        '<h2>Lo último que escribió</h2>'+
+        '<div class="A-caja" contenteditable="true">'+TRANSCRIPCION+'</div>'+
+        '<p style="margin-top:12px">Corrige el texto y guárdalo: Pronto aprenderá del cambio y mejorará la próxima vez.</p>'+
+        '<div style="margin-top:16px"><button class="A-btn g">'+ico('save')+' Guardar corrección</button></div></div>'+
+
+    '</div></div>';
+}
+
+// ------------------------------------------------ B · telemetría táctica
+function variantB(){
+  return '<div class="B-wrap"><div class="grano"></div><div class="scan"></div><div class="B-win">'+
+    '<div class="B-franja"><span>PRONTO<sup>&reg;</sup> <span class="s">///</span> DICTADO</span>'+
+      '<span>'+VERSION.toUpperCase()+' <span class="s">/</span> ES-ES <span class="s">/</span> PARAKEET TDT V3 <span class="s">/</span> LOCAL</span></div>'+
+
+    (S.update ? '<div class="B-aviso upd">'+ico('up')+'<span>ACTUALIZACIÓN DISPONIBLE /// PRONTO SE CERRARÁ Y SE REINICIARÁ SOLO</span>'+
+      '<span style="margin-left:auto;display:flex;gap:1px"><button class="B-btn">AHORA NO</button>'+
+      '<button class="B-btn on">ACTUALIZAR</button></span></div>' : '')+
+    (S.error ? '<div class="B-aviso err">'+ico('warn')+
+      '<span>FALLO /// MODELO DE VOZ NO CARGADO — VER BUILD_WHISPER.MD Y SETUP.MD</span></div>' : '')+
+
+    '<div class="B-top"><div><h1>Pronto</h1>'+
+      '<div class="lema">&gt;&gt;&gt; DICTA EN CUALQUIER APP / EL TEXTO CAE DONDE ESTÉ EL CURSOR</div></div>'+
+      '<div class="v">MOTOR <span class="s">/</span> OK<br>MICRÓFONO <span class="s">/</span> OK<br>'+
+      '<button class="B-btn" style="margin-top:8px">'+ico('cog')+' CONFIGURACIÓN</button></div></div>'+
+
+    '<div class="B-grid">'+
+      '<div class="B-sec"><div class="B-marca"><span class="id">[ 01 ]</span> CÓMO QUIERES DICTAR'+
+        '<span class="est ok">OK</span></div>'+
+        MODOS_ACT.map(function(m){
+          return '<div class="B-op '+(S.modo===m.id?'sel':'')+'" data-modo="'+m.id+'">'+
+            '<span class="r"></span><div><b>'+m.n.toUpperCase()+'</b><div style="margin-top:5px;text-transform:none;letter-spacing:.04em;font-size:10.5px;line-height:1.6">'+
+            m.d+'</div></div></div>';
+        }).join('')+'</div>'+
+
+      '<div class="B-sec"><div class="B-marca"><span class="id">[ 02 ]</span> PRUEBA DE DICTADO'+
+        '<span class="est ok">MOTOR LISTO</span></div>'+
+        '<output>&gt; PULSA CTRL + ESPACIO Y HABLA. SUELTA PARA TRANSCRIBIR._</output>'+
+        '<div style="margin-top:11px"><button class="B-btn on">'+ico('mic')+' PROBAR DICTADO</button></div></div>'+
+
+      '<div class="B-sec"><div class="B-marca"><span class="id">[ 03 ]</span> ÚLTIMA TRANSCRIPCIÓN'+
+        '<span class="est">T-00:02:14</span></div>'+
+        '<output contenteditable="true">'+TRANSCRIPCION+'</output>'+
+        '<div style="margin-top:11px;display:flex;align-items:center;gap:14px">'+
+        '<button class="B-btn">'+ico('save')+' GUARDAR CORRECCIÓN</button>'+
+        '<span style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)">'+
+        '/// PRONTO APRENDERÁ DEL CAMBIO</span></div></div>'+
+    '</div>'+
+
+    '<div class="B-pie"><span>SESIÓN 00:41:12 <span class="s">/</span> 318 PALABRAS <span class="s">/</span> 0 FALLOS</span>'+
+      '<span>ESTADO <span class="s">///</span> '+(S.error?'BLOQUEADO':'OPERATIVO')+'</span></div>'+
+    '</div></div>';
+}
+
+// ------------------------------------------------ C · cristal etéreo
+function variantC(){
+  return '<div class="C-malla"></div><div class="C-shell"><div class="C-core">'+
+    '<div class="C-top"><div>'+
+      '<span class="C-eye"><span class="pt"></span>Dictado activo</span>'+
+      '<h1>Pronto <span>escucha</span></h1>'+
+      '<div class="mut" style="margin-top:11px;font-size:14px">Dicta en cualquier app. El texto cae donde tengas el cursor.</div>'+
+    '</div><button class="C-chip">'+ico('cog')+' Configuración</button></div>'+
+
+    (S.update ? '<div class="C-aviso upd" style="margin-top:22px"><div class="in">'+ico('up')+
+      '<span><b>Hay una actualización disponible.</b> <span class="mut">Pronto se cerrará y se reiniciará solo.</span></span>'+
+      '<span style="margin-left:auto;display:flex;gap:9px;align-items:center">'+
+      '<button class="C-chip" style="padding:7px 14px;font-size:12.5px">Ahora no</button>'+
+      '<button class="C-pill" style="padding:8px 8px 8px 16px;font-size:13px">Actualizar'+
+      '<span class="circ">'+ico('arrow')+'</span></button></span></div></div>' : '')+
+    (S.error ? '<div class="C-aviso err" style="margin-top:14px"><div class="in">'+ico('warn')+
+      '<span><b>El modelo de voz no está cargado.</b> <span class="mut">Ver BUILD_WHISPER.md y SETUP.md.</span></span></div></div>' : '')+
+
+    '<div class="C-bento">'+
+      '<div class="C-card c7" style="--i:0"><div class="in">'+
+        '<div class="C-cap">01 · Cómo quieres dictar<span class="est ok">listo</span></div>'+
+        '<h3>El gesto</h3>'+
+        MODOS_ACT.map(function(m){
+          return '<div class="C-op '+(S.modo===m.id?'sel':'')+'" data-modo="'+m.id+'"><div class="in">'+
+            '<span class="r"></span><span><b>'+m.n+'</b><small>'+
+            m.d.replace(/<kbd>/g,'<span class="C-kbd">').replace(/<\/kbd>/g,'</span>')+
+            '</small></span></div></div>';
+        }).join('')+'</div></div>'+
+
+      '<div class="C-card c5" style="--i:1"><div class="in">'+
+        '<div class="C-cap">02 · Probar dictado<span class="est ok">motor listo</span></div>'+
+        '<h3>Suelta para transcribir</h3>'+
+        '<p>No hace falta salir de aquí para comprobarlo.</p>'+
+        '<div style="margin-top:20px"><button class="C-pill">'+ico('mic')+' Probar dictado'+
+          '<span class="circ">'+ico('arrow')+'</span></button></div></div></div>'+
+
+      '<div class="C-card c12" style="--i:2"><div class="in">'+
+        '<div class="C-cap">03 · Última transcripción<span class="est">hace 2 min</span></div>'+
+        '<h3>Lo último que escribió</h3>'+
+        '<div class="C-caja" contenteditable="true">'+TRANSCRIPCION+'</div>'+
+        '<div style="display:flex;align-items:center;gap:16px;margin-top:16px">'+
+        '<button class="C-chip">'+ico('save')+' Guardar corrección</button>'+
+        '<span class="mut" style="font-size:12.5px">Pronto aprenderá del cambio y mejorará la próxima vez.</span>'+
+        '</div></div></div>'+
+    '</div>'+
+
+  '</div></div>';
+}
+
+const RENDER = {A:variantA, B:variantB, C:variantC};
+function pinta(){
+  const k = clave();
+  document.body.style.background = (k==='C') ? '#050505' : '#08060C';
+  document.getElementById('app').innerHTML = RENDER[k]();
+  document.getElementById('lbl').textContent =
+    VARIANTES.filter(function(x){return x[0]===k;})[0].join(' — ');
+}
+
+document.addEventListener('click', function(e){
+  const t = e.target.closest('[data-modo],#prev,#next');
+  if(!t) return;
+  if(t.id==='prev'||t.id==='next'){
+    const k=clave(); let i=0;
+    VARIANTES.forEach(function(x,n){ if(x[0]===k) i=n; });
+    const n=(i+(t.id==='next'?1:-1)+VARIANTES.length)%VARIANTES.length;
+    return irVariante(VARIANTES[n][0]);
+  }
+  if(t.dataset.modo){ S.modo=t.dataset.modo; return pinta(); }
+});
+
+document.addEventListener('keydown', function(e){
+  if(/^(INPUT|TEXTAREA)$/.test(e.target.tagName) || e.target.isContentEditable) return;
+  if(e.key==='a'||e.key==='A'){ S.update=!S.update; return pinta(); }
+  if(e.key==='e'||e.key==='E'){ S.error=!S.error; return pinta(); }
+  if(e.key!=='ArrowLeft'&&e.key!=='ArrowRight') return;
+  const k=clave(); let i=0;
+  VARIANTES.forEach(function(x,n){ if(x[0]===k) i=n; });
+  const n=(i+(e.key==='ArrowRight'?1:-1)+VARIANTES.length)%VARIANTES.length;
+  irVariante(VARIANTES[n][0]);
+});
+
+pinta();
+</script>
+</body>
+</html>

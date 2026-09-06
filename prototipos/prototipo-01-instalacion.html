@@ -1,0 +1,554 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Prototipo 01 — Instalación de Pronto</title>
+<!--
+  PROTOTIPO DESECHABLE — no es código de producción, no tiene tests, no persiste nada.
+  Pregunta que contesta: ¿cómo debe ser la primera pantalla de Pronto (elegir idioma,
+  Motor de voz, permisos, prueba real y Formateo)?
+  Tres variantes en la misma ruta, se cambia con ?variant=A|B|C o con las flechas.
+    A — Asistente con rejilla de tarjetas y barras de % (lo de FluidVoice, calcado)
+    B — Una pregunta por pantalla, con recomendación y SIN números inventados
+    C — Hoja única con desbloqueo progresivo y un mando velocidad<->precisión
+-->
+<style>
+  :root{
+    --violet:#8B5CF6; --violet-deep:#6D28D9; --violet-soft:#A78BFA;
+    --yellow:#FDE047; --bg:#0B0810; --surface:#0F0B16; --surface-hi:#161021;
+    --ink:#F5F3FF; --muted:#9C93AE; --green:#34D399; --orange:#FB923C;
+    --line:rgba(245,243,255,.10);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--bg); color:var(--ink);
+    font:14px/1.5 "Segoe UI",system-ui,-apple-system,sans-serif;
+    display:flex; align-items:center; justify-content:center; padding:24px 24px 96px;
+  }
+  .ventana{
+    width:960px; height:640px; background:var(--surface); border:1px solid var(--line);
+    border-radius:16px; overflow:hidden; display:flex; flex-direction:column;
+    box-shadow:0 40px 90px rgba(0,0,0,.6);
+  }
+  h1,h2,h3{margin:0; font-weight:650; letter-spacing:-.01em}
+  .mut{color:var(--muted)}
+  button{font:inherit; color:inherit; cursor:pointer; border:0; background:none}
+  .btn{
+    padding:9px 16px; border-radius:9px; font-weight:600;
+    background:linear-gradient(180deg,var(--violet),var(--violet-deep)); color:#fff;
+  }
+  .btn:disabled{opacity:.35; cursor:not-allowed}
+  .btn.ghost{background:transparent; border:1px solid var(--line); color:var(--muted)}
+  .btn.sm{padding:6px 12px; font-size:12.5px}
+  .chip{
+    display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700;
+    background:rgba(139,92,246,.18); color:var(--violet-soft);
+  }
+  .chip.warn{background:rgba(251,146,60,.16); color:var(--orange)}
+  .chip.ok{background:rgba(52,211,153,.15); color:var(--green)}
+  .barra{height:6px; border-radius:99px; background:rgba(245,243,255,.08); overflow:hidden}
+  .barra > i{display:block; height:100%; border-radius:99px; transition:width .5s cubic-bezier(.2,.8,.2,1)}
+  .rell-vel{background:linear-gradient(90deg,var(--yellow),var(--orange))}
+  .rell-pre{background:linear-gradient(90deg,var(--green),#22D3EE)}
+  .rell-dl{background:linear-gradient(90deg,var(--violet-soft),var(--violet))}
+  .oculto{display:none !important}
+
+  /* ---------- barra de variantes (no es parte del diseño) ---------- */
+  #switcher{
+    position:fixed; left:50%; bottom:20px; transform:translateX(-50%); z-index:99;
+    display:flex; align-items:center; gap:4px; padding:6px;
+    background:#fff; color:#111; border-radius:999px; box-shadow:0 10px 30px rgba(0,0,0,.5);
+    font-weight:650; font-size:13px;
+  }
+  #switcher button{width:30px;height:30px;border-radius:999px;font-size:15px;color:#111}
+  #switcher button:hover{background:#eee}
+  #switcher .lbl{padding:0 12px; white-space:nowrap}
+
+  /* ================= VARIANTE A ================= */
+  .A{display:flex; height:100%}
+  .A .rail{width:216px; padding:24px 18px; background:#0C0813; border-right:1px solid var(--line);
+           display:flex; flex-direction:column; gap:4px}
+  .A .rail .marca{font-size:17px; font-weight:750; margin-bottom:18px}
+  .A .rail .paso{display:flex; gap:10px; align-items:center; padding:9px 10px; border-radius:9px;
+                 font-size:13px; color:var(--muted)}
+  .A .rail .paso .n{width:20px;height:20px;border-radius:99px;background:rgba(245,243,255,.08);
+                    display:grid;place-items:center;font-size:11px;font-weight:700}
+  .A .rail .paso.act{background:rgba(139,92,246,.14); color:var(--ink)}
+  .A .rail .paso.act .n{background:var(--violet); color:#fff}
+  .A .rail .paso.hecho .n{background:rgba(52,211,153,.2); color:var(--green)}
+  .A .cuerpo{flex:1; display:flex; flex-direction:column; min-width:0}
+  .A .cabecera{padding:26px 30px 12px}
+  .A .contenido{flex:1; overflow:auto; padding:6px 30px 20px}
+  .A .pie{padding:14px 30px; border-top:1px solid var(--line); display:flex; justify-content:space-between; align-items:center}
+  .A .rejilla{display:grid; grid-template-columns:repeat(3,1fr); gap:14px}
+  .A .tarj{
+    background:var(--surface-hi); border:1px solid var(--line); border-radius:14px; padding:14px;
+    display:flex; flex-direction:column; gap:10px; min-height:250px; cursor:pointer;
+  }
+  .A .tarj:hover{border-color:rgba(245,243,255,.22)}
+  .A .tarj.sel{border-color:var(--violet); box-shadow:0 0 0 1px var(--violet) inset}
+  .A .tarj .met{display:flex; align-items:center; gap:8px; font-size:11px; color:var(--muted)}
+  .A .tarj .met .barra{flex:1}
+  .A .tarj .met b{width:34px; text-align:right; color:var(--ink); font-variant-numeric:tabular-nums}
+
+  /* ================= VARIANTE B ================= */
+  .B{display:flex; flex-direction:column; height:100%}
+  .B .prog{height:3px; background:rgba(245,243,255,.07)}
+  .B .prog > i{display:block; height:100%; background:var(--violet); transition:width .4s}
+  .B .lienzo{flex:1; display:flex; flex-direction:column; justify-content:center;
+             padding:0 96px; gap:22px; overflow:auto}
+  .B h2{font-size:30px; line-height:1.15}
+  .B .sub{font-size:15px; max-width:52ch}
+  .B .opcion{
+    display:flex; gap:14px; align-items:flex-start; padding:16px 18px; border-radius:12px;
+    border:1px solid var(--line); background:var(--surface-hi); cursor:pointer;
+  }
+  .B .opcion.sel{border-color:var(--violet); background:rgba(139,92,246,.10)}
+  .B .opcion .radio{width:18px;height:18px;border-radius:99px;border:2px solid var(--muted);margin-top:2px;flex:none}
+  .B .opcion.sel .radio{border-color:var(--violet); background:radial-gradient(circle,var(--violet) 45%,transparent 47%)}
+  .B .opcion .tit{font-weight:650; display:flex; gap:8px; align-items:center}
+  .B .avanzado{border-top:1px dashed var(--line); padding-top:14px}
+  .B .pie{padding:18px 96px 26px; display:flex; justify-content:space-between; align-items:center}
+
+  /* ================= VARIANTE C ================= */
+  .C{display:flex; flex-direction:column; height:100%}
+  .C .top{padding:22px 30px 14px; border-bottom:1px solid var(--line); display:flex;
+          justify-content:space-between; align-items:flex-end}
+  .C .lista{flex:1; overflow:auto; padding:8px 30px 24px}
+  .C .bloque{border-bottom:1px solid var(--line); padding:18px 0; display:grid;
+             grid-template-columns:32px 1fr; gap:14px}
+  .C .bloque .tick{width:24px;height:24px;border-radius:99px;border:2px solid var(--line);
+                   display:grid;place-items:center;font-size:12px;color:var(--muted)}
+  .C .bloque.ok .tick{background:rgba(52,211,153,.16); border-color:transparent; color:var(--green)}
+  .C .bloque .tit{font-weight:650; display:flex; gap:10px; align-items:center; margin-bottom:3px}
+  .C .mando{display:flex; align-items:center; gap:12px; margin:14px 0 10px; font-size:12.5px}
+  .C input[type=range]{flex:1; accent-color:var(--violet)}
+  .C .fila{display:flex; align-items:center; gap:12px; padding:11px 13px; border-radius:11px;
+           border:1px solid var(--line); background:var(--surface-hi); margin-bottom:8px; cursor:pointer}
+  .C .fila.sel{border-color:var(--violet); background:rgba(139,92,246,.10)}
+  .C .fila .nom{flex:1; min-width:0}
+  .C .fila .medida{width:150px; display:flex; flex-direction:column; gap:4px}
+  .C .pie{padding:14px 30px; border-top:1px solid var(--line); display:flex; justify-content:space-between; align-items:center}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<div id="switcher">
+  <button id="prev" title="Anterior (←)">‹</button>
+  <span class="lbl" id="lbl"></span>
+  <button id="next" title="Siguiente (→)">›</button>
+</div>
+
+<script>
+// ---------------------------------------------------------------- datos falsos
+const MOTORES = [
+  { id:'parakeet3', nom:'Parakeet TDT v3', insignia:'Recomendado',
+    idiomas:'25 idiomas · español nativo', mb:498, vel:1.00, pre:0.92,
+    etqVel:'Instantáneo', etqPre:'Alta',
+    nota:'El que Pronto trae hoy. Multilingüe y el más rápido en CPU.' },
+  { id:'whisper-s', nom:'Whisper small', insignia:null,
+    idiomas:'99 idiomas', mb:466, vel:0.60, pre:0.70,
+    etqVel:'Medio', etqPre:'Media',
+    nota:'Solo si necesitas un idioma que Parakeet no cubre.' },
+  { id:'whisper-l', nom:'Whisper large-v3', insignia:'Lento',
+    idiomas:'99 idiomas', mb:2900, vel:0.20, pre:1.00,
+    etqVel:'Lento', etqPre:'Muy alta',
+    nota:'Precisión máxima, pero cada dictado tarda segundos. Solo con GPU.' },
+];
+const IDIOMAS = [
+  {id:'es', nom:'Español', sub:'Castellano · el tuyo'},
+  {id:'auto', nom:'Detección automática', sub:'Cambia solo entre español e inglés'},
+  {id:'en', nom:'English', sub:'Only English'},
+];
+const FORMATEOS = [
+  {id:'no', nom:'Sin Formateo', sub:'El texto sale tal cual lo oye el motor. Cero espera, cero coste.',
+   chip:'De fábrica'},
+  {id:'local', nom:'Local, en tu equipo', sub:'Un modelo pequeño arregla tildes, comas y muletillas. No sale nada del PC. ~1,2 GB.',
+   chip:'Privado'},
+  {id:'nube', nom:'Nube, con tu clave', sub:'La mejor calidad. Sale el TEXTO, nunca el audio. Con tope de gasto.',
+   chip:'Requiere clave', warn:true},
+];
+
+// estado en memoria, nada persiste
+const _q = new URLSearchParams(location.search);
+let S = {
+  paso:+(_q.get('paso')||0), idioma:'es', motor:'parakeet3', formateo:_q.get('formateo')||'no',
+  descargados:(_q.get('listo')?{parakeet3:true}:{}), descargando:null, progreso:0,
+  permisos:{mic:false, inyeccion:false},
+  prueba:'', preferencia:50, abiertoAvanzado:false,
+};
+const PASOS = ['Bienvenida','Idioma','Motor de voz','Permisos','Prueba','Formateo'];
+
+function mb(n){ return n>=1000 ? (n/1000).toFixed(1).replace('.',',')+' GB' : n+' MB'; }
+function motor(id){ return MOTORES.find(m=>m.id===id); }
+function listo(){ return S.descargados[S.motor]; }
+
+// simulación de descarga
+let temporizador=null;
+function descargar(id){
+  if(S.descargando) return;
+  S.descargando=id; S.progreso=0; pinta();
+  temporizador=setInterval(()=>{
+    S.progreso += 4 + Math.random()*7;
+    if(S.progreso>=100){ clearInterval(temporizador); S.descargados[id]=true; S.descargando=null; S.progreso=0; }
+    pinta();
+  },110);
+}
+function cancelar(){ clearInterval(temporizador); S.descargando=null; S.progreso=0; pinta(); }
+
+// ---------------------------------------------------------------- VARIANTE A
+function variantA(){
+  const m = motor(S.motor);
+  const rail = PASOS.map((p,i)=>`
+    <div class="paso ${i===S.paso?'act':''} ${i<S.paso?'hecho':''}" data-ir="${i}">
+      <span class="n">${i<S.paso?'✓':i+1}</span>${p}
+    </div>`).join('');
+
+  let contenido='', titulo='', sub='';
+  if(S.paso===0){
+    titulo='Pronto'; sub='Dictado de voz que ocurre en tu equipo. Tres minutos y está.';
+    contenido=`<div style="display:grid;gap:12px;max-width:520px;margin-top:18px">
+      ${[['🎙️','Mantén pulsado un atajo, habla, suelta.'],
+         ['🔒','El audio no sale de este PC.'],
+         ['⚡','El texto aparece en la app que tengas delante.']]
+        .map(([e,t])=>`<div style="display:flex;gap:12px;align-items:center;background:var(--surface-hi);border:1px solid var(--line);border-radius:12px;padding:14px 16px">
+            <span style="font-size:20px">${e}</span><span>${t}</span></div>`).join('')}
+    </div>`;
+  }
+  if(S.paso===1){
+    titulo='¿En qué idioma dictas?'; sub='Se puede cambiar por Modo más adelante.';
+    contenido=`<div style="display:grid;gap:10px;max-width:520px">${IDIOMAS.map(i=>`
+      <div class="opcion-a" data-idioma="${i.id}" style="display:flex;gap:12px;padding:14px 16px;border-radius:12px;border:1px solid ${S.idioma===i.id?'var(--violet)':'var(--line)'};background:${S.idioma===i.id?'rgba(139,92,246,.10)':'var(--surface-hi)'};cursor:pointer">
+        <div><div style="font-weight:650">${i.nom}</div><div class="mut" style="font-size:12.5px">${i.sub}</div></div>
+      </div>`).join('')}</div>`;
+  }
+  if(S.paso===2){
+    titulo='Elige el Motor de voz'; sub='Se descarga una vez y luego funciona sin internet.';
+    contenido=`<div class="rejilla">${MOTORES.map(x=>{
+      const bajando = S.descargando===x.id, hay = S.descargados[x.id];
+      return `<div class="tarj ${S.motor===x.id?'sel':''}" data-motor="${x.id}">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px">
+          <div style="font-weight:700;font-size:15px">${x.nom}</div>
+          ${x.insignia?`<span class="chip ${x.insignia==='Lento'?'warn':''}">${x.insignia}</span>`:''}
+        </div>
+        <div class="mut" style="font-size:12px">${x.idiomas}<br>${mb(x.mb)}</div>
+        <div style="display:grid;gap:8px;margin-top:2px">
+          <div class="met">⚡<div class="barra"><i class="rell-vel" style="width:${x.vel*100}%"></i></div><b>${Math.round(x.vel*100)}%</b></div>
+          <div class="met">🎯<div class="barra"><i class="rell-pre" style="width:${x.pre*100}%"></i></div><b>${Math.round(x.pre*100)}%</b></div>
+        </div>
+        <div class="mut" style="font-size:11.5px;flex:1">${x.nota}</div>
+        ${bajando
+          ? `<div><div class="barra" style="margin-bottom:6px"><i class="rell-dl" style="width:${S.progreso}%"></i></div>
+             <div style="display:flex;justify-content:space-between;font-size:11.5px" class="mut">
+               <span>${Math.round(S.progreso)}% · ${mb(Math.round(x.mb*S.progreso/100))}</span>
+               <button data-cancelar="1" style="color:var(--violet-soft);font-size:11.5px">Cancelar</button></div></div>`
+          : hay
+            ? `<div style="display:flex;gap:8px"><span class="chip ok" style="flex:1;text-align:center;padding:7px">✓ Instalado</span>
+               <button class="btn ghost sm" data-borrar="${x.id}">Borrar</button></div>`
+            : `<button class="btn sm" data-descargar="${x.id}" style="width:100%">Descargar y activar</button>`}
+      </div>`;}).join('')}</div>
+      <p class="mut" style="font-size:11.5px;margin-top:14px">
+        ⚠️ Estos porcentajes son los de FluidVoice, copiados tal cual. <b>Están escritos a mano en su
+        código, sin corpus ni medición.</b> Si esta variante gana, hay que medirlos o quitarlos.</p>`;
+  }
+  if(S.paso===3){
+    titulo='Dos permisos y ya'; sub='Sin esto Pronto no puede oírte ni escribir por ti.';
+    contenido=`<div style="display:grid;gap:12px;max-width:560px">
+      ${[['mic','🎤','Micrófono','Windows te preguntará una vez.'],
+         ['inyeccion','⌨️','Escribir en otras apps','Para que el texto caiga donde tienes el cursor.']]
+        .map(([k,e,t,d])=>`
+        <div style="display:flex;gap:14px;align-items:center;background:var(--surface-hi);border:1px solid var(--line);border-radius:12px;padding:16px">
+          <span style="font-size:20px">${e}</span>
+          <div style="flex:1"><div style="font-weight:650">${t}</div><div class="mut" style="font-size:12.5px">${d}</div></div>
+          ${S.permisos[k]?'<span class="chip ok">✓ Concedido</span>':`<button class="btn sm" data-permiso="${k}">Conceder</button>`}
+        </div>`).join('')}</div>`;
+  }
+  if(S.paso===4){
+    titulo='Pruébalo aquí mismo'; sub='Mantén pulsado Ctrl + Espacio y di algo. Esto no se guarda.';
+    contenido=`<div style="max-width:600px">
+      <div style="background:var(--surface-hi);border:1px solid var(--line);border-radius:12px;padding:18px;min-height:150px">
+        <div class="mut" style="font-size:12px;margin-bottom:10px">Píldora simulada</div>
+        <div id="pruebaCaja" style="font-size:15px;min-height:60px">${S.prueba||'<span class="mut">Aquí saldrá lo que digas…</span>'}</div>
+      </div>
+      <button class="btn" id="simular" style="margin-top:14px">▶ Simular un dictado</button></div>`;
+  }
+  if(S.paso===5){
+    titulo='¿Quieres que Pronto te arregle el texto?'; sub='Se puede cambiar por Modo. De fábrica va apagado.';
+    contenido=`<div style="display:grid;gap:10px;max-width:560px">${FORMATEOS.map(f=>`
+      <div class="opcion-a" data-formateo="${f.id}" style="display:flex;gap:12px;padding:15px 16px;border-radius:12px;border:1px solid ${S.formateo===f.id?'var(--violet)':'var(--line)'};background:${S.formateo===f.id?'rgba(139,92,246,.10)':'var(--surface-hi)'};cursor:pointer">
+        <div style="flex:1"><div style="font-weight:650;display:flex;gap:8px;align-items:center">${f.nom}
+          <span class="chip ${f.warn?'warn':''}">${f.chip}</span></div>
+          <div class="mut" style="font-size:12.5px">${f.sub}</div></div>
+      </div>`).join('')}</div>`;
+  }
+
+  const puedeSeguir = S.paso!==2 || listo();
+  return `<div class="ventana"><div class="A">
+    <div class="rail"><div class="marca">Pronto</div>${rail}</div>
+    <div class="cuerpo">
+      <div class="cabecera"><h2 style="font-size:22px">${titulo}</h2><div class="mut">${sub}</div></div>
+      <div class="contenido">${contenido}</div>
+      <div class="pie">
+        <button class="btn ghost sm" data-ir="${Math.max(0,S.paso-1)}" ${S.paso===0?'disabled':''}>Atrás</button>
+        <div style="display:flex;gap:10px;align-items:center">
+          ${S.paso===2&&!listo()?'<span class="mut" style="font-size:12px">Descarga un motor para seguir</span>':''}
+          <button class="btn" data-ir="${S.paso+1}" ${!puedeSeguir||S.paso===5?'disabled':''}>Siguiente</button>
+          ${S.paso===5?'<button class="btn" data-fin="1">Empezar a dictar</button>':''}
+        </div>
+      </div>
+    </div></div></div>`;
+}
+
+// ---------------------------------------------------------------- VARIANTE B
+function variantB(){
+  const m = motor(S.motor);
+  let h='', pie='';
+  const av = MOTORES.filter(x=>x.id!=='parakeet3');
+
+  if(S.paso===0){
+    h=`<h2>Hola. Soy Pronto.</h2>
+       <p class="sub mut">Mantienes pulsada una tecla, hablas, y el texto aparece donde estés escribiendo.
+       Todo pasa en este PC. Te hago tres preguntas y ya está.</p>`;
+  }
+  if(S.paso===1){
+    h=`<h2>¿En qué idioma hablas?</h2>
+       <p class="sub mut">Es lo único que cambia qué motor te recomiendo.</p>
+       <div style="display:grid;gap:10px;max-width:520px">${IDIOMAS.map(i=>`
+         <div class="opcion ${S.idioma===i.id?'sel':''}" data-idioma="${i.id}">
+           <span class="radio"></span>
+           <div><div class="tit">${i.nom}</div><div class="mut" style="font-size:12.5px">${i.sub}</div></div>
+         </div>`).join('')}</div>`;
+  }
+  if(S.paso===2){
+    const bajando=S.descargando==='parakeet3', hay=S.descargados.parakeet3;
+    h=`<h2>Para español, este.</h2>
+       <p class="sub mut">Parakeet TDT v3 · ${mb(498)} · 25 idiomas. Es el que usamos nosotros a diario:
+       el texto empieza a salir antes de que termines la frase.</p>
+       <div class="opcion sel" style="max-width:520px">
+         <span class="radio"></span>
+         <div style="flex:1">
+           <div class="tit">Parakeet TDT v3 <span class="chip">Recomendado</span></div>
+           <div class="mut" style="font-size:12.5px;margin:6px 0 10px">
+             Velocidad: <b style="color:var(--ink)">instantánea</b> ·
+             Precisión: <b style="color:var(--ink)">alta</b> en español
+           </div>
+           ${bajando
+             ? `<div class="barra"><i class="rell-dl" style="width:${S.progreso}%"></i></div>
+                <div class="mut" style="font-size:11.5px;margin-top:6px">Bajando ${Math.round(S.progreso)}% ·
+                <button data-cancelar="1" style="color:var(--violet-soft);font-size:11.5px">cancelar</button></div>`
+             : hay ? `<span class="chip ok">✓ Listo para dictar</span>`
+                   : `<button class="btn sm" data-descargar="parakeet3">Descargar (${mb(498)})</button>`}
+         </div>
+       </div>
+       <div class="avanzado">
+         <button id="togAv" class="mut" style="font-size:13px">${S.abiertoAvanzado?'▾':'▸'} Tengo otras necesidades (${av.length} motores más)</button>
+         <div class="${S.abiertoAvanzado?'':'oculto'}" style="display:grid;gap:8px;margin-top:12px;max-width:520px">
+           ${av.map(x=>`<div class="opcion ${S.motor===x.id?'sel':''}" data-motor="${x.id}" style="padding:12px 14px">
+             <span class="radio"></span>
+             <div style="flex:1"><div class="tit" style="font-size:13.5px">${x.nom}
+               <span class="mut" style="font-weight:400;font-size:12px">· ${mb(x.mb)} · ${x.idiomas}</span></div>
+               <div class="mut" style="font-size:12px">${x.etqVel} · precisión ${x.etqPre.toLowerCase()} — ${x.nota}</div></div>
+             ${S.descargados[x.id]?'<span class="chip ok">✓</span>':`<button class="btn ghost sm" data-descargar="${x.id}">Bajar</button>`}
+           </div>`).join('')}
+           <p class="mut" style="font-size:11.5px">Sin porcentajes a propósito: no hemos medido el WER de estos
+           motores en español. Cuando lo midamos, aquí irá el número con su fecha y su corpus.</p>
+         </div>
+       </div>`;
+  }
+  if(S.paso===3){
+    h=`<h2>Necesito dos cosas de Windows.</h2>
+       <p class="sub mut">Ninguna manda nada fuera del PC.</p>
+       <div style="display:grid;gap:10px;max-width:520px">
+       ${[['mic','Oírte','Acceso al micrófono. Se pide una vez.'],
+          ['inyeccion','Escribir por ti','Poner el texto en la app que tenga el cursor.']]
+         .map(([k,t,d])=>`<div class="opcion ${S.permisos[k]?'sel':''}">
+            <span class="radio"></span>
+            <div style="flex:1"><div class="tit">${t}</div><div class="mut" style="font-size:12.5px">${d}</div></div>
+            ${S.permisos[k]?'<span class="chip ok">✓</span>':`<button class="btn sm" data-permiso="${k}">Conceder</button>`}
+          </div>`).join('')}</div>`;
+  }
+  if(S.paso===4){
+    h=`<h2>Dilo tú.</h2>
+       <p class="sub mut">Mantén <b style="color:var(--ink)">Ctrl + Espacio</b> y habla. No se guarda nada de esta prueba.</p>
+       <div style="max-width:560px;background:var(--surface-hi);border:1px solid var(--line);border-radius:14px;padding:22px;min-height:130px">
+         <div id="pruebaCaja" style="font-size:16px">${S.prueba||'<span class="mut">…</span>'}</div>
+       </div>
+       <button class="btn" id="simular" style="width:max-content">▶ Simular</button>`;
+  }
+  if(S.paso===5){
+    h=`<h2>¿Te arreglo el texto?</h2>
+       <p class="sub mut">Pronto puede pasarle tu dictado a un modelo que le pone tildes y comas.
+       Empieza apagado; lo enciendes cuando quieras.</p>
+       <div style="display:grid;gap:10px;max-width:560px">${FORMATEOS.map(f=>`
+         <div class="opcion ${S.formateo===f.id?'sel':''}" data-formateo="${f.id}">
+           <span class="radio"></span>
+           <div style="flex:1"><div class="tit">${f.nom} <span class="chip ${f.warn?'warn':''}">${f.chip}</span></div>
+           <div class="mut" style="font-size:12.5px">${f.sub}</div></div>
+         </div>`).join('')}</div>`;
+  }
+
+  const puedeSeguir = S.paso!==2 || listo();
+  return `<div class="ventana"><div class="B">
+    <div class="prog"><i style="width:${(S.paso/(PASOS.length-1))*100}%"></i></div>
+    <div class="lienzo">${h}</div>
+    <div class="pie">
+      <button class="mut" data-ir="${Math.max(0,S.paso-1)}" style="font-size:13px" ${S.paso===0?'disabled':''}>← Atrás</button>
+      ${S.paso===5
+        ? '<button class="btn" data-fin="1">Listo, a dictar</button>'
+        : `<button class="btn" data-ir="${S.paso+1}" ${puedeSeguir?'':'disabled'}>Continuar →</button>`}
+    </div></div></div>`;
+}
+
+// ---------------------------------------------------------------- VARIANTE C
+function variantC(){
+  const p = S.preferencia/100;               // 0 = velocidad, 1 = precisión
+  const punt = x => (1-p)*x.vel + p*x.pre;
+  const ordenados = [...MOTORES].sort((a,b)=>punt(b)-punt(a));
+  const hechos = [S.idioma?1:0, listo()?1:0, (S.permisos.mic&&S.permisos.inyeccion)?1:0, S.prueba?1:0, 1]
+                 .reduce((a,b)=>a+b,0);
+
+  const bloque = (ok,tit,chip,cuerpo)=>`
+    <div class="bloque ${ok?'ok':''}">
+      <div class="tick">${ok?'✓':''}</div>
+      <div><div class="tit">${tit} ${chip?`<span class="chip">${chip}</span>`:''}</div>${cuerpo}</div>
+    </div>`;
+
+  return `<div class="ventana"><div class="C">
+    <div class="top">
+      <div><h2 style="font-size:20px">Poner Pronto en marcha</h2>
+        <div class="mut" style="font-size:12.5px">Todo en una pantalla. Puedes hacerlo en el orden que quieras.</div></div>
+      <div class="mut" style="font-size:12.5px">${hechos} de 5</div>
+    </div>
+    <div class="lista">
+
+      ${bloque(true,'Idioma','', `
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${IDIOMAS.map(i=>`
+          <button class="btn ${S.idioma===i.id?'':'ghost'} sm" data-idioma="${i.id}">${i.nom}</button>`).join('')}</div>`)}
+
+      ${bloque(!!listo(),'Motor de voz', listo()?'':'pendiente', `
+        <div class="mut" style="font-size:12.5px">Ordena la lista según lo que te importe. La descarga es de una vez.</div>
+        <div class="mando">
+          <span>⚡ Rapidez</span>
+          <input type="range" id="pref" min="0" max="100" value="${S.preferencia}">
+          <span>🎯 Precisión</span>
+        </div>
+        ${ordenados.map((x,idx)=>{
+          const bajando=S.descargando===x.id, hay=S.descargados[x.id];
+          return `<div class="fila ${S.motor===x.id?'sel':''}" data-motor="${x.id}">
+            <span class="mut" style="width:14px">${idx+1}</span>
+            <div class="nom"><div style="font-weight:650">${x.nom}
+              ${idx===0?'<span class="chip">mejor encaje</span>':''}</div>
+              <div class="mut" style="font-size:12px">${x.idiomas} · ${mb(x.mb)}</div></div>
+            <div class="medida">
+              <div style="display:flex;gap:6px;align-items:center;font-size:11px" class="mut">⚡
+                <div class="barra" style="flex:1"><i class="rell-vel" style="width:${x.vel*100}%"></i></div></div>
+              <div style="display:flex;gap:6px;align-items:center;font-size:11px" class="mut">🎯
+                <div class="barra" style="flex:1"><i class="rell-pre" style="width:${x.pre*100}%"></i></div></div>
+            </div>
+            ${bajando
+              ? `<div style="width:110px"><div class="barra"><i class="rell-dl" style="width:${S.progreso}%"></i></div>
+                 <div class="mut" style="font-size:11px;margin-top:4px">${Math.round(S.progreso)}%
+                 <button data-cancelar="1" style="color:var(--violet-soft);font-size:11px">✕</button></div></div>`
+              : hay ? '<span class="chip ok">✓ instalado</span>'
+                    : `<button class="btn sm" data-descargar="${x.id}">Descargar</button>`}
+          </div>`;}).join('')}
+        <p class="mut" style="font-size:11.5px;margin:2px 0 0">Las barras no llevan número porque todavía no
+        hemos medido el WER en español. El orden sí es real: sale de tu mando.</p>`)}
+
+      ${bloque(S.permisos.mic&&S.permisos.inyeccion,'Permisos de Windows','', `
+        <div style="display:flex;gap:10px;margin-top:8px">
+          ${[['mic','🎤 Micrófono'],['inyeccion','⌨️ Escribir en otras apps']].map(([k,t])=>
+            S.permisos[k] ? `<span class="chip ok">✓ ${t}</span>`
+                          : `<button class="btn ghost sm" data-permiso="${k}">${t}</button>`).join('')}
+        </div>`)}
+
+      ${bloque(!!S.prueba,'Prueba un dictado','opcional', `
+        <div class="mut" style="font-size:12.5px">Ctrl + Espacio, habla, suelta.</div>
+        <div style="background:var(--surface-hi);border:1px solid var(--line);border-radius:11px;padding:14px;margin-top:8px;min-height:56px">
+          <span id="pruebaCaja">${S.prueba||'<span class="mut">…</span>'}</span></div>
+        <button class="btn ghost sm" id="simular" style="margin-top:8px">▶ Simular</button>`)}
+
+      ${bloque(S.formateo!=='no','Formateo con IA','apagado de fábrica', `
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">${FORMATEOS.map(f=>`
+          <button class="btn ${S.formateo===f.id?'':'ghost'} sm" data-formateo="${f.id}">${f.nom}</button>`).join('')}</div>
+        <div class="mut" style="font-size:12px;margin-top:8px">${FORMATEOS.find(f=>f.id===S.formateo).sub}</div>`)}
+
+    </div>
+    <div class="pie">
+      <span class="mut" style="font-size:12px">${listo()?'Todo lo imprescindible está hecho.':'Falta descargar un Motor de voz.'}</span>
+      <button class="btn" data-fin="1" ${listo()?'':'disabled'}>Empezar a dictar</button>
+    </div></div></div>`;
+}
+
+// ---------------------------------------------------------------- switcher
+const VARIANTES = [
+  ['A','Asistente con rejilla y % (calco de FluidVoice)', variantA],
+  ['B','Una pregunta por pantalla, sin números inventados', variantB],
+  ['C','Hoja única con mando rapidez↔precisión', variantC],
+];
+function claveVariante(){
+  const v = (new URLSearchParams(location.search).get('variant')||'A').toUpperCase();
+  return VARIANTES.some(x=>x[0]===v) ? v : 'A';
+}
+function irVariante(k){
+  const u = new URL(location); u.searchParams.set('variant',k);
+  history.replaceState({},'',u); S.paso=0; pinta();
+}
+
+function pinta(){
+  const k = claveVariante();
+  const v = VARIANTES.find(x=>x[0]===k);
+  document.getElementById('app').innerHTML = v[2]();
+  document.getElementById('lbl').textContent = `${k} — ${v[1]}`;
+}
+
+document.addEventListener('click', e=>{
+  const t = e.target.closest('[data-ir],[data-motor],[data-idioma],[data-formateo],[data-descargar],[data-borrar],[data-cancelar],[data-permiso],[data-fin],#simular,#togAv,#prev,#next');
+  if(!t) return;
+  const d = t.dataset;
+  if(t.id==='prev'||t.id==='next'){
+    const k=claveVariante(); const i=VARIANTES.findIndex(x=>x[0]===k);
+    const n=(i+(t.id==='next'?1:-1)+VARIANTES.length)%VARIANTES.length;
+    return irVariante(VARIANTES[n][0]);
+  }
+  if(d.descargar) return descargar(d.descargar);
+  if(d.cancelar)  return cancelar();
+  if(d.borrar){ delete S.descargados[d.borrar]; return pinta(); }
+  if(d.permiso){ S.permisos[d.permiso]=true; return pinta(); }
+  if(d.idioma){ S.idioma=d.idioma; return pinta(); }
+  if(d.formateo){ S.formateo=d.formateo; return pinta(); }
+  if(d.motor){ S.motor=d.motor; return pinta(); }
+  if(d.ir!==undefined){ S.paso=Math.max(0,Math.min(PASOS.length-1,+d.ir)); return pinta(); }
+  if(d.fin){ alert('Fin del asistente (prototipo).\n\nIdioma: '+S.idioma+'\nMotor: '+S.motor+'\nFormateo: '+S.formateo); return; }
+  if(t.id==='togAv'){ S.abiertoAvanzado=!S.abiertoAvanzado; return pinta(); }
+  if(t.id==='simular'){
+    const frase='Prueba de dictado en Pronto, a ver qué tal escribe esto.';
+    S.prueba=''; pinta();
+    let i=0; const id=setInterval(()=>{
+      S.prueba=frase.slice(0,++i);
+      const c=document.getElementById('pruebaCaja'); if(c) c.textContent=S.prueba;
+      if(i>=frase.length){ clearInterval(id); pinta(); }
+    },28);
+  }
+});
+
+document.addEventListener('keydown', e=>{
+  if(/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
+  if(e.key!=='ArrowLeft'&&e.key!=='ArrowRight') return;
+  const k=claveVariante(); const i=VARIANTES.findIndex(x=>x[0]===k);
+  const n=(i+(e.key==='ArrowRight'?1:-1)+VARIANTES.length)%VARIANTES.length;
+  irVariante(VARIANTES[n][0]);
+});
+
+document.addEventListener('input', e=>{
+  if(e.target.id==='pref'){ S.preferencia=+e.target.value; pinta();
+    const el=document.getElementById('pref'); if(el){ el.focus(); } }
+});
+
+pinta();
+</script>
+</body>
+</html>

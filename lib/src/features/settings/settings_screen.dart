@@ -11,6 +11,10 @@ import '../../platform/audio_capture.dart';
 import '../../platform/global_hotkey_service.dart';
 import '../../platform/platform_services.dart';
 import '../../platform/text_injector.dart';
+import '../formatting/cloud_budget_provider.dart';
+import '../formatting/cloud_cost.dart';
+import '../formatting/cloud_key.dart';
+import '../formatting/text_formatter.dart';
 import '../translation/language_detect.dart';
 import '../translation/translator.dart';
 import '../update/update_controller.dart';
@@ -215,29 +219,54 @@ class SettingsScreen extends ConsumerWidget {
 
           const Divider(height: 24),
 
-          // --- Post-corrección LLM ---
-          _SectionHeader('Post-corrección LLM (opcional)', theme: theme),
+          // --- Formateo del dictado ---
+          _SectionHeader('Formateo del dictado (opcional)', theme: theme),
 
-          SwitchListTile(
-            title: const Text('Activar post-corrección LLM'),
+          // Los tres caminos del ticket PRNT-1. La nube es el único que saca
+          // algo del equipo, y solo el TEXTO ya transcrito: nunca el audio.
+          ListTile(
+            title: const Text('Camino de formateo'),
             subtitle: const Text(
-              'Mejora el texto con un modelo de lenguaje local o en la nube',
+              'Sin formateo pega tal cual y es instantáneo. Local arregla '
+              'puntuación, muletillas, mayúsculas y tildes sin salir del '
+              'equipo, a cambio de algo de espera. Nube manda el texto '
+              'dictado a un proveedor con tu clave: es el que mejor escribe '
+              'en español, y el único que sale de tu ordenador',
             ),
-            value: settings.llmEnabled,
-            onChanged: controller.setLlmEnabled,
+            trailing: DropdownButton<FormatPath>(
+              key: const ValueKey('formatPath'),
+              value: settings.formatPath,
+              onChanged: (value) {
+                if (value != null) controller.setFormatPath(value);
+              },
+              items: const [
+                DropdownMenuItem(
+                  value: FormatPath.none,
+                  child: Text('Sin formateo'),
+                ),
+                DropdownMenuItem(
+                  value: FormatPath.local,
+                  child: Text('Local (Ollama)'),
+                ),
+                DropdownMenuItem(
+                  value: FormatPath.cloud,
+                  child: Text('Nube (OpenRouter)'),
+                ),
+              ],
+            ),
           ),
 
-          // Campos de configuración del LLM (solo activos si está habilitado).
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
             child: _LlmTextField(
               key: const ValueKey('llmBaseUrl'),
-              label: 'URL base (servidor LLM, también para traducir)',
+              label: 'URL base (servidor local, también para traducir)',
               hint: 'http://localhost:11434',
               initialValue: settings.llmBaseUrl,
               // La traducción usa el MISMO servidor: si está activada, hay que
-              // poder editar la URL aunque la post-corrección esté apagada.
-              enabled: settings.llmEnabled || settings.translationEnabled,
+              // poder editar la URL aunque el formateo esté apagado.
+              enabled: settings.formatPath != FormatPath.none ||
+                  settings.translationEnabled,
               keyboardType: TextInputType.url,
               onSubmitted: controller.setLlmBaseUrl,
             ),
@@ -245,14 +274,16 @@ class SettingsScreen extends ConsumerWidget {
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
             child: _LlmTextField(
-              key: const ValueKey('llmModel'),
-              label: 'Modelo',
-              hint: 'qwen3:4b',
-              initialValue: settings.llmModel,
-              enabled: settings.llmEnabled,
-              onSubmitted: controller.setLlmModel,
+              key: const ValueKey('formatModel'),
+              label: 'Modelo de formateo',
+              hint: AppConfig.defaultFormatLocalModel,
+              initialValue: settings.formatModel,
+              enabled: settings.formatPath == FormatPath.local,
+              onSubmitted: controller.setFormatModel,
             ),
           ),
+
+          if (settings.formatPath == FormatPath.cloud) const _CloudTiles(),
 
           const Divider(height: 24),
 
@@ -844,6 +875,308 @@ class _WhisperModelTileState extends ConsumerState<_WhisperModelTile> {
         _error ?? 'Whisper no viene incluido; descárgalo para poder usarlo.',
       ),
       onTap: _download,
+    );
+  }
+}
+
+/// Todo lo de la nube: el aviso de que el texto sale del equipo, la clave, el
+/// modelo, los topes de gasto y lo que llevas gastado.
+///
+/// Solo se dibuja cuando el camino elegido es la nube: un panel de topes de
+/// gasto visible con la nube apagada haría creer que hay algo saliendo.
+class _CloudTiles extends ConsumerWidget {
+  const _CloudTiles();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final settings = ref.watch(settingsProvider);
+    final controller = ref.read(settingsProvider.notifier);
+    final gasto = ref.watch(cloudSpendProvider);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+          child: Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: const Color(0xFFFF9500), width: 1.5),
+            ),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Icon(
+                  Icons.cloud_upload_rounded,
+                  color: Color(0xFFFF9500),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Con este camino, el TEXTO de cada dictado sale de tu '
+                    'equipo hacia OpenRouter para formatearlo. Tu voz no sale '
+                    'nunca: el audio se transcribe aquí y no se manda a ningún '
+                    'sitio. La clave es tuya, la pagas tú y se guarda en el '
+                    'Administrador de credenciales de Windows. Mientras dura '
+                    'el envío, la Píldora se pone naranja y dice «Saliendo del '
+                    'equipo».',
+                    style: theme.textTheme.bodySmall,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const _CloudKeyField(),
+        ListTile(
+          title: const Text('Modelo de nube'),
+          subtitle: const Text(
+            'Los tres cuestan céntimos al mes con un uso normal',
+          ),
+          trailing: DropdownButton<String>(
+            key: const ValueKey('cloudModel'),
+            value: settings.cloudModel,
+            onChanged: (v) {
+              if (v != null) controller.setCloudModel(v);
+            },
+            items: [
+              for (final modelo in kCloudPrices.keys)
+                DropdownMenuItem(value: modelo, child: Text(modelo)),
+            ],
+          ),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+          child: Row(
+            children: [
+              Expanded(
+                child: _UsdCapField(
+                  key: const ValueKey('cloudDayCapUsd'),
+                  label: 'Tope por día (dólares)',
+                  value: settings.cloudDayCapUsd,
+                  onSubmitted: controller.setCloudDayCapUsd,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: _UsdCapField(
+                  key: const ValueKey('cloudMonthCapUsd'),
+                  label: 'Tope por mes (dólares)',
+                  value: settings.cloudMonthCapUsd,
+                  onSubmitted: controller.setCloudMonthCapUsd,
+                ),
+              ),
+            ],
+          ),
+        ),
+        ListTile(
+          title: const Text('Gasto'),
+          subtitle: Text(
+            'Este mes: ${formatUsd(gasto.monthUsd)} en ${gasto.monthCalls} '
+            'llamadas · Hoy: ${formatUsd(gasto.dayUsd)} en ${gasto.dayCalls}. '
+            'Al llegar al tope, el dictado se pega sin formatear',
+          ),
+          trailing: TextButton(
+            key: const ValueKey('cloudSpendReset'),
+            onPressed: ref.read(cloudSpendProvider.notifier).reset,
+            child: const Text('Poner a cero'),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// La clave del proveedor. Nunca se muestra: la interfaz solo sabe si hay una
+/// guardada, porque el valor vive en el almacén de credenciales de Windows y no
+/// se cachea en ningún estado de la app.
+class _CloudKeyField extends ConsumerStatefulWidget {
+  const _CloudKeyField();
+
+  @override
+  ConsumerState<_CloudKeyField> createState() => _CloudKeyFieldState();
+}
+
+class _CloudKeyFieldState extends ConsumerState<_CloudKeyField> {
+  final TextEditingController _ctrl = TextEditingController();
+
+  /// Qué salió mal al guardar. Windows puede rechazar el secreto (por tamaño,
+  /// o por política) y devolver `false`: decir «guardada» sin haberla guardado
+  /// dejaría al usuario dictando contra una clave que no existe.
+  String? _fallo;
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _guardar() {
+    if (_ctrl.text.trim().isEmpty) return;
+    final ok = ref.read(cloudKeyProvider).save(_ctrl.text);
+    // El campo se vacía SIEMPRE, salga bien o mal: la clave no se queda escrita
+    // en pantalla ni viva dentro de un controlador de texto. Si falló, se pide
+    // que la pegue otra vez, que es más barato que dejarla ahí.
+    _ctrl.clear();
+    setState(() {
+      _fallo = ok
+          ? null
+          : 'No se pudo guardar la clave en el Administrador de credenciales '
+              'de Windows. No hay clave guardada: vuelve a pegarla.';
+    });
+    ref.read(cloudKeyPresenceProvider.notifier).refresh();
+  }
+
+  void _borrar() {
+    final ok = ref.read(cloudKeyProvider).clear();
+    _ctrl.clear();
+    setState(() {
+      _fallo = ok ? null : 'No se pudo borrar la clave guardada.';
+    });
+    ref.read(cloudKeyPresenceProvider.notifier).refresh();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final hayClave = ref.watch(cloudKeyPresenceProvider);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  key: const ValueKey('cloudApiKey'),
+                  controller: _ctrl,
+                  obscureText: true,
+                  autocorrect: false,
+                  enableSuggestions: false,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => _guardar(),
+                  decoration: InputDecoration(
+                    labelText: 'Clave de OpenRouter',
+                    hintText: hayClave
+                        ? 'Hay una clave guardada · escribe otra para cambiarla'
+                        : 'Pega aquí tu clave',
+                    border: const OutlineInputBorder(),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              FilledButton(
+                key: const ValueKey('cloudApiKeySave'),
+                onPressed: _guardar,
+                child: const Text('Guardar'),
+              ),
+              if (hayClave) ...[
+                const SizedBox(width: 8),
+                TextButton(
+                  key: const ValueKey('cloudApiKeyDelete'),
+                  onPressed: _borrar,
+                  child: const Text('Borrar'),
+                ),
+              ],
+            ],
+          ),
+          if (_fallo != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                _fallo!,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.error,
+                    ),
+              ),
+            ),
+          if (!hayClave)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                'Sin clave no sale ni una petición: el dictado se pega sin '
+                'formatear.',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+/// Campo de un tope de gasto en dólares. Acepta coma o punto decimal, como se
+/// escribe en España, y descarta lo que no sea un número.
+class _UsdCapField extends StatefulWidget {
+  final String label;
+  final double value;
+  final ValueChanged<double> onSubmitted;
+
+  const _UsdCapField({
+    super.key,
+    required this.label,
+    required this.value,
+    required this.onSubmitted,
+  });
+
+  @override
+  State<_UsdCapField> createState() => _UsdCapFieldState();
+}
+
+class _UsdCapFieldState extends State<_UsdCapField> {
+  late final TextEditingController _ctrl;
+  late final FocusNode _focus;
+
+  String get _texto => widget.value.toStringAsFixed(2).replaceAll('.', ',');
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: _texto);
+    _focus = FocusNode();
+    _focus.addListener(() {
+      if (!_focus.hasFocus) _commit();
+    });
+  }
+
+  @override
+  void didUpdateWidget(covariant _UsdCapField oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!_focus.hasFocus && _ctrl.text != _texto) _ctrl.text = _texto;
+  }
+
+  void _commit() {
+    final v = parseUsd(_ctrl.text);
+    if (v == null) {
+      // Lo que no es un número no cambia el tope: se devuelve el valor bueno.
+      _ctrl.text = _texto;
+      return;
+    }
+    if (v != widget.value) widget.onSubmitted(v);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focus.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: _ctrl,
+      focusNode: _focus,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      textInputAction: TextInputAction.done,
+      onSubmitted: (_) => _commit(),
+      decoration: InputDecoration(
+        labelText: widget.label,
+        border: const OutlineInputBorder(),
+      ),
     );
   }
 }

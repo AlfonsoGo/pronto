@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>taste 01 — Editorial oscuro</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<!--
+  taste-skill · skills/minimalist-skill  (name: minimalist-ui, MIT, Leonxlnx)
+  "Clean editorial-style interfaces. Typographic contrast, flat, no gradients, no heavy shadows."
+
+  APLICADO de la skill:
+    · Serif editorial para el titular + sans geometrico para UI + mono para metadatos
+    · Prohibidos Inter / Roboto / Open Sans  -> Plus Jakarta Sans
+    · Prohibidos los iconos de linea fina tipo Lucide -> trazo 2.25, estilo Phosphor Bold
+    · Bordes: exactamente 1px. Radios: 8px maximo en tarjeta, 5px en boton
+    · Sombras practicamente inexistentes (< 0.05 de opacidad)  -> aqui: ninguna
+    · Prohibidos degradados, neon, glassmorphism, pill en contenedores grandes
+    · Prohibidos los emoji en cualquier sitio
+    · Macro-espacio en blanco: 32px de aire entre bloques
+    · Etiquetas: mono, mayusculas, tracking 0.08em
+    · <kbd> como teclas fisicas
+    · Entrada escalonada 600ms cubic-bezier(0.16,1,0.3,1), delay 80ms por indice
+
+  OVERRIDE (manda la paleta de Pronto, lib/src/core/theme.dart):
+    · La skill pide lienzo blanco hueso #F7F6F3 y pasteles claros. DESCARTADO.
+      Va el negro violaceo #0B0810 y los mismos pasteles a 12-14% de alfa.
+    · Su CTA es #111 solido sobre blanco -> aqui se invierte: --ink solido sobre el negro.
+      El violeta queda reservado para la seleccion, no para el boton.
+-->
+<style>
+  :root{
+    --violet:#8B5CF6; --violet-soft:#A78BFA; --yellow:#FDE047;
+    --bg:#0B0810; --surface:#0F0B16; --surface-hi:#161021;
+    --ink:#F5F3FF; --muted:#9C93AE; --green:#34D399;
+    --linea:rgba(245,243,255,.08);
+    --f-serif:"Instrument Serif",Georgia,serif;
+    --f-sans:"Plus Jakarta Sans","Segoe UI",system-ui,sans-serif;
+    --f-mono:"JetBrains Mono","Cascadia Mono",Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--ink);font:14.5px/1.6 var(--f-sans);
+       display:flex;align-items:flex-start;justify-content:center;padding:32px 24px 96px}
+  button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+  .mut{color:var(--muted)}
+
+  /* La skill pide macro-espacio: con altura fija de 640 el aire de 32px obliga a un
+     scroll interno que esconde tres de los cinco bloques. La ventana crece y scrollea
+     la pagina, que es como se juzga un estudio de estilo. */
+  .ventana{width:960px;background:var(--surface);border:1px solid var(--linea);
+           border-radius:8px;overflow:hidden;display:flex;flex-direction:column}
+
+  /* barra de titulo: la skill pide "faux-OS window chrome" minimalista */
+  .chrome{height:36px;border-bottom:1px solid var(--linea);display:flex;align-items:center;
+          gap:8px;padding:0 14px;flex:none}
+  .chrome i{width:9px;height:9px;border-radius:99px;background:rgba(245,243,255,.13);display:block}
+  .chrome .nom{margin-left:8px;font:500 10.5px/1 var(--f-mono);letter-spacing:.09em;
+               text-transform:uppercase;color:var(--muted)}
+
+  .top{padding:34px 40px 26px;border-bottom:1px solid var(--linea);display:flex;
+       justify-content:space-between;align-items:flex-end;flex:none}
+  .top h1{margin:0;font:400 42px/1.05 var(--f-serif);letter-spacing:-.02em}
+  .top h1 em{font-style:italic;color:var(--violet-soft)}
+  .top .sub{margin-top:8px;font-size:13.5px;color:var(--muted);max-width:46ch}
+  .cuenta{font:500 10.5px/1 var(--f-mono);letter-spacing:.09em;text-transform:uppercase;
+          color:var(--muted);white-space:nowrap}
+
+  .lista{padding:0 40px 40px}
+  .bloque{border-bottom:1px solid var(--linea);padding:32px 0;
+          opacity:0;transform:translateY(12px);
+          animation:entra 600ms cubic-bezier(.16,1,.3,1) forwards;
+          animation-delay:calc(var(--i) * 80ms)}
+  .bloque:last-child{border-bottom:0}
+  @keyframes entra{to{opacity:1;transform:none}}
+
+  .etq{font:500 10.5px/1 var(--f-mono);letter-spacing:.09em;text-transform:uppercase;
+       color:var(--muted);display:flex;align-items:center;gap:9px;margin-bottom:14px}
+  .etq .n{color:var(--violet-soft)}
+  .etq .est{margin-left:auto;padding:3px 8px;border-radius:999px;font-size:9.5px;
+            background:rgba(245,243,255,.06)}
+  .etq .est.ok{background:rgba(52,211,153,.13);color:var(--green)}
+  .bloque h2{margin:0 0 4px;font:400 24px/1.15 var(--f-serif);letter-spacing:-.01em}
+  .bloque p{margin:0;color:var(--muted);font-size:13.5px;max-width:60ch}
+
+  .btn{padding:9px 18px;border-radius:5px;font:600 13.5px/1 var(--f-sans);
+       background:var(--ink);color:var(--bg);
+       transition:background 200ms ease,transform 120ms ease}
+  .btn:hover{background:#fff}
+  .btn:active{transform:scale(.98)}
+  .btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--linea)}
+  .btn.ghost:hover{background:rgba(245,243,255,.05)}
+  .btn.sm{padding:6px 13px;font-size:12px}
+  .btn[disabled]{opacity:.35;cursor:not-allowed}
+  .btn svg{width:15px;height:15px;vertical-align:-3px;margin-right:6px}
+  :focus-visible{outline:1px solid var(--violet-soft);outline-offset:3px}
+
+  .opciones{display:flex;gap:9px;flex-wrap:wrap;margin-top:16px}
+
+  .mando{display:flex;align-items:center;gap:16px;margin:22px 0 18px;
+         font:500 10.5px/1 var(--f-mono);letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+  /* El track por defecto sale crema y grita mas que el titular. Se pinta a mano. */
+  .mando input[type=range]{flex:1;-webkit-appearance:none;appearance:none;height:3px;
+    background:rgba(245,243,255,.13);border-radius:99px;cursor:pointer}
+  .mando input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;
+    border-radius:99px;background:var(--violet);cursor:pointer}
+  .mando input[type=range]::-moz-range-thumb{width:13px;height:13px;border:0;
+    border-radius:99px;background:var(--violet);cursor:pointer}
+
+  /* filas de motor: acordeon a lo skill — solo una linea inferior, sin caja */
+  .motor{display:grid;grid-template-columns:22px 1fr 190px 130px;align-items:center;gap:18px;
+         padding:16px 0 16px 14px;border-bottom:1px solid var(--linea);cursor:pointer;
+         position:relative;transition:background 200ms ease}
+  .motor:first-of-type{border-top:1px solid var(--linea)}
+  .motor:hover{background:rgba(245,243,255,.02)}
+  .motor.sel::before{content:"";position:absolute;left:0;top:14px;bottom:14px;width:2px;
+                     background:var(--violet)}
+  .motor .idx{font:500 10.5px/1 var(--f-mono);color:var(--muted)}
+  .motor .nom{font-weight:600;font-size:15px;display:flex;align-items:center;gap:10px}
+  .motor .meta{font:400 10.5px/1.4 var(--f-mono);letter-spacing:.06em;text-transform:uppercase;
+               color:var(--muted);margin-top:4px}
+  .motor .juicio{font:500 10.5px/1.5 var(--f-mono);letter-spacing:.08em;text-transform:uppercase;
+                 color:var(--muted)}
+  .motor .juicio b{color:var(--ink);font-weight:500}
+  .motor .acc{text-align:right}
+
+  /* etiquetas: pastel a 13% de alfa, mayusculas, tracking ancho (regla de la skill) */
+  .tag{font:500 9.5px/1 var(--f-mono);letter-spacing:.1em;text-transform:uppercase;
+       padding:4px 9px;border-radius:999px;background:rgba(245,243,255,.06);color:var(--muted)}
+  .tag.spark{background:rgba(253,224,71,.13);color:var(--yellow)}
+  .tag.ok{background:rgba(52,211,153,.13);color:var(--green)}
+  .tag.viol{background:rgba(139,92,246,.14);color:var(--violet-soft)}
+
+  kbd{font:500 11px/1 var(--f-mono);border:1px solid var(--linea);border-radius:4px;
+      background:var(--surface-hi);padding:5px 7px;color:var(--ink)}
+
+  .caja{border:1px solid var(--linea);border-radius:8px;padding:20px 22px;margin-top:16px;
+        background:var(--surface-hi);font:400 15px/1.6 var(--f-serif);min-height:62px}
+
+  .nota{margin-top:14px;font:400 11px/1.6 var(--f-mono);letter-spacing:.03em;color:var(--muted);
+        padding-left:14px;border-left:1px solid var(--linea)}
+
+  .pie{padding:20px 40px;border-top:1px solid var(--linea);display:flex;
+       justify-content:space-between;align-items:center;flex:none}
+  .pie .est{font:500 10.5px/1 var(--f-mono);letter-spacing:.09em;text-transform:uppercase;color:var(--muted)}
+
+  svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:2.25;
+        stroke-linecap:round;stroke-linejoin:round;flex:none}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}
+    .bloque{opacity:1;transform:none}}
+
+  #vuelta{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:99;
+    padding:8px 16px;background:#fff;color:#111;border-radius:999px;
+    box-shadow:0 10px 30px rgba(0,0,0,.5);font:600 12.5px/1 system-ui;text-decoration:none}
+</style>
+</head>
+<body>
+
+<svg style="display:none" aria-hidden="true">
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 3 14h8l-1 8 10-12h-8l1-8z"/></symbol>
+  <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M19 11a7 7 0 0 1-14 0M12 18v4"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="13" rx="1"/><path d="M7 15h10"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="m7 4 13 8-13 8V4z"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 3v13m-5-5 5 5 5-5M4 21h16"/></symbol>
+</svg>
+
+<div id="app"></div>
+<a id="vuelta" href="index.html">&lsaquo; volver al indice</a>
+
+<script>
+const MOTORES = [
+  { id:'parakeet3', nom:'Parakeet TDT v3', idiomas:'25 idiomas · español nativo', mb:'498 MB',
+    vel:1.00, pre:0.92, jVel:'Instantáneo', jPre:'Alta', estado:'instalado' },
+  { id:'whisper-s', nom:'Whisper small', idiomas:'99 idiomas', mb:'466 MB',
+    vel:0.60, pre:0.70, jVel:'Medio', jPre:'Media', estado:'bajando' },
+  { id:'whisper-l', nom:'Whisper large-v3', idiomas:'99 idiomas', mb:'2,9 GB',
+    vel:0.20, pre:1.00, jVel:'Lento', jPre:'Muy alta', estado:'libre' },
+];
+const IDIOMAS = [{id:'es',nom:'Español'},{id:'auto',nom:'Detección automática'},{id:'en',nom:'English'}];
+const FORMATEOS = [
+  {id:'no',nom:'Sin Formateo',sub:'El texto sale tal cual lo oye el motor. Cero espera, cero coste.'},
+  {id:'local',nom:'Local, en tu equipo',sub:'Un modelo pequeño arregla tildes, comas y muletillas. No sale nada del PC. ~1,2 GB.'},
+  {id:'nube',nom:'Nube, con tu clave',sub:'La mejor calidad. Sale el TEXTO, nunca el audio. Con tope de gasto.'},
+];
+let S = { idioma:'es', motor:'parakeet3', formateo:'no', preferencia:50,
+          permisos:{mic:true, inyeccion:false} };
+
+function ico(id){ return '<svg class="i"><use href="#i-'+id+'"></use></svg>'; }
+
+function pinta(){
+  const p = S.preferencia/100;
+  const orden = MOTORES.slice().sort(function(a,b){
+    return ((1-p)*b.vel + p*b.pre) - ((1-p)*a.vel + p*a.pre);
+  });
+  const permOK = S.permisos.mic && S.permisos.inyeccion;
+  const hechos = 1 + 1 + (permOK?1:0) + 0 + 1;
+
+  const motores = orden.map(function(x,i){
+    let acc;
+    if(x.estado==='instalado') acc = '<span class="tag ok">instalado</span>';
+    else if(x.estado==='bajando') acc = '<span class="tag viol">bajando · 62 %</span>';
+    else acc = '<button class="btn ghost sm">'+ico('down')+'Descargar</button>';
+    return '<div class="motor '+(S.motor===x.id?'sel':'')+'" data-motor="'+x.id+'" tabindex="0">'+
+      '<span class="idx">'+String(i+1).padStart(2,'0')+'</span>'+
+      '<div><div class="nom">'+x.nom+(i===0?' <span class="tag spark">mejor encaje</span>':'')+'</div>'+
+        '<div class="meta">'+x.idiomas+' — '+x.mb+'</div></div>'+
+      '<div class="juicio">Rapidez <b>'+x.jVel+'</b><br>Precisión <b>'+x.jPre+'</b></div>'+
+      '<div class="acc">'+acc+'</div></div>';
+  }).join('');
+
+  document.getElementById('app').innerHTML =
+  '<div class="ventana">'+
+    '<div class="chrome"><i></i><i></i><i></i><span class="nom">Pronto — primera puesta en marcha</span></div>'+
+    '<div class="top"><div>'+
+      '<h1>Poner Pronto <em>en marcha</em></h1>'+
+      '<div class="sub">Todo en una pantalla. Puedes hacerlo en el orden que quieras.</div>'+
+    '</div><div class="cuenta">'+hechos+' / 5 hechos</div></div>'+
+
+    '<div class="lista">'+
+
+    '<div class="bloque" style="--i:0"><div class="etq"><span class="n">01</span> Idioma'+
+      '<span class="est ok">listo</span></div>'+
+      '<h2>¿En qué idioma vas a dictar?</h2>'+
+      '<div class="opciones">'+IDIOMAS.map(function(i){
+        return '<button class="btn '+(S.idioma===i.id?'':'ghost')+' sm" data-idioma="'+i.id+'">'+i.nom+'</button>';
+      }).join('')+'</div></div>'+
+
+    '<div class="bloque" style="--i:1"><div class="etq"><span class="n">02</span> Motor de voz'+
+      '<span class="est ok">listo</span></div>'+
+      '<h2>El que escucha</h2>'+
+      '<p>Ordena la lista según lo que te importe. La descarga es de una vez.</p>'+
+      '<div class="mando"><span>'+ico('bolt')+' Rapidez</span>'+
+        '<input type="range" id="pref" min="0" max="100" value="'+S.preferencia+'" aria-label="Rapidez o precisión">'+
+        '<span>Precisión '+ico('target')+'</span></div>'+
+      motores+
+      '<div class="nota">Los juicios son palabras, no cifras: todavía no hemos medido el WER en español. '+
+      'El orden sí es real — sale de tu mando.</div></div>'+
+
+    '<div class="bloque" style="--i:2"><div class="etq"><span class="n">03</span> Permisos de Windows'+
+      '<span class="est'+(permOK?' ok':'')+'">'+(permOK?'listo':'pendiente')+'</span></div>'+
+      '<h2>Dos permisos, una vez</h2>'+
+      '<div class="opciones">'+
+      [['mic','Micrófono','mic'],['inyeccion','Escribir en otras apps','key']].map(function(t){
+        return S.permisos[t[0]]
+          ? '<span class="tag ok">'+t[1]+' concedido</span>'
+          : '<button class="btn ghost sm" data-permiso="'+t[0]+'">'+ico(t[2])+t[1]+'</button>';
+      }).join('')+'</div></div>'+
+
+    '<div class="bloque" style="--i:3"><div class="etq"><span class="n">04</span> Prueba un dictado'+
+      '<span class="est">opcional</span></div>'+
+      '<h2>Compruébalo aquí mismo</h2>'+
+      '<p>Pulsa <kbd>Ctrl</kbd> + <kbd>Espacio</kbd>, habla, suelta.</p>'+
+      '<div class="caja mut">Lo que digas aparecerá aquí.</div>'+
+      '<div class="opciones"><button class="btn ghost sm">'+ico('play')+'Simular</button></div></div>'+
+
+    '<div class="bloque" style="--i:4"><div class="etq"><span class="n">05</span> Formateo con IA'+
+      '<span class="est">apagado de fábrica</span></div>'+
+      '<h2>Quién le da la puntuación</h2>'+
+      '<div class="opciones">'+FORMATEOS.map(function(f){
+        return '<button class="btn '+(S.formateo===f.id?'':'ghost')+' sm" data-formateo="'+f.id+'">'+f.nom+'</button>';
+      }).join('')+'</div>'+
+      '<div class="nota">'+FORMATEOS.filter(function(f){return f.id===S.formateo;})[0].sub+'</div></div>'+
+
+    '</div>'+
+    '<div class="pie"><span class="est">'+(permOK?'Todo lo imprescindible está hecho'
+      :'Faltan los permisos de Windows')+'</span>'+
+      '<button class="btn"'+(permOK?'':' disabled')+'>Empezar a dictar</button></div>'+
+  '</div>';
+}
+
+document.addEventListener('click', function(e){
+  const t = e.target.closest('[data-idioma],[data-formateo],[data-motor],[data-permiso]');
+  if(!t) return;
+  const d = t.dataset;
+  if(d.idioma) S.idioma = d.idioma;
+  if(d.formateo) S.formateo = d.formateo;
+  if(d.motor) S.motor = d.motor;
+  if(d.permiso) S.permisos[d.permiso] = true;
+  pinta();
+});
+document.addEventListener('input', function(e){
+  if(e.target.id==='pref'){ S.preferencia = +e.target.value; pinta();
+    const el = document.getElementById('pref'); if(el) el.focus(); }
+});
+pinta();
+</script>
+</body>
+</html>

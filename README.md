@@ -20,10 +20,17 @@ tus propias correcciones.
 - **🗣️ Dictado GLOBAL.** Mantén pulsado un atajo de teclado (por defecto
   `Ctrl + Alt + Espacio`), habla y suéltalo: el texto aparece donde tengas el
   cursor, **en la app que sea**. No hace falta tener Pronto en primer plano.
-- **🔒 100 % on-device y privado.** La transcripción usa
-  [whisper.cpp](https://github.com/ggml-org/whisper.cpp) ejecutándose en tu CPU.
-  Sin servidores, sin cuotas, sin enviar tu audio a la nube. Funciona sin
-  conexión.
+- **🔒 Tu voz no sale de tu equipo.** El reconocimiento corre en tu CPU y
+  **el audio nunca se manda a ningún sitio**: ni a un servidor nuestro, ni a uno
+  de nadie. Sin cuentas y sin cuotas. Funciona sin conexión.
+  <br>La única pieza que puede salir del equipo es **opcional, viene apagada y
+  la enciendes tú**: si eliges formatear el dictado con un modelo de nube,
+  entonces —y solo entonces— **el TEXTO ya transcrito** viaja al proveedor con
+  **tu propia clave**. Mientras dura ese envío la píldora se pone naranja y dice
+  «Saliendo del equipo», hay un tope de gasto dentro de la app y se le pide al
+  proveedor que no guarde ni entrene con lo que se le manda. El formateo también
+  puede correr **en local** (Ollama), sin salir de tu ordenador.
+  [Cómo funciona y por qué](docs/adr/0007-la-nube-es-opcional-y-solo-sale-el-texto.md).
 - **🇪🇸 Español primero.** Pensado y afinado para el español desde el primer día;
   el soporte multilingüe (empezando por inglés) llega después y reutiliza el
   mismo motor (ver [ROADMAP.md](ROADMAP.md)).
@@ -96,7 +103,7 @@ con **Riverpod usando providers manuales**.
 | Estado | **Riverpod (`flutter_riverpod ^2.5`)** | Providers/Notifiers manuales, sin codegen |
 | Persistencia | **`sqlite3` + `sqlite3_flutter_libs`** | Diccionario aprendido, vocabulario y log de dictados |
 | Ventana / overlay / bandeja / autostart | **`window_manager` + `tray_manager` + `launch_at_startup`** | Ventana compacta, icono de bandeja y arranque con el sistema |
-| Post-corrección LLM (opcional) | **`http`** (Ollama local o nube) | Limpieza opcional del texto, *gateada* por confianza para evitar parafraseo |
+| Formateo con LLM (opcional) | **`http`** (Ollama local o nube con tu clave) | Puntuación, tildes y muletillas. Apagado por defecto; con guardia anti-parafraseo y tope de gasto dentro de la app |
 
 > Las versiones exactas de los paquetes están en [`pubspec.yaml`](pubspec.yaml).
 
@@ -207,9 +214,11 @@ tal cual. Ver [ROADMAP.md](ROADMAP.md).
 3. **Sesga al reconocedor.** Tu vocabulario más frecuente alimenta el
    `initial_prompt` de Whisper para que acierte nombres propios y jerga desde el
    principio.
-4. **(Opcional) Pulido con LLM.** Una post-corrección con un LLM local (Ollama)
-   o en la nube, **gateada por la confianza** del reconocedor y con protección
-   anti-parafraseo. Desactivada por defecto.
+4. **(Opcional) Formateo con LLM.** Puntuación, tildes, mayúsculas y muletillas
+   fuera, con un modelo **local** (Ollama) o **de nube con tu clave**. Cuando lo
+   enciendes se ejecuta siempre, y un guardia asimétrico descarta la salida si
+   el modelo añade texto que no dictaste o se come parte del dictado.
+   Desactivado por defecto; a la nube solo va el texto, nunca el audio.
 
 ---
 

@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Sistema · Píldora — 3 versiones taste</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=Instrument+Serif&family=JetBrains+Mono:wght@400;500;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<!--
+  PROTOTIPO DESECHABLE — sin tests, sin persistencia, sin manejo de errores.
+
+  Pregunta: la Píldora, ¿cómo se ve en cada una de las tres versiones de estilo?
+  Tres variantes en la misma ruta, se cambia con ?variant=A|B|C o con las flechas.
+    A — Editorial oscuro    (taste / minimalist-ui)
+    B — Telemetría táctica  (taste / industrial-brutalist-ui)
+    C — Cristal etéreo      (taste / high-end-visual-design)
+
+  Se juzga SOBRE un Bloc de notas falso, como el prototipo-02: una píldora sola
+  siempre parece bonita.
+
+  Estados: 1 inactivo · 2 escuchando · 3 procesando · 4 pegado · 5 error
+  M abre el menú de Modos. ?estado= y &menu=1 también valen.
+
+  PALETA CONGELADA: la de lib/src/core/theme.dart. Las tres skills pedían otra
+  (blanco hueso / rojo aviación / esmeralda) y las tres están anuladas a mano.
+-->
+<style>
+  :root{
+    --violet:#8B5CF6; --violet-deep:#6D28D9; --violet-soft:#A78BFA; --yellow:#FDE047;
+    --bg:#0B0810; --surface:#0F0B16; --surface-hi:#161021;
+    --ink:#F5F3FF; --muted:#9C93AE; --green:#34D399; --red:#F87171;
+    --mono:"JetBrains Mono","Cascadia Mono",Consolas,monospace;
+    --jak:"Plus Jakarta Sans","Segoe UI",system-ui,sans-serif;
+    --serif:"Instrument Serif",Georgia,serif;
+    --black:"Archivo Black",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:#141019;color:var(--ink);font:14px/1.5 var(--jak);
+       display:flex;align-items:center;justify-content:center;padding:20px 20px 96px}
+  button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+  .mut{color:var(--muted)}
+
+  /* ---------- escritorio falso: idéntico en las tres, es el decorado ---------- */
+  .escritorio{width:1000px;height:620px;border-radius:14px;overflow:hidden;position:relative;
+    background:linear-gradient(160deg,#2a2140,#141021 60%,#0d0b13);
+    box-shadow:0 40px 90px rgba(0,0,0,.65)}
+  .appfalsa{position:absolute;inset:46px 60px 60px;background:#fbfaf7;color:#22201c;
+    border-radius:10px;box-shadow:0 18px 50px rgba(0,0,0,.45);display:flex;flex-direction:column}
+  .appfalsa .tb{height:34px;background:#eeebe4;border-bottom:1px solid #ddd8cd;display:flex;
+    align-items:center;gap:7px;padding:0 12px;font-size:12px;color:#6b6559}
+  .appfalsa .tb i{width:10px;height:10px;border-radius:99px;background:#d6d1c6;display:block}
+  .appfalsa .doc{flex:1;padding:26px 30px;font:15px/1.7 Georgia,serif;overflow:auto;white-space:pre-wrap}
+  .caret{display:inline-block;width:2px;height:1.05em;background:#22201c;vertical-align:-2px;
+    animation:parpadeo 1s steps(1) infinite}
+  @keyframes parpadeo{50%{opacity:0}}
+
+  /* ---------- barra de estados: herramienta, no diseño ---------- */
+  .mando{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:98;display:flex;gap:6px;
+    background:rgba(20,18,26,.94);border:1px solid rgba(245,243,255,.12);border-radius:999px;
+    padding:6px 8px;font:12.5px/1 var(--jak);align-items:center}
+  .mando button{padding:6px 12px;border-radius:999px;color:var(--muted)}
+  .mando button.on{background:var(--violet);color:#fff;font-weight:650}
+  .mando .sep{width:1px;height:18px;background:rgba(245,243,255,.12);margin:0 3px}
+  #switcher{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:99;display:flex;
+    align-items:center;gap:4px;padding:6px;background:#fff;color:#111;border-radius:999px;
+    box-shadow:0 10px 30px rgba(0,0,0,.5);font:650 13px/1 system-ui}
+  #switcher button{width:30px;height:30px;border-radius:999px;font-size:15px;color:#111}
+  #switcher button:hover{background:#eee}
+  #switcher .lbl{padding:0 12px;white-space:nowrap}
+  #switcher a{color:#111;text-decoration:none;padding:0 10px;opacity:.5;font-size:12px}
+
+  /* ==================================================================
+     VARIANTE A · Editorial oscuro  (taste / minimalist-ui)
+     De la skill: sin degradados, sin sombras pesadas (<0.05), bordes de
+     exactamente 1px, radios de 8px máximo, cero emoji, mono para los
+     metadatos, <kbd> como teclas físicas, tags en mayúsculas con
+     tracking 0.1em. Nada de pill en contenedores grandes.
+     La píldora deja de ser píldora: es una regla horizontal.
+     ================================================================== */
+  .A-pild{position:absolute;left:50%;bottom:26px;transform:translateX(-50%);
+    background:var(--surface);border:1px solid rgba(245,243,255,.13);border-radius:8px;
+    display:flex;align-items:stretch;overflow:hidden;min-width:260px;max-width:620px}
+  .A-pild .marca{width:4px;background:var(--muted);flex:none}
+  .A-pild.esc .marca{background:var(--violet)}
+  .A-pild.proc .marca{background:var(--violet-soft)}
+  .A-pild.peg .marca{background:var(--green)}
+  .A-pild.err .marca{background:var(--red)}
+  .A-pild .cuerpo{padding:11px 16px;display:flex;flex-direction:column;gap:7px;min-width:0}
+  .A-pild .linea1{display:flex;align-items:center;gap:12px}
+  .A-pild .et{font:500 10px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;
+    color:var(--muted);white-space:nowrap}
+  .A-pild.esc .et{color:var(--violet-soft)}
+  .A-pild.peg .et{color:var(--green)}
+  .A-pild.err .et{color:var(--red)}
+  .A-pild .ondas{display:flex;align-items:center;gap:2px;height:14px;flex:1;min-width:80px}
+  .A-pild .ondas i{width:2px;background:var(--muted);border-radius:0;transition:height .08s linear}
+  .A-pild.esc .ondas i{background:var(--ink)}
+  .A-pild .txt{font:400 14px/1.5 var(--serif);max-height:44px;overflow:hidden;color:var(--ink)}
+  .A-pild .modo{font:500 10px/1 var(--mono);letter-spacing:.1em;text-transform:uppercase;
+    color:var(--muted);border-left:1px solid rgba(245,243,255,.13);padding-left:12px}
+  .A-menu{position:absolute;bottom:calc(100% + 8px);left:0;min-width:280px;background:var(--surface);
+    border:1px solid rgba(245,243,255,.13);border-radius:8px;overflow:hidden}
+  .A-menu .gr{font:500 10px/1 var(--mono);letter-spacing:.14em;text-transform:uppercase;
+    color:var(--muted);padding:12px 16px 8px}
+  .A-menu .fila{display:flex;align-items:center;gap:12px;padding:11px 16px;font-size:13.5px;
+    border-top:1px solid rgba(245,243,255,.07)}
+  .A-menu .fila.sel{background:rgba(139,92,246,.10);box-shadow:inset 2px 0 0 var(--violet)}
+  .A-menu kbd{margin-left:auto;font:500 10px/1 var(--mono);border:1px solid rgba(245,243,255,.13);
+    border-radius:4px;background:var(--surface-hi);padding:5px 7px;color:var(--muted)}
+
+  /* ==================================================================
+     VARIANTE B · Telemetría táctica  (taste / industrial-brutalist-ui)
+     De la skill: cero border-radius, mono en mayúsculas con tracking,
+     framing ASCII, compartimentación por bordes de 1px, scanlines CRT,
+     cruces (+) en las intersecciones, semántica <samp>/<output>.
+     El acento rojo #E61919 de la skill -> nuestro violeta.
+     ================================================================== */
+  .B-pild{position:absolute;left:50%;bottom:24px;transform:translateX(-50%);
+    background:#0B0810;border:1px solid #2E2440;display:flex;align-items:stretch;
+    font:400 11px/1.3 var(--mono);letter-spacing:.09em;text-transform:uppercase;
+    min-width:300px;max-width:820px}
+  .B-pild::before,.B-pild::after{content:"+";position:absolute;color:var(--violet);
+    font:400 12px/1 var(--mono)}
+  .B-pild::before{top:-6px;left:-5px}
+  .B-pild::after{bottom:-7px;right:-5px}
+  .B-pild .scan{position:absolute;inset:0;pointer-events:none;
+    background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.22) 2px,rgba(0,0,0,.22) 4px)}
+  .B-pild .col{padding:9px 13px;border-right:1px solid #2E2440;display:flex;align-items:center;gap:9px}
+  .B-pild .col:last-child{border-right:0}
+  .B-pild .led{width:8px;height:8px;background:#2E2440;flex:none}
+  .B-pild.esc .led{background:var(--violet)}
+  .B-pild.proc .led{background:var(--violet-soft);animation:pulso .55s steps(2) infinite}
+  .B-pild.peg .led{background:var(--green)}
+  .B-pild.err .led{background:var(--red)}
+  @keyframes pulso{50%{opacity:.25}}
+  .B-pild .est{color:var(--muted);white-space:nowrap}
+  .B-pild.esc .est{color:var(--violet-soft)}
+  .B-pild.peg .est{color:var(--green)}
+  .B-pild.err .est{color:var(--red)}
+  .B-pild samp{font:inherit;letter-spacing:.22em;color:var(--violet-soft)}
+  .B-pild samp .off{color:#2E2440}
+  /* Una linea con puntos suspensivos: en dos lineas la frase se partia por la mitad
+     y el compartimento la cortaba. El texto en vivo no puede crecer hacia arriba. */
+  .B-pild .col.ancha{flex:1;min-width:0}
+  .B-pild .txt{flex:1;min-width:0;text-transform:none;letter-spacing:.04em;color:var(--ink);
+    font-size:11px;line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .B-pild .meta{color:var(--muted);white-space:nowrap;font-size:10px}
+  .B-menu{position:absolute;bottom:calc(100% + 6px);left:0;min-width:300px;background:#0B0810;
+    border:1px solid #2E2440;font:400 10.5px/1 var(--mono);letter-spacing:.11em;text-transform:uppercase}
+  .B-menu .gr{padding:9px 12px;color:var(--violet);border-bottom:1px solid #2E2440}
+  .B-menu .fila{display:flex;align-items:center;gap:10px;padding:10px 12px;
+    border-bottom:1px solid #2E2440;color:var(--muted)}
+  .B-menu .fila:last-child{border-bottom:0}
+  .B-menu .fila.sel{background:rgba(139,92,246,.13);color:var(--ink);
+    box-shadow:inset 2px 0 0 var(--violet)}
+  .B-menu .fila span:last-child{margin-left:auto;color:var(--violet-soft)}
+
+  /* ==================================================================
+     VARIANTE C · Cristal etéreo  (taste / high-end-visual-design)
+     De la skill: doble bisel (carcasa + núcleo con radio concéntrico),
+     brillo interno inset 0 1px 1px white/.15, pill rounded-full,
+     backdrop-blur SOLO en capa fija, cubic-bezier(.32,.72,0,1),
+     hover magnético. Es la que más se parece al slop de 2025: sabido.
+     ================================================================== */
+  .C-pild{position:absolute;left:50%;bottom:30px;transform:translateX(-50%);
+    padding:5px;border-radius:999px;background:rgba(255,255,255,.05);
+    border:1px solid rgba(255,255,255,.10);
+    box-shadow:0 20px 60px rgba(0,0,0,.6),0 0 60px rgba(139,92,246,.22);
+    transition:transform 700ms cubic-bezier(.32,.72,0,1)}
+  .C-pild.grande{border-radius:26px}
+  .C-pild .in{display:flex;align-items:center;gap:14px;padding:9px 20px 9px 10px;
+    border-radius:999px;background:rgba(10,8,14,.72);border:1px solid rgba(255,255,255,.09);
+    box-shadow:inset 0 1px 1px rgba(255,255,255,.15);backdrop-filter:blur(24px) saturate(1.3)}
+  .C-pild.grande .in{border-radius:21px;flex-direction:column;align-items:stretch;
+    padding:14px 18px;gap:10px;max-width:520px}
+  .C-pild .orbe{width:34px;height:34px;border-radius:999px;flex:none;display:grid;place-items:center;
+    background:radial-gradient(circle at 32% 28%,var(--violet-soft),var(--violet-deep));
+    box-shadow:0 0 22px rgba(139,92,246,.65),inset 0 1px 1px rgba(255,255,255,.3);
+    transition:box-shadow 700ms cubic-bezier(.32,.72,0,1)}
+  .C-pild.peg .orbe{background:radial-gradient(circle at 32% 28%,#6EE7B7,#059669);
+    box-shadow:0 0 22px rgba(52,211,153,.6),inset 0 1px 1px rgba(255,255,255,.3)}
+  .C-pild.err .orbe{background:radial-gradient(circle at 32% 28%,#FCA5A5,#B91C1C);
+    box-shadow:0 0 22px rgba(248,113,113,.6),inset 0 1px 1px rgba(255,255,255,.3)}
+  .C-pild.inac .orbe{background:rgba(255,255,255,.09);box-shadow:inset 0 1px 1px rgba(255,255,255,.15)}
+  .C-pild .cab{display:flex;align-items:center;gap:12px}
+  .C-pild .et{font:600 10px/1 var(--jak);letter-spacing:.2em;text-transform:uppercase;
+    color:var(--violet-soft);white-space:nowrap}
+  .C-pild.peg .et{color:var(--green)} .C-pild.err .et{color:var(--red)}
+  .C-pild.inac .et{color:var(--muted)}
+  .C-pild .ondas{display:flex;align-items:center;gap:3px;height:22px}
+  .C-pild .ondas i{width:3px;border-radius:99px;background:var(--violet-soft);
+    box-shadow:0 0 8px rgba(167,139,250,.6);transition:height .08s linear}
+  .C-pild .txt{font:400 13.5px/1.55 var(--jak);color:var(--ink);max-height:44px;overflow:hidden}
+  .C-pild .modo{margin-left:auto;padding:4px 12px;border-radius:999px;
+    background:rgba(255,255,255,.07);border:1px solid rgba(255,255,255,.10);
+    box-shadow:inset 0 1px 1px rgba(255,255,255,.15);
+    font:600 10px/1 var(--jak);letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+  .C-menu{position:absolute;bottom:calc(100% + 12px);left:0;min-width:300px;padding:5px;
+    border-radius:24px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.10);
+    box-shadow:0 24px 60px rgba(0,0,0,.7)}
+  .C-menu .in{border-radius:19px;background:rgba(10,8,14,.86);border:1px solid rgba(255,255,255,.09);
+    box-shadow:inset 0 1px 1px rgba(255,255,255,.15);padding:7px;backdrop-filter:blur(24px)}
+  .C-menu .gr{font:700 10px/1 var(--jak);letter-spacing:.2em;text-transform:uppercase;
+    color:var(--muted);padding:11px 13px 8px}
+  .C-menu .fila{display:flex;align-items:center;gap:11px;padding:10px 13px;border-radius:14px;
+    font-size:13.5px;transition:background 400ms cubic-bezier(.32,.72,0,1)}
+  .C-menu .fila.sel{background:rgba(139,92,246,.20);
+    box-shadow:inset 0 1px 1px rgba(255,255,255,.15)}
+  .C-menu .fila span:last-child{margin-left:auto;font:600 10px/1 var(--jak);letter-spacing:.1em;
+    color:var(--muted);background:rgba(255,255,255,.07);border-radius:999px;padding:5px 9px}
+
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+
+<div class="mando" id="mando"></div>
+<div class="escritorio" id="app"></div>
+<div id="switcher">
+  <button id="prev" title="Anterior (flecha izquierda)">&lsaquo;</button>
+  <span class="lbl" id="lbl"></span>
+  <button id="next" title="Siguiente (flecha derecha)">&rsaquo;</button>
+  <a href="index.html">índice</a>
+</div>
+
+<script>
+// ---------------------------------------------------------------- datos falsos
+const FRASE = 'Oye, prepárame el resumen de la reunión con Serviforn y mándaselo a Celia antes de las seis.';
+const MODOS = [
+  {n:'Por defecto', k:'Ctrl + Espacio'},
+  {n:'Correo',      k:'Ctrl + Alt + C'},
+  {n:'Terminal',    k:'Ctrl + Alt + T'},
+  {n:'Nota',        k:'Ctrl + Alt + N'},
+];
+const ESTADOS = [
+  {id:'inactivo',   et:'En reposo',    cls:'inac'},
+  {id:'escuchando', et:'Escuchando',   cls:'esc'},
+  {id:'procesando', et:'Procesando',   cls:'proc'},
+  {id:'pegado',     et:'Escrito',      cls:'peg'},
+  {id:'error',      et:'Sin micrófono',cls:'err'},
+];
+const VARIANTES = [
+  ['A','Editorial oscuro — taste / minimalist-ui'],
+  ['B','Telemetría táctica — taste / industrial-brutalist-ui'],
+  ['C','Cristal etéreo — taste / high-end-visual-design'],
+];
+
+const _q = new URLSearchParams(location.search);
+let S = {
+  estado: _q.get('estado') || 'escuchando',
+  menu:   _q.get('menu')==='1',
+  modo:   0,
+  ondas:  new Array(28).fill(4),
+};
+
+function est(){ return ESTADOS.filter(function(e){return e.id===S.estado;})[0]; }
+function clave(){
+  const v=(_q.get('variant')||new URLSearchParams(location.search).get('variant')||'A').toUpperCase();
+  return VARIANTES.some(function(x){return x[0]===v;}) ? v : 'A';
+}
+function irVariante(k){
+  const u=new URL(location); u.searchParams.set('variant',k);
+  history.replaceState({},'',u); pinta();
+}
+
+// las ondas se mueven solo mientras escucha; al procesar se aplanan
+let latido=setInterval(function(){
+  if(S.estado==='escuchando'){
+    S.ondas = S.ondas.map(function(){ return 3 + Math.random()*Math.random()*22; });
+    pintaOndas();
+  }
+},95);
+
+function pintaOndas(){
+  document.querySelectorAll('[data-onda]').forEach(function(el,i){
+    const alto = S.estado==='escuchando' ? S.ondas[i % S.ondas.length]
+               : S.estado==='procesando' ? 3 : 3;
+    el.style.height = alto.toFixed(1)+'px';
+  });
+}
+
+// texto visible segun estado
+function texto(){
+  if(S.estado==='escuchando') return FRASE.slice(0, 62)+'…';
+  if(S.estado==='procesando') return FRASE;
+  if(S.estado==='pegado')     return FRASE;
+  if(S.estado==='error')      return 'Windows no da acceso al micrófono.';
+  return '';
+}
+function bloques(n,total){
+  let s='';
+  for(let i=0;i<total;i++) s += (i<n) ? '▮' : '<span class="off">▮</span>';
+  return s;
+}
+function ondasHTML(n){
+  let s='';
+  for(let i=0;i<n;i++) s += '<i data-onda style="height:4px"></i>';
+  return s;
+}
+
+// ---------------------------------------------------------------- VARIANTE A
+function variantA(){
+  const e = est(), t = texto();
+  const menu = S.menu ? '<div class="A-menu"><div class="gr">Modos</div>'+
+    MODOS.map(function(m,i){
+      return '<div class="fila '+(i===S.modo?'sel':'')+'"><span>'+m.n+'</span>'+
+        '<kbd>'+m.k+'</kbd></div>';
+    }).join('')+'</div>' : '';
+  return '<div class="A-pild '+e.cls+'" style="position:absolute;left:50%;bottom:26px;transform:translateX(-50%)">'+
+    menu+
+    '<div class="marca"></div>'+
+    '<div class="cuerpo">'+
+      '<div class="linea1">'+
+        '<span class="et">'+e.et+'</span>'+
+        (S.estado==='escuchando'||S.estado==='procesando'
+          ? '<span class="ondas">'+ondasHTML(24)+'</span>' : '')+
+        '<span class="modo">'+MODOS[S.modo].n+'</span>'+
+      '</div>'+
+      (t ? '<div class="txt">'+t+'</div>' : '')+
+    '</div></div>';
+}
+
+// ---------------------------------------------------------------- VARIANTE B
+function variantB(){
+  const e = est(), t = texto();
+  const nivel = S.estado==='escuchando' ? 4 : S.estado==='procesando' ? 2 : 0;
+  const menu = S.menu ? '<div class="B-menu"><div class="gr">[ MODOS ]</div>'+
+    MODOS.map(function(m,i){
+      return '<div class="fila '+(i===S.modo?'sel':'')+'"><span>'+m.n+'</span>'+
+        '<span>'+m.k+'</span></div>';
+    }).join('')+'</div>' : '';
+  return '<div class="B-pild '+e.cls+'">'+menu+'<div class="scan"></div>'+
+    '<div class="col"><span class="led"></span><span class="est">'+
+      (S.estado==='error'?'ERR':S.estado==='pegado'?'OK':e.et)+'</span></div>'+
+    '<div class="col"><samp>'+bloques(nivel,5)+'</samp></div>'+
+    (t ? '<div class="col ancha"><span class="txt">'+t+'</span></div>' : '')+
+    '<div class="col"><span class="meta">'+MODOS[S.modo].n.toUpperCase()+' /// '+
+      MODOS[S.modo].k.replace(/ /g,'')+'</span></div>'+
+    '</div>';
+}
+
+// ---------------------------------------------------------------- VARIANTE C
+function variantC(){
+  const e = est(), t = texto();
+  const grande = !!t && S.estado!=='error';
+  const menu = S.menu ? '<div class="C-menu"><div class="in"><div class="gr">Modos</div>'+
+    MODOS.map(function(m,i){
+      return '<div class="fila '+(i===S.modo?'sel':'')+'"><span>'+m.n+'</span>'+
+        '<span>'+m.k+'</span></div>';
+    }).join('')+'</div></div>' : '';
+  const cab = '<div class="cab"><span class="orbe">'+
+      (S.estado==='escuchando'||S.estado==='procesando'
+        ? '<span class="ondas" style="height:16px">'+ondasHTML(4)+'</span>' : '')+
+    '</span>'+
+    '<span class="et">'+e.et+'</span>'+
+    (S.estado==='escuchando'
+      ? '<span class="ondas">'+ondasHTML(16)+'</span>' : '')+
+    '<span class="modo">'+MODOS[S.modo].n+'</span></div>';
+  return '<div class="C-pild '+e.cls+(grande?' grande':'')+'">'+menu+
+    '<div class="in">'+cab+(grande?'<div class="txt">'+t+'</div>':'')+'</div></div>';
+}
+
+// ---------------------------------------------------------------- pintado
+const RENDER = {A:variantA, B:variantB, C:variantC};
+
+function pinta(){
+  const k = clave();
+  const escrito = (S.estado==='pegado') ? FRASE+' ' : '';
+  document.getElementById('app').innerHTML =
+    '<div class="appfalsa"><div class="tb"><i></i><i></i><i></i>'+
+      '<span style="margin-left:6px">resumen-serviforn.txt — Bloc de notas</span></div>'+
+      '<div class="doc">Reunión del 6 de septiembre.\n\n'+escrito+'<span class="caret"></span></div>'+
+    '</div>' + RENDER[k]();
+
+  document.getElementById('mando').innerHTML =
+    ESTADOS.map(function(e,i){
+      return '<button data-estado="'+e.id+'" class="'+(S.estado===e.id?'on':'')+'">'+
+        (i+1)+' · '+e.et+'</button>';
+    }).join('') +
+    '<span class="sep"></span>'+
+    '<button data-menu="1" class="'+(S.menu?'on':'')+'">M · Modos</button>';
+
+  document.getElementById('lbl').textContent =
+    VARIANTES.filter(function(x){return x[0]===k;})[0].join(' — ');
+  pintaOndas();
+}
+
+document.addEventListener('click', function(e){
+  const t = e.target.closest('[data-estado],[data-menu],#prev,#next');
+  if(!t) return;
+  if(t.id==='prev'||t.id==='next'){
+    const k=clave(); let i=0;
+    VARIANTES.forEach(function(x,n){ if(x[0]===k) i=n; });
+    const n=(i+(t.id==='next'?1:-1)+VARIANTES.length)%VARIANTES.length;
+    return irVariante(VARIANTES[n][0]);
+  }
+  if(t.dataset.estado){ S.estado=t.dataset.estado; return pinta(); }
+  if(t.dataset.menu){ S.menu=!S.menu; return pinta(); }
+});
+
+document.addEventListener('keydown', function(e){
+  if(/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
+  if(e.key>='1'&&e.key<='5'){ S.estado=ESTADOS[+e.key-1].id; return pinta(); }
+  if(e.key==='m'||e.key==='M'){ S.menu=!S.menu; return pinta(); }
+  if(e.key==='ArrowUp'||e.key==='ArrowDown'){
+    if(!S.menu) return;
+    S.modo=(S.modo+(e.key==='ArrowDown'?1:-1)+MODOS.length)%MODOS.length;
+    return pinta();
+  }
+  if(e.key!=='ArrowLeft'&&e.key!=='ArrowRight') return;
+  const k=clave(); let i=0;
+  VARIANTES.forEach(function(x,n){ if(x[0]===k) i=n; });
+  const n=(i+(e.key==='ArrowRight'?1:-1)+VARIANTES.length)%VARIANTES.length;
+  irVariante(VARIANTES[n][0]);
+});
+
+pinta();
+</script>
+</body>
+</html>

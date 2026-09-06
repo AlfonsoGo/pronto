@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Prototipo 04 — Historial</title>
+<!--
+  PROTOTIPO DESECHABLE. Pregunta: ¿cómo se mira lo que has dictado, y cómo se ve de un vistazo
+  qué cambió el Formateo respecto a lo que oyó el motor?
+    A — Dos paneles: lista con búsqueda + detalle (calco de FluidVoice)
+    B — Línea de tiempo por días, con el crudo y el final enfrentados en la propia tarjeta
+    C — Hoja de datos densa: filtros, columnas ordenables, pensada para EXPORTAR el corpus
+  Los datos son inventados pero con la forma real de `dictation_log`.
+-->
+<style>
+  :root{--violet:#8B5CF6;--violet-deep:#6D28D9;--violet-soft:#A78BFA;--yellow:#FDE047;
+        --bg:#0B0810;--surface:#0F0B16;--surface-hi:#161021;--ink:#F5F3FF;--muted:#9C93AE;
+        --green:#34D399;--red:#F87171;--orange:#FB923C;--line:rgba(245,243,255,.10)}
+  *{box-sizing:border-box} html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--ink);font:14px/1.5 "Segoe UI",system-ui,sans-serif;
+       display:flex;align-items:center;justify-content:center;padding:20px 20px 96px}
+  button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+  input{font:inherit;color:var(--ink);background:var(--surface-hi);border:1px solid var(--line);
+        border-radius:9px;padding:8px 12px;outline:none;width:100%}
+  input:focus{border-color:var(--violet)}
+  .mut{color:var(--muted)} .oculto{display:none!important}
+  .ventana{width:1040px;height:650px;background:var(--surface);border:1px solid var(--line);
+           border-radius:16px;overflow:hidden;display:flex;flex-direction:column;
+           box-shadow:0 40px 90px rgba(0,0,0,.6)}
+  .top{padding:18px 24px 14px;border-bottom:1px solid var(--line);display:flex;
+       justify-content:space-between;align-items:center;gap:16px}
+  .top h2{margin:0;font-size:19px}
+  .btn{padding:7px 13px;border-radius:9px;font-weight:600;font-size:13px;
+       background:linear-gradient(180deg,var(--violet),var(--violet-deep));color:#fff}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--muted)}
+  .btn.sm{padding:4px 10px;font-size:12px}
+  .chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:700;
+        background:rgba(139,92,246,.18);color:var(--violet-soft)}
+  .chip.ok{background:rgba(52,211,153,.15);color:var(--green)}
+  .chip.err{background:rgba(248,113,113,.16);color:var(--red)}
+  .chip.gris{background:rgba(245,243,255,.07);color:var(--muted)}
+  ins{background:rgba(52,211,153,.22);color:#d7ffe9;text-decoration:none;border-radius:3px;padding:0 2px}
+  del{background:rgba(248,113,113,.18);color:#ffd9d9;border-radius:3px;padding:0 2px}
+  #switcher{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:99;display:flex;
+    align-items:center;gap:4px;padding:6px;background:#fff;color:#111;border-radius:999px;
+    box-shadow:0 10px 30px rgba(0,0,0,.5);font-weight:650;font-size:13px}
+  #switcher button{width:30px;height:30px;border-radius:999px;font-size:15px;color:#111}
+  #switcher .lbl{padding:0 12px;white-space:nowrap}
+
+  /* A */
+  .dos{display:grid;grid-template-columns:330px 1fr;height:100%;min-height:0}
+  .izq{border-right:1px solid var(--line);display:flex;flex-direction:column;min-height:0}
+  .izq .busca{padding:12px}
+  .izq .lista{flex:1;overflow:auto}
+  .it{padding:11px 14px;border-bottom:1px solid var(--line);cursor:pointer}
+  .it.sel{background:rgba(139,92,246,.12)}
+  .it .l1{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:3px}
+  .it .l2{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .der{overflow:auto;padding:22px 26px;min-height:0}
+  .campo{display:grid;grid-template-columns:130px 1fr;gap:10px;padding:7px 0;font-size:13px;
+         border-bottom:1px solid var(--line)}
+  .campo .k{color:var(--muted);font-size:12px}
+  .caja{background:var(--surface-hi);border:1px solid var(--line);border-radius:11px;padding:14px;
+        font-size:13.5px;line-height:1.6}
+
+  /* B */
+  .tl{padding:18px 24px;overflow:auto;height:100%}
+  .dia{font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+       margin:18px 0 10px;display:flex;align-items:center;gap:10px}
+  .dia::after{content:"";flex:1;height:1px;background:var(--line)}
+  .tarj{background:var(--surface-hi);border:1px solid var(--line);border-radius:13px;padding:15px 17px;
+        margin-bottom:10px}
+  .tarj .cab{display:flex;gap:9px;align-items:center;font-size:11.5px;color:var(--muted);margin-bottom:9px}
+  .tarj .par{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .tarj .par > div{background:rgba(0,0,0,.25);border-radius:9px;padding:10px 12px;font-size:13px}
+  .tarj .par .et{font-size:10px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin-bottom:5px}
+  .tarj .acc{display:flex;gap:7px;margin-top:10px;opacity:.55}
+  .tarj:hover .acc{opacity:1}
+
+  /* C */
+  .hoja{height:100%;display:flex;flex-direction:column;min-height:0}
+  .filtros{display:flex;gap:8px;padding:12px 20px;border-bottom:1px solid var(--line);align-items:center}
+  .filtros input{width:220px}
+  .tabla{flex:1;overflow:auto}
+  table{width:100%;border-collapse:collapse;font-size:12.5px}
+  th{position:sticky;top:0;background:#120e1b;text-align:left;padding:9px 12px;font-size:10.5px;
+     letter-spacing:.05em;text-transform:uppercase;color:var(--muted);cursor:pointer;
+     border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:8px 12px;border-bottom:1px solid rgba(245,243,255,.05);vertical-align:top}
+  tr:hover td{background:rgba(139,92,246,.07)}
+  .num{font-variant-numeric:tabular-nums;text-align:right}
+  .pie{padding:11px 20px;border-top:1px solid var(--line);display:flex;justify-content:space-between;
+       align-items:center;font-size:12px}
+</style>
+</head>
+<body>
+<div class="ventana" id="app"></div>
+<div id="switcher"><button id="prev">‹</button><span class="lbl" id="lbl"></span><button id="next">›</button></div>
+
+<script>
+// ---- datos con la forma de `dictation_log`
+const D = [
+  {id:1,h:'2026-09-06 11:42',modo:'Correo',app:'Outlook',ventana:'Redactar — Celia',
+   crudo:'oye celia te mando el resumen de la reunion con serviform y las horas de esta semana gracias',
+   final:'Oye Celia, te mando el resumen de la reunión con Serviforn y las horas de esta semana. Gracias.',
+   msMotor:410,msLLM:820,tps:64,modelo:'gpt-4.1-mini (nube)',eur:0.0021,err:''},
+  {id:2,h:'2026-09-06 11:15',modo:'Terminal',app:'Windows Terminal',ventana:'pwsh',
+   crudo:'git checkout menos b arreglo del historial',final:'git checkout -b arreglo-del-historial',
+   msMotor:280,msLLM:340,tps:88,modelo:'local · qwen2.5-3b',eur:0,err:''},
+  {id:3,h:'2026-09-06 10:58',modo:'Por defecto',app:'Chrome',ventana:'Plane — PRNT',
+   crudo:'crees que el ticket doce se puede cerrar hoy',final:'¿Crees que el ticket doce se puede cerrar hoy?',
+   msMotor:330,msLLM:290,tps:91,modelo:'local · qwen2.5-3b',eur:0,err:''},
+  {id:4,h:'2026-09-05 19:03',modo:'Nota',app:'Obsidian',ventana:'diario.md',
+   crudo:'apuntar que cloud escribe mejor los commits que yo',final:'Apuntar que Claude escribe mejor los commits que yo.',
+   msMotor:300,msLLM:0,tps:0,modelo:'—',eur:0,err:''},
+  {id:5,h:'2026-09-05 18:41',modo:'Correo',app:'Outlook',ventana:'Redactar — proveedor',
+   crudo:'buenas tardes adjunto la factura de agosto quedo a la espera',final:'',
+   msMotor:360,msLLM:0,tps:0,modelo:'gpt-4.1-mini (nube)',eur:0,err:'Tope de gasto diario alcanzado: se pegó sin Formateo'},
+  {id:6,h:'2026-09-05 16:12',modo:'Por defecto',app:'Slack',ventana:'#general',
+   crudo:'subo la version a supabais en cuanto pase el test',final:'Subo la versión a Supabase en cuanto pase el test.',
+   msMotor:290,msLLM:260,tps:95,modelo:'local · qwen2.5-3b',eur:0,err:''},
+];
+let S={sel:1,q:'',orden:'h',asc:false,soloFallos:false};
+
+function difMarcado(a,b){
+  const A=a.split(/\s+/),B=b.split(/\s+/),out=[];
+  const norm=s=>s.toLowerCase().replace(/[^\wáéíóúüñ]/gi,'');
+  let i=0,j=0;
+  while(i<A.length||j<B.length){
+    if(i<A.length&&j<B.length&&norm(A[i])===norm(B[j])){
+      out.push(A[i]===B[j]?B[j]:`<ins>${B[j]}</ins>`); i++;j++;
+    } else if(j<B.length&&(i>=A.length||norm(A[i])!==norm(B[j]))){
+      out.push(`<ins>${B[j]}</ins>`); j++; if(i<A.length&&norm(A[i])!==norm(B[j-1]))i++;
+    } else { i++; }
+  }
+  return out.join(' ');
+}
+function filtrados(){
+  const q=S.q.toLowerCase();
+  return D.filter(d=>(!S.soloFallos||d.err)&&(!q||(d.crudo+d.final+d.app+d.modo).toLowerCase().includes(q)));
+}
+function pal(t){ return t.trim()?t.trim().split(/\s+/).length:0; }
+const TOTPAL = D.reduce((a,d)=>a+pal(d.final||d.crudo),0);
+
+// ---------------------------------------------------------------- VARIANTE A
+function variantA(){
+  const L=filtrados(), d=D.find(x=>x.id===S.sel)||L[0];
+  return `<div class="top"><h2>Historial</h2>
+    <div style="display:flex;gap:8px"><button class="btn ghost sm">Exportar CSV</button>
+      <button class="btn ghost sm">Borrar todo</button></div></div>
+  <div class="dos">
+    <div class="izq">
+      <div class="busca"><input id="q" placeholder="Buscar en lo dictado…" value="${S.q}"></div>
+      <div class="lista">${L.map(x=>`
+        <div class="it ${x.id===d.id?'sel':''}" data-id="${x.id}">
+          <div class="l1"><span>${x.h.slice(11)} · ${x.modo}</span>
+            <span>${x.err?'<span class="chip err">fallo</span>':x.app}</span></div>
+          <div class="l2">${x.final||x.crudo}</div></div>`).join('')}</div>
+      <div style="padding:10px 14px;border-top:1px solid var(--line);font-size:11.5px" class="mut">
+        ${L.length} de ${D.length} dictados</div>
+    </div>
+    <div class="der">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px">
+        <div><div style="font-weight:650;font-size:15px">${d.h}</div>
+          <div class="mut" style="font-size:12px">${d.app} · ${d.ventana}</div></div>
+        <div style="display:flex;gap:6px">
+          <button class="btn sm">Copiar</button>
+          <button class="btn ghost sm">Volver a pegar</button>
+          <button class="btn ghost sm">Corregir</button></div>
+      </div>
+      ${d.err?`<div class="caja" style="border-color:var(--red);margin-bottom:14px;color:var(--red)">
+        ⚠ ${d.err}</div>`:''}
+      <div style="font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:0 0 6px">
+        Lo que oyó el motor</div>
+      <div class="caja" style="margin-bottom:14px;color:var(--muted)">${d.crudo}</div>
+      <div style="font-size:10.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted);margin:0 0 6px">
+        Lo que se pegó ${d.final?'<span class="chip">'+ (d.modelo)+'</span>':''}</div>
+      <div class="caja" style="margin-bottom:18px">${d.final?difMarcado(d.crudo,d.final):'<span class="mut">— se pegó el crudo —</span>'}</div>
+      <div class="campo"><span class="k">Modo</span><span>${d.modo}</span></div>
+      <div class="campo"><span class="k">Motor de voz</span><span>Parakeet TDT v3 · ${d.msMotor} ms</span></div>
+      <div class="campo"><span class="k">Formateo</span><span>${d.modelo}${d.msLLM?` · ${d.msLLM} ms · ${d.tps} tok/s`:''}</span></div>
+      <div class="campo"><span class="k">Coste</span><span>${d.eur?d.eur.toFixed(4).replace('.',',')+' €':'0 € (local)'}</span></div>
+      <div class="campo"><span class="k">Palabras</span><span>${pal(d.final||d.crudo)}</span></div>
+    </div>
+  </div>`;
+}
+
+// ---------------------------------------------------------------- VARIANTE B
+function variantB(){
+  const L=filtrados(), dias=[...new Set(L.map(x=>x.h.slice(0,10)))];
+  return `<div class="top"><h2>Historial</h2>
+    <div style="display:flex;gap:8px;align-items:center;flex:1;max-width:360px">
+      <input id="q" placeholder="Buscar…" value="${S.q}"></div>
+    <button class="btn ghost sm" data-fallos="1">${S.soloFallos?'✓ ':''}Solo fallos</button></div>
+  <div class="tl">${dias.map(dia=>`
+    <div class="dia">${dia}</div>
+    ${L.filter(x=>x.h.startsWith(dia)).map(d=>`
+      <div class="tarj">
+        <div class="cab"><b style="color:var(--ink)">${d.h.slice(11)}</b> · ${d.modo} · ${d.app}
+          ${d.err?'<span class="chip err">tope de gasto</span>':''}
+          <span style="margin-left:auto">${d.msMotor} ms motor${d.msLLM?` · ${d.msLLM} ms formateo`:''}</span></div>
+        <div class="par">
+          <div><div class="et">oyó</div><span class="mut">${d.crudo}</span></div>
+          <div><div class="et">pegó ${d.final?'· '+d.modelo:''}</div>
+            ${d.final?difMarcado(d.crudo,d.final):'<span class="mut">— el crudo —</span>'}</div>
+        </div>
+        <div class="acc"><button class="btn ghost sm">Copiar</button>
+          <button class="btn ghost sm">Volver a pegar</button>
+          <button class="btn ghost sm">Corregir</button>
+          <button class="btn ghost sm">Borrar</button></div>
+      </div>`).join('')}`).join('')}
+    <p class="mut" style="font-size:11.5px;margin-top:22px">Lo verde es lo que puso el Formateo
+    encima de lo que oyó el motor. Es la vista con la que se ve si el Formateo trabaja o estorba.</p>
+  </div>`;
+}
+
+// ---------------------------------------------------------------- VARIANTE C
+function variantC(){
+  let L=filtrados().slice().sort((a,b)=>{
+    const v = S.orden==='h' ? a.h.localeCompare(b.h)
+            : S.orden==='ms' ? (a.msMotor+a.msLLM)-(b.msMotor+b.msLLM)
+            : S.orden==='pal' ? pal(a.final||a.crudo)-pal(b.final||b.crudo)
+            : String(a[S.orden]).localeCompare(String(b[S.orden]));
+    return S.asc?v:-v;
+  });
+  const col=(k,t,cls='')=>`<th data-orden="${k}" class="${cls}">${t}${S.orden===k?(S.asc?' ▲':' ▼'):''}</th>`;
+  return `<div class="top"><h2>Historial</h2>
+    <div class="mut" style="font-size:12px">${D.length} dictados · ${TOTPAL} palabras ·
+      ${(TOTPAL/150).toFixed(0)} min de escritura ahorrados
+      <span title="palabras ÷ 150 ppm de tecleo medio" style="cursor:help">ⓘ</span></div>
+    <button class="btn sm">Exportar corpus</button></div>
+  <div class="hoja">
+    <div class="filtros">
+      <input id="q" placeholder="Buscar…" value="${S.q}">
+      <button class="btn ghost sm" data-fallos="1">${S.soloFallos?'✓ ':''}Solo fallos</button>
+      <span class="mut" style="font-size:12px;margin-left:auto">Retención: 90 días ·
+        <button style="color:var(--violet-soft);font-size:12px">cambiar</button></span>
+    </div>
+    <div class="tabla"><table>
+      <thead><tr>${col('h','Cuándo')}${col('modo','Modo')}${col('app','App')}
+        <th>Oyó → Pegó</th>${col('ms','ms','num')}${col('pal','Pal.','num')}
+        <th class="num">€</th></tr></thead>
+      <tbody>${L.map(d=>`<tr data-id="${d.id}">
+        <td class="mut" style="white-space:nowrap">${d.h.slice(5)}</td>
+        <td>${d.modo}</td><td class="mut">${d.app}</td>
+        <td style="max-width:430px">
+          <div class="mut" style="font-size:11.5px">${d.crudo}</div>
+          <div>${d.final?difMarcado(d.crudo,d.final):'<span class="chip err">'+d.err+'</span>'}</div></td>
+        <td class="num">${d.msMotor+d.msLLM}</td>
+        <td class="num">${pal(d.final||d.crudo)}</td>
+        <td class="num">${d.eur?d.eur.toFixed(4).replace('.',','):'—'}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>
+    <div class="pie"><span class="mut">Ordena por columna. Esta es la vista con la que se saca el
+      corpus para medir el Formateo y el Vocabulario.</span>
+      <span class="mut">${L.length} filas</span></div>
+  </div>`;
+}
+
+const VARIANTES=[['A','Dos paneles: lista + detalle (calco)',variantA],
+                 ['B','Línea de tiempo con crudo y final enfrentados',variantB],
+                 ['C','Hoja de datos densa, para exportar el corpus',variantC]];
+function clave(){const v=(new URLSearchParams(location.search).get('variant')||'A').toUpperCase();
+  return VARIANTES.some(x=>x[0]===v)?v:'A';}
+function irVariante(k){const u=new URL(location);u.searchParams.set('variant',k);
+  history.replaceState({},'',u);pinta();}
+function pinta(){const k=clave(),v=VARIANTES.find(x=>x[0]===k);
+  const foco=document.activeElement&&document.activeElement.id==='q';
+  document.getElementById('app').innerHTML=v[2]();
+  document.getElementById('lbl').textContent=`${k} — ${v[1]}`;
+  if(foco){const i=document.getElementById('q'); if(i){i.focus();i.setSelectionRange(999,999);}}}
+
+document.addEventListener('click',e=>{
+  const t=e.target.closest('[data-id],[data-orden],[data-fallos],#prev,#next'); if(!t) return;
+  if(t.id==='prev'||t.id==='next'){const i=VARIANTES.findIndex(x=>x[0]===clave());
+    return irVariante(VARIANTES[(i+(t.id==='next'?1:-1)+3)%3][0]);}
+  if(t.dataset.fallos){S.soloFallos=!S.soloFallos;return pinta();}
+  if(t.dataset.orden){if(S.orden===t.dataset.orden)S.asc=!S.asc;else{S.orden=t.dataset.orden;S.asc=true;}return pinta();}
+  if(t.dataset.id){S.sel=+t.dataset.id;return pinta();}
+});
+document.addEventListener('input',e=>{ if(e.target.id==='q'){S.q=e.target.value;pinta();} });
+document.addEventListener('keydown',e=>{
+  if(/^(INPUT|TEXTAREA)$/.test(e.target.tagName))return;
+  if(e.key==='ArrowLeft'||e.key==='ArrowRight'){const i=VARIANTES.findIndex(x=>x[0]===clave());
+    irVariante(VARIANTES[(i+(e.key==='ArrowRight'?1:-1)+3)%3][0]);}
+});
+pinta();
+</script>
+</body>
+</html>

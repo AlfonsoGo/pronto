@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Prototipo 06 — Asistente local</title>
+<!--
+  PROTOTIPO DESECHABLE. Pregunta: ¿cómo se le ofrece al usuario un modelo local pequeño, gratis,
+  que Pronto se baja solo, y cómo entiende lo que ese asistente sabe hacer (limpiar, enumerar…)?
+    A — Un bloque más de la hoja de instalación (encaja con la variante C ganadora del PRNT-13)
+    B — Pantalla de TAREAS: eliges qué quieres que sepa hacer; la descarga es la consecuencia
+    C — Comparador de los tres caminos: sin asistente / local / nube, con su precio en espera,
+        dinero y privacidad
+  Ticket PRNT-18. Los tamaños y tiempos son PLACEHOLDER: nada de esto está medido todavía.
+-->
+<style>
+  :root{--violet:#8B5CF6;--violet-deep:#6D28D9;--violet-soft:#A78BFA;--yellow:#FDE047;
+        --bg:#0B0810;--surface:#0F0B16;--surface-hi:#161021;--ink:#F5F3FF;--muted:#9C93AE;
+        --green:#34D399;--red:#F87171;--orange:#FB923C;--line:rgba(245,243,255,.10)}
+  *{box-sizing:border-box} html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--ink);font:14px/1.5 "Segoe UI",system-ui,sans-serif;
+       display:flex;align-items:center;justify-content:center;padding:20px 20px 96px}
+  button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+  .mut{color:var(--muted)} .oculto{display:none!important}
+  .ventana{width:1000px;height:650px;background:var(--surface);border:1px solid var(--line);
+           border-radius:16px;overflow:hidden;display:flex;flex-direction:column;
+           box-shadow:0 40px 90px rgba(0,0,0,.6)}
+  .top{padding:20px 28px 14px;border-bottom:1px solid var(--line);display:flex;
+       justify-content:space-between;align-items:flex-end}
+  .top h2{margin:0;font-size:19px}
+  .cuerpo{flex:1;overflow:auto;padding:20px 28px}
+  .pie{padding:13px 28px;border-top:1px solid var(--line);display:flex;
+       justify-content:space-between;align-items:center;font-size:12.5px}
+  .btn{padding:8px 14px;border-radius:9px;font-weight:600;font-size:13px;
+       background:linear-gradient(180deg,var(--violet),var(--violet-deep));color:#fff}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--muted)}
+  .btn.sm{padding:5px 11px;font-size:12px}
+  .btn:disabled{opacity:.35;cursor:not-allowed}
+  .chip{display:inline-block;padding:2px 8px;border-radius:999px;font-size:10.5px;font-weight:700;
+        background:rgba(139,92,246,.18);color:var(--violet-soft)}
+  .chip.ok{background:rgba(52,211,153,.15);color:var(--green)}
+  .chip.warn{background:rgba(251,146,60,.16);color:var(--orange)}
+  .chip.gris{background:rgba(245,243,255,.07);color:var(--muted)}
+  .barra{height:6px;border-radius:99px;background:rgba(245,243,255,.08);overflow:hidden}
+  .barra>i{display:block;height:100%;border-radius:99px;
+           background:linear-gradient(90deg,var(--violet-soft),var(--violet));transition:width .4s}
+  .tarjeta{background:var(--surface-hi);border:1px solid var(--line);border-radius:13px;padding:16px 18px}
+  .aviso{border-left:3px solid var(--orange);background:rgba(251,146,60,.07);padding:11px 14px;
+         border-radius:0 9px 9px 0;font-size:12.5px}
+  #switcher{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:99;display:flex;
+    align-items:center;gap:4px;padding:6px;background:#fff;color:#111;border-radius:999px;
+    box-shadow:0 10px 30px rgba(0,0,0,.5);font-weight:650;font-size:13px}
+  #switcher button{width:30px;height:30px;border-radius:999px;font-size:15px;color:#111}
+  #switcher .lbl{padding:0 12px;white-space:nowrap}
+
+  /* A */
+  .bloque{border-bottom:1px solid var(--line);padding:18px 0;display:grid;
+          grid-template-columns:32px 1fr;gap:14px}
+  .bloque .tick{width:24px;height:24px;border-radius:99px;border:2px solid var(--line);
+                display:grid;place-items:center;font-size:12px;color:var(--muted)}
+  .bloque.ok .tick{background:rgba(52,211,153,.16);border-color:transparent;color:var(--green)}
+  .bloque .tit{font-weight:650;display:flex;gap:10px;align-items:center;margin-bottom:3px}
+  .op{display:flex;gap:12px;align-items:center;padding:12px 14px;border-radius:11px;
+      border:1px solid var(--line);background:var(--surface-hi);margin-bottom:8px;cursor:pointer}
+  .op.sel{border-color:var(--violet);background:rgba(139,92,246,.10)}
+  .op .bola{width:17px;height:17px;border-radius:99px;border:2px solid var(--muted);flex:none}
+  .op.sel .bola{border-color:var(--violet);background:radial-gradient(circle,var(--violet) 45%,transparent 47%)}
+
+  /* B */
+  .tareas{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .tarea{padding:14px 16px;border-radius:12px;border:1px solid var(--line);
+         background:var(--surface-hi);cursor:pointer;display:flex;gap:12px}
+  .tarea.on{border-color:var(--violet);background:rgba(139,92,246,.10)}
+  .tarea .cb{width:18px;height:18px;border-radius:5px;border:2px solid var(--muted);flex:none;
+             display:grid;place-items:center;font-size:11px;margin-top:2px}
+  .tarea.on .cb{background:var(--violet);border-color:var(--violet);color:#fff}
+  .ejemplo{font-size:12px;margin-top:7px;background:rgba(0,0,0,.28);border-radius:8px;padding:9px 11px}
+  .ejemplo .et{font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;color:var(--muted)}
+
+  /* C */
+  .cmp{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .via{border:1px solid var(--line);border-radius:14px;padding:17px;background:var(--surface-hi);
+       display:flex;flex-direction:column;gap:11px;cursor:pointer}
+  .via.sel{border-color:var(--violet);box-shadow:0 0 0 1px var(--violet) inset}
+  .via .nom{font-weight:700;font-size:16px}
+  .via .dato{display:flex;justify-content:space-between;font-size:12.5px;
+             padding:6px 0;border-top:1px solid var(--line)}
+  .via .dato .k{color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="ventana" id="app"></div>
+<div id="switcher"><button id="prev">‹</button><span class="lbl" id="lbl"></span><button id="next">›</button></div>
+
+<script>
+const ASISTENTES = [
+  {id:'no',    nom:'Sin asistente',  mb:0,    ram:'—',      espera:'0 s',      coste:'0 €',
+   priv:'Nada sale del PC', lic:'—', nota:'El texto sale tal cual lo oye el motor. Es el camino veloz.'},
+  {id:'mini',  nom:'Asistente ligero', mb:1100, ram:'4 GB libres', espera:'~1 s',  coste:'0 €',
+   priv:'Nada sale del PC', lic:'Apache-2.0', nota:'Un modelo pequeño que corre aquí. Limpia, enumera y estructura.'},
+  {id:'nube',  nom:'Nube con tu clave', mb:0,  ram:'—',      espera:'~0,8 s',   coste:'céntimos/mes',
+   priv:'Sale el TEXTO, jamás el audio', lic:'—', nota:'La mejor calidad. Con tope de gasto y clave tuya.'},
+];
+const TAREAS = [
+  {id:'limpiar', nom:'Limpiar', desc:'Tildes, comas, mayúsculas y muletillas fuera.', base:true,
+   antes:'oye celia te paso el resumen de la reunion y las horas de esta semana gracias',
+   despues:'Oye Celia, te paso el resumen de la reunión y las horas de esta semana. Gracias.'},
+  {id:'listar', nom:'Enumerar', desc:'Convierte lo que dictaste de seguido en una lista.', base:false,
+   antes:'hay que llamar al proveedor mandar la factura de agosto y cerrar el parte de serviforn',
+   despues:'1. Llamar al proveedor.\n2. Mandar la factura de agosto.\n3. Cerrar el parte de Serviforn.'},
+  {id:'vinetas', nom:'Estructurar', desc:'Agrupa en apartados con sus viñetas.', base:false,
+   antes:'de la reunion salieron dos cosas el precio y el plazo el precio lo revisa celia y el plazo depende del taller',
+   despues:'**Reunión**\n- Precio: lo revisa Celia.\n- Plazo: depende del taller.'},
+  {id:'correo', nom:'Tono de correo', desc:'De usted y en párrafos, sin inventar saludos.', base:false,
+   antes:'oye q tal mandame la factura cuando puedas',
+   despues:'Buenos días:\n\n¿Podría enviarme la factura cuando le sea posible?'},
+];
+
+let S = {via:'mini', bajando:false, prog:0, listo:false, tareas:new Set(['limpiar','listar']),
+         verTarea:'listar', ollama:false};
+
+let t=null;
+function bajar(){
+  if(S.bajando||S.listo) return;
+  S.bajando=true; S.prog=0; pinta();
+  t=setInterval(()=>{ S.prog+=3+Math.random()*6;
+    if(S.prog>=100){clearInterval(t);S.bajando=false;S.listo=true;S.prog=0;}
+    pinta(); },110);
+}
+function cancelar(){ clearInterval(t); S.bajando=false; S.prog=0; pinta(); }
+const mb = n => n>=1000 ? (n/1000).toFixed(1).replace('.',',')+' GB' : n+' MB';
+
+function panelDescarga(ancho){
+  if(S.ollama) return `<span class="chip ok">✓ Ya tienes Ollama: no hace falta descargar nada</span>`;
+  if(S.listo)  return `<span class="chip ok">✓ Asistente listo (${mb(1100)})</span>
+    <button class="btn ghost sm" data-borrar="1" style="margin-left:8px">Borrar</button>`;
+  if(S.bajando) return `<div style="width:${ancho}px">
+    <div class="barra"><i style="width:${S.prog}%"></i></div>
+    <div class="mut" style="font-size:11.5px;margin-top:5px">
+      ${Math.round(S.prog)}% · ${mb(Math.round(1100*S.prog/100))} de ${mb(1100)}
+      <button data-cancelar="1" style="color:var(--violet-soft);font-size:11.5px">cancelar</button></div></div>`;
+  return `<button class="btn sm" data-bajar="1">Descargar (${mb(1100)})</button>`;
+}
+
+// ---------------------------------------------------------------- VARIANTE A
+function variantA(){
+  return `<div class="top">
+    <div><h2>Poner Pronto en marcha</h2>
+      <div class="mut" style="font-size:12.5px">El asistente es el último bloque: opcional, y se puede dejar para luego.</div></div>
+    <div class="mut" style="font-size:12.5px">4 de 6</div></div>
+  <div class="cuerpo">
+    <div class="bloque ok"><div class="tick">✓</div><div>
+      <div class="tit">Idioma <span class="chip gris">Español</span></div></div></div>
+    <div class="bloque ok"><div class="tick">✓</div><div>
+      <div class="tit">Motor de voz <span class="chip gris">Parakeet TDT v3</span></div></div></div>
+    <div class="bloque ok"><div class="tick">✓</div><div>
+      <div class="tit">Permisos <span class="chip gris">concedidos</span></div></div></div>
+
+    <div class="bloque ${S.listo||S.ollama?'ok':''}"><div class="tick">${S.listo||S.ollama?'✓':''}</div><div>
+      <div class="tit">Asistente de escritura <span class="chip">opcional</span>
+        <span class="chip gris">gratis</span></div>
+      <div class="mut" style="font-size:12.5px;margin-bottom:12px">
+        Un modelo pequeño que corre <b style="color:var(--ink)">en tu equipo</b>. Le pone las tildes,
+        te hace listas y te da tono de correo. Nada sale del PC y no cuesta dinero.</div>
+
+      ${ASISTENTES.map(a=>`
+        <div class="op ${S.via===a.id?'sel':''}" data-via="${a.id}">
+          <span class="bola"></span>
+          <div style="flex:1"><div style="font-weight:650">${a.nom}
+            ${a.mb?`<span class="mut" style="font-weight:400;font-size:12px"> · ${mb(a.mb)} · pide ${a.ram}</span>`:''}
+            ${a.lic!=='—'?`<span class="chip gris">${a.lic}</span>`:''}</div>
+            <div class="mut" style="font-size:12.5px">${a.nota}</div></div>
+          ${a.id==='mini'&&S.via==='mini'?panelDescarga(180):''}
+        </div>`).join('')}
+
+      <div class="aviso" style="margin-top:10px">
+        ⚠️ <b>Los números de esta pantalla son de ejemplo.</b> El tamaño, la espera y el modelo
+        concreto salen de medir en español (PRNT-18), no de una tabla escrita a mano.
+      </div>
+    </div>
+
+    <div class="bloque"><div class="tick"></div><div>
+      <div class="tit">Prueba un dictado <span class="chip gris">opcional</span></div></div></div>
+  </div>
+  <div class="pie">
+    <button class="btn ghost sm" data-ollama="1">${S.ollama?'✓ ':''}Simular «ya tengo Ollama»</button>
+    <button class="btn" ${S.via==='mini'&&!(S.listo||S.ollama)?'disabled':''}>Empezar a dictar</button>
+  </div>`;
+}
+
+// ---------------------------------------------------------------- VARIANTE B
+function variantB(){
+  const t = TAREAS.find(x=>x.id===S.verTarea);
+  const necesita = [...S.tareas].some(id=>id!=='limpiar') || S.tareas.has('limpiar');
+  return `<div class="top">
+    <div><h2>¿Qué quieres que sepa hacer?</h2>
+      <div class="mut" style="font-size:12.5px">Marca lo que uses. Lo que marques decide si hace falta descargar algo.</div></div></div>
+  <div class="cuerpo">
+    <div class="tareas">${TAREAS.map(x=>`
+      <div class="tarea ${S.tareas.has(x.id)?'on':''}" data-tarea="${x.id}">
+        <span class="cb">${S.tareas.has(x.id)?'✓':''}</span>
+        <div style="flex:1"><div style="font-weight:650">${x.nom}</div>
+          <div class="mut" style="font-size:12.5px">${x.desc}</div></div>
+      </div>`).join('')}</div>
+
+    <div style="margin-top:18px">
+      <div class="mut" style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;margin-bottom:8px">
+        Cómo se ve · <span style="color:var(--violet-soft)">${t.nom}</span>
+        ${TAREAS.map(x=>`<button data-ver="${x.id}" style="font-size:11px;color:${S.verTarea===x.id?'var(--ink)':'var(--muted)'};margin-left:8px">${x.nom}</button>`).join('')}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="ejemplo"><div class="et">dices</div><span class="mut">${t.antes}</span></div>
+        <div class="ejemplo"><div class="et">sale</div><span style="white-space:pre-wrap">${t.despues}</span></div>
+      </div>
+    </div>
+
+    <div class="tarjeta" style="margin-top:18px;display:flex;gap:14px;align-items:center">
+      <span style="font-size:20px">🧠</span>
+      <div style="flex:1">
+        <div style="font-weight:650">${necesita?'Para eso hace falta el asistente':'No hace falta descargar nada'}</div>
+        <div class="mut" style="font-size:12.5px">
+          ${necesita?`Un modelo de ${mb(1100)} que corre en tu equipo. Gratis, sin clave y sin internet.`
+                    :'Con el Pulido que Pronto ya trae te vale: puntuación dictada y signos de apertura.'}</div>
+      </div>
+      ${necesita?panelDescarga(200):''}
+    </div>
+
+    <div class="aviso" style="margin-top:14px">
+      🔴 <b>Enumerar no es lo mismo que limpiar.</b> Limpiar deja el mismo texto legible; enumerar
+      <b>reordena y añade viñetas</b>. El guardia que protege del modelo que se inventa cosas está
+      medido para limpiar: si no le damos topes propios a cada tarea, tirará las listas buenas.
+    </div>
+  </div>
+  <div class="pie"><span class="mut">${S.tareas.size} tareas marcadas</span>
+    <button class="btn" ${necesita&&!(S.listo||S.ollama)?'disabled':''}>Continuar</button></div>`;
+}
+
+// ---------------------------------------------------------------- VARIANTE C
+function variantC(){
+  return `<div class="top"><div><h2>¿Quién te arregla el texto?</h2>
+    <div class="mut" style="font-size:12.5px">Tres caminos. Se puede cambiar por Modo, y de fábrica va el primero.</div></div></div>
+  <div class="cuerpo">
+    <div class="cmp">${ASISTENTES.map(a=>`
+      <div class="via ${S.via===a.id?'sel':''}" data-via="${a.id}">
+        <div class="nom">${a.nom} ${a.id==='no'?'<span class="chip gris">de fábrica</span>':''}</div>
+        <div class="mut" style="font-size:12.5px;min-height:56px">${a.nota}</div>
+        <div class="dato"><span class="k">Espera por dictado</span><b>${a.espera}</b></div>
+        <div class="dato"><span class="k">Coste</span><b>${a.coste}</b></div>
+        <div class="dato"><span class="k">Descarga</span><b>${a.mb?mb(a.mb):'nada'}</b></div>
+        <div class="dato"><span class="k">Privacidad</span><b style="font-size:11.5px">${a.priv}</b></div>
+        <div class="dato"><span class="k">Licencia</span><b>${a.lic}</b></div>
+        <div style="margin-top:auto;padding-top:8px">
+          ${a.id==='mini' ? panelDescarga(200)
+            : a.id==='nube' ? '<button class="btn ghost sm">Poner mi clave</button>'
+            : '<span class="chip ok">✓ ya está activo</span>'}
+        </div>
+      </div>`).join('')}</div>
+
+    <div style="margin-top:20px">
+      <div class="mut" style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;margin-bottom:9px">
+        Qué cambia en un dictado real</div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+        <div class="ejemplo"><div class="et">dices</div><span class="mut">${TAREAS[1].antes}</span></div>
+        <div class="ejemplo"><div class="et">sale con asistente</div>
+          <span style="white-space:pre-wrap">${TAREAS[1].despues}</span></div>
+      </div>
+    </div>
+
+    <div class="aviso" style="margin-top:16px">
+      ⚠️ <b>Espera y tamaño son de ejemplo.</b> Un asistente local que tarda 4 s en dos frases es
+      peor que no tenerlo: el número real se mide en el PC antes de ponerlo de fábrica.
+    </div>
+  </div>
+  <div class="pie">
+    <button class="btn ghost sm" data-ollama="1">${S.ollama?'✓ ':''}Simular «ya tengo Ollama»</button>
+    <button class="btn">Guardar</button></div>`;
+}
+
+const VARIANTES=[['A','Un bloque más de la hoja de instalación',variantA],
+                 ['B','Eliges TAREAS; la descarga es la consecuencia',variantB],
+                 ['C','Comparador: sin asistente / local / nube',variantC]];
+function clave(){const v=(new URLSearchParams(location.search).get('variant')||'A').toUpperCase();
+  return VARIANTES.some(x=>x[0]===v)?v:'A';}
+function irVariante(k){const u=new URL(location);u.searchParams.set('variant',k);
+  history.replaceState({},'',u);pinta();}
+function pinta(){const k=clave(),v=VARIANTES.find(x=>x[0]===k);
+  document.getElementById('app').innerHTML=v[2]();
+  document.getElementById('lbl').textContent=`${k} — ${v[1]}`;}
+
+document.addEventListener('click',e=>{
+  const t=e.target.closest('[data-via],[data-tarea],[data-ver],[data-bajar],[data-cancelar],[data-borrar],[data-ollama],#prev,#next');
+  if(!t) return;
+  if(t.id==='prev'||t.id==='next'){const i=VARIANTES.findIndex(x=>x[0]===clave());
+    return irVariante(VARIANTES[(i+(t.id==='next'?1:-1)+3)%3][0]);}
+  const d=t.dataset;
+  if(d.bajar) return bajar();
+  if(d.cancelar) return cancelar();
+  if(d.borrar){S.listo=false;return pinta();}
+  if(d.ollama){S.ollama=!S.ollama;return pinta();}
+  if(d.via){S.via=d.via;return pinta();}
+  if(d.ver){S.verTarea=d.ver;return pinta();}
+  if(d.tarea){S.tareas.has(d.tarea)?S.tareas.delete(d.tarea):S.tareas.add(d.tarea);
+    if(d.tarea!=='limpiar'&&S.tareas.has(d.tarea))S.verTarea=d.tarea; return pinta();}
+});
+document.addEventListener('keydown',e=>{
+  if(/^(INPUT|TEXTAREA)$/.test(e.target.tagName))return;
+  if(e.key==='ArrowLeft'||e.key==='ArrowRight'){const i=VARIANTES.findIndex(x=>x[0]===clave());
+    irVariante(VARIANTES[(i+(e.key==='ArrowRight'?1:-1)+3)%3][0]);}
+});
+pinta();
+</script>
+</body>
+</html>

@@ -1,5 +1,8 @@
 // ignore_for_file: require_trailing_commas
 import 'package:flutter_test/flutter_test.dart';
+import 'package:pronto/src/core/config.dart';
+import 'package:pronto/src/features/formatting/cloud_cost.dart';
+import 'package:pronto/src/features/formatting/text_formatter.dart';
 import 'package:pronto/src/features/settings/settings_controller.dart';
 import 'package:pronto/src/features/translation/language_detect.dart';
 import 'package:pronto/src/platform/global_hotkey_service.dart';
@@ -29,9 +32,9 @@ void main() {
         injectionMode: InjectionMode.unicodeSendInput,
         triggerMode: TriggerMode.hold,
         autostart: true,
-        llmEnabled: true,
+        formatPath: FormatPath.local,
         llmBaseUrl: 'http://localhost:1234',
-        llmModel: 'phi3:mini',
+        formatModel: 'phi3:mini',
         captureExternalEdits: false,
         hotkey: HotkeyCombo(
           virtualKey: 0x73, // F4
@@ -67,7 +70,8 @@ void main() {
         expect(restored.micDeviceId, 'USB-Audio-Device-42');
       });
 
-      test('clave ausente en JSON devuelve null (compatibilidad hacia atrás)', () {
+      test('clave ausente en JSON devuelve null (compatibilidad hacia atrás)',
+          () {
         final json = base().toJson()..remove('micDeviceId');
         final restored = AppSettings.fromJson(json);
         expect(restored.micDeviceId, isNull);
@@ -99,7 +103,8 @@ void main() {
         expect(migrated.engine, SpeechEngine.parakeet);
       });
 
-      test('engine desconocido en JSON cae al valor por defecto (parakeet)', () {
+      test('engine desconocido en JSON cae al valor por defecto (parakeet)',
+          () {
         final fromDisk = AppSettings.fromJson(
           base().toJson()..['engine'] = 'valor_inventado',
         );
@@ -229,6 +234,172 @@ void main() {
     test('describe tecla alfanumérica', () {
       const combo = HotkeyCombo(virtualKey: 0x41); // 'A'
       expect(combo.describe(), 'A');
+    });
+  });
+
+  // ─── PRNT-1: el formateo deja de estar gateado por confianza ──────────────
+  group('camino de formateo (migración desde llmEnabled)', () {
+    test('por defecto no se formatea', () {
+      expect(AppSettings.defaults().formatPath, FormatPath.none);
+    });
+
+    test('el modelo por defecto SÍ existe en el registro de Ollama', () {
+      // `qwen3:4b`, el defecto viejo, no existe: encender el formateo daba 404
+      // y parecía que la función no servía.
+      expect(AppSettings.defaults().formatModel, isNot('qwen3:4b'));
+      expect(AppSettings.defaults().formatModel,
+          AppConfig.defaultFormatLocalModel);
+    });
+
+    test('ajustes viejos con el LLM ENCENDIDO -> formateo local', () {
+      const viejo = <String, dynamic>{
+        'llmEnabled': true,
+        'llmBaseUrl': 'http://localhost:11434',
+        'llmModel': 'phi3:mini',
+      };
+      final s = AppSettings.fromJson(viejo);
+      expect(s.formatPath, FormatPath.local);
+      expect(s.formatModel, 'phi3:mini');
+    });
+
+    test('ajustes viejos con el LLM APAGADO -> sin formateo', () {
+      final s =
+          AppSettings.fromJson(const <String, dynamic>{'llmEnabled': false});
+      expect(s.formatPath, FormatPath.none);
+    });
+
+    test('ajustes viejos con el modelo roto qwen3:4b -> cae al defecto', () {
+      final s = AppSettings.fromJson(const <String, dynamic>{
+        'llmEnabled': true,
+        'llmModel': 'qwen3:4b',
+      });
+      expect(s.formatModel, AppConfig.defaultFormatLocalModel);
+    });
+
+    test('ajustes sin ninguna clave de LLM -> defecto, sin reventar', () {
+      final s = AppSettings.fromJson(const <String, dynamic>{});
+      expect(s.formatPath, FormatPath.none);
+      expect(s.formatModel, AppConfig.defaultFormatLocalModel);
+    });
+
+    test('un formatPath desconocido cae al defecto', () {
+      final s = AppSettings.fromJson(
+          const <String, dynamic>{'formatPath': 'satelite'});
+      expect(s.formatPath, FormatPath.none);
+    });
+
+    test('la nube YA es un camino elegible (PRNT-11), y viene apagada', () {
+      // Hasta PRNT-11 un `cloud` persistido caía a "sin formateo" porque sus
+      // guardias no existían. Ahora existen —clave en el almacén de
+      // credenciales, tope de gasto y aviso en la Píldora— así que el camino se
+      // respeta. Encenderlo editando el fichero a mano no salta ninguno: sin
+      // clave no sale ni una petición (ver cloud_formatting_test.dart).
+      final s =
+          AppSettings.fromJson(const <String, dynamic>{'formatPath': 'cloud'});
+      expect(s.formatPath, FormatPath.cloud);
+      expect(AppSettings.defaults().formatPath, FormatPath.none);
+    });
+
+    test('el modelo de nube por defecto está en la lista blanca', () {
+      expect(kCloudPrices, contains(AppSettings.defaults().cloudModel));
+    });
+
+    test('un modelo de nube DESCONOCIDO no entra por el fichero de ajustes',
+        () {
+      // Si entrara, el tope de gasto no sabría lo que cuesta cada llamada.
+      final s = AppSettings.fromJson(const <String, dynamic>{
+        'cloudModel': 'carisimo/modelo-inventado',
+      });
+      expect(s.cloudModel, AppSettings.defaults().cloudModel);
+    });
+
+    test('un modelo de nube conocido SÍ se respeta', () {
+      final s = AppSettings.fromJson(const <String, dynamic>{
+        'cloudModel': 'openai/gpt-5-mini',
+      });
+      expect(s.cloudModel, 'openai/gpt-5-mini');
+    });
+
+    test('los topes de gasto por defecto son mucho más bajos que 2 \$/día', () {
+      // El tope del vigilante del VPS (2 \$/día) son cincuenta meses de uso
+      // normal: no puede detectar nada. El freno de verdad es este.
+      expect(AppSettings.defaults().cloudDayCapUsd, lessThan(0.5));
+      expect(AppSettings.defaults().cloudMonthCapUsd, lessThan(2.0));
+    });
+
+    test('un tope roto o negativo cae al defecto, nunca a "sin tope"', () {
+      for (final basura in ['mucho', -1, null, double.nan, double.infinity]) {
+        final s = AppSettings.fromJson(<String, dynamic>{
+          'cloudDayCapUsd': basura,
+          'cloudMonthCapUsd': basura,
+        });
+        expect(s.cloudDayCapUsd, AppConfig.defaultCloudDayCapUsd,
+            reason: '\$basura');
+        expect(s.cloudMonthCapUsd, AppConfig.defaultCloudMonthCapUsd);
+      }
+    });
+
+    test('un tope de CERO sí se respeta: es apagar la nube', () {
+      final s = AppSettings.fromJson(const <String, dynamic>{
+        'cloudDayCapUsd': 0,
+      });
+      expect(s.cloudDayCapUsd, 0);
+    });
+
+    test('round-trip del camino de nube con sus topes', () {
+      final s = AppSettings.defaults().copyWith(
+        formatPath: FormatPath.cloud,
+        cloudModel: 'google/gemini-3.1-flash-lite',
+        cloudDayCapUsd: 0.25,
+        cloudMonthCapUsd: 3,
+      );
+      expect(AppSettings.fromJson(s.toJson()), s);
+    });
+
+    test('🔒 el volcado de ajustes es una lista BLANCA, y la clave no está', () {
+      // El fichero de ajustes es JSON en claro. Se enumera lo que PUEDE estar
+      // dentro, no lo que no: buscar subcadenas prohibidas falla solo
+      // («hotkey» contiene «key»), y lo que hay que demostrar es el negativo.
+      final json = AppSettings.defaults()
+          .copyWith(formatPath: FormatPath.cloud)
+          .toJson();
+      expect(json.keys.toSet(), {
+        'modelFile',
+        'language',
+        'injectionMode',
+        'triggerMode',
+        'autostart',
+        'formatPath',
+        'llmBaseUrl',
+        'formatModel',
+        'cloudModel',
+        'cloudDayCapUsd',
+        'cloudMonthCapUsd',
+        'captureExternalEdits',
+        'hotkey',
+        'pillScale',
+        'engine',
+        'textPolish',
+        'sounds',
+        'micDeviceId',
+        'translationEnabled',
+        'outputLanguage',
+        'translationModel',
+        'translateHotkey',
+      });
+    });
+
+    test('formatPath nuevo gana sobre llmEnabled viejo', () {
+      final s = AppSettings.fromJson(const <String, dynamic>{
+        'formatPath': 'none',
+        'llmEnabled': true,
+      });
+      expect(s.formatPath, FormatPath.none);
+    });
+
+    test('round-trip del camino local', () {
+      final s = AppSettings.defaults().copyWith(formatPath: FormatPath.local);
+      expect(AppSettings.fromJson(s.toJson()).formatPath, FormatPath.local);
     });
   });
 }

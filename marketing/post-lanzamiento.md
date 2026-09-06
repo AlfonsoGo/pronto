@@ -12,12 +12,12 @@ Enlaces (úsalos en todos los posts):
 
 ## 1) Versión corta (X / Twitter / Threads)
 
-🎙️ Presento **Pronto**: dictado de voz por IA para Windows, **100% en tu equipo** (tu voz no sale del PC).
+🎙️ Presento **Pronto**: dictado de voz por IA para Windows. **Tu voz no sale de tu equipo**: se transcribe en tu propio ordenador.
 
 Mantienes un atajo, hablas, y el texto aparece donde estés escribiendo — navegador, editor, chat, correo…
 
 ✅ Gratis y open source (MIT)
-✅ Sin nube, sin cuentas, sin cuotas
+✅ Sin cuentas, sin cuotas · el audio nunca sale de tu equipo
 ✅ Aprende de tus correcciones
 
 ⬇️ github.com/AlfonsoGo/pronto/releases/latest
@@ -32,7 +32,7 @@ Pronto es una herramienta de **dictado de voz por IA para Windows**. La idea es 
 
 Lo que la hace diferente:
 
-🔒 **100% en tu equipo.** La transcripción corre en tu propio ordenador con Whisper (whisper.cpp). Tu voz **no se sube a ningún servidor**. Funciona sin conexión, sin cuentas y sin cuotas.
+🔒 **Tu voz no sale de tu equipo.** La transcripción corre en tu propio ordenador. Tu voz **no se sube a ningún servidor**. Funciona sin conexión, sin cuentas y sin cuotas. El formateo del texto con un modelo de lenguaje es opcional, viene apagado y puede correr en local; si eliges el de nube, sale el texto ya transcrito —nunca el audio— con tu propia clave.
 
 🧠 **Aprende de ti.** Cuando corriges una transcripción, Pronto detecta qué palabra falló y cómo la querías, y la próxima vez ya la escribe bien. Construye tu diccionario personal (nombres, jerga técnica, marcas…).
 
@@ -52,7 +52,7 @@ Hecho con cariño por **Beltran Labs**. Si la pruebas, me encantaría saber qué
 
 ## 3) Versión muy corta (Instagram / estado / pie de imagen)
 
-**Pronto** — dictado de voz por IA, 100% en tu PC y open source.
+**Pronto** — dictado de voz por IA, la transcripción en tu propio PC, y open source.
 Habla y el texto aparece donde escribes. Gratis para Windows.
 ⬇️ github.com/AlfonsoGo/pronto · beltranlabs.com
 

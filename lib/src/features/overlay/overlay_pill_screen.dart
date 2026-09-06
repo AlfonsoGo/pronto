@@ -23,6 +23,8 @@ Color _colorFor(DictationStatus s) {
       return const Color(0xFF34C759); // verde · listo
     case DictationStatus.recording:
       return const Color(0xFFFF3B30); // rojo · grabando
+    case DictationStatus.sendingToCloud:
+      return const Color(0xFFFF9500); // naranja · saliendo del equipo
     case DictationStatus.transcribing:
     case DictationStatus.translating:
     case DictationStatus.injecting:
@@ -42,6 +44,7 @@ bool _animated(DictationStatus s) =>
 /// ¿Está procesando? (pensando/traduciendo/escribiendo): aro giratorio.
 bool _thinking(DictationStatus s) =>
     s == DictationStatus.transcribing ||
+    s == DictationStatus.sendingToCloud ||
     s == DictationStatus.translating ||
     s == DictationStatus.injecting;
 
@@ -742,8 +745,15 @@ class _PopupBox extends StatelessWidget {
   /// que se lea de un vistazo cuál es cuál.
   static const _altTextColor = Color(0xFFB4AECB);
 
+  /// Ámbar del aviso: se distingue del morado de marca sin gritar como un rojo
+  /// de error. El dictado se pegó bien; solo falta una capa.
+  static const _warnColor = Color(0xFFE0A93A);
+
   bool get _copied => popup.kind == PillPopupKind.copied;
   bool get _notice => popup.kind == PillPopupKind.notice;
+
+  /// Hay un aviso que acompaña al texto (p. ej. que no se pudo formatear).
+  bool get _hasWarning => popup.notice.isNotEmpty;
 
   /// Solo se ofrece copiar cuando hay algo que copiar (un aviso no lo es).
   bool get _canCopy => !_notice && !_copied;
@@ -752,7 +762,8 @@ class _PopupBox extends StatelessWidget {
   Widget build(BuildContext context) {
     // Con dos versiones la caja necesita más alto; el tamaño de la VENTANA lo
     // acompaña desde _readingSize().
-    final double maxHeight = expanded ? (popup.hasAlt ? 292 : 200) : 44;
+    final double base = popup.hasAlt ? 292.0 : 200.0;
+    final double maxHeight = expanded ? (base + (_hasWarning ? 34 : 0)) : 44;
 
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
@@ -798,6 +809,7 @@ class _PopupBox extends StatelessWidget {
 
   IconData get _icon {
     if (_notice) return Icons.translate_rounded;
+    if (_hasWarning) return Icons.info_outline_rounded;
     return _copied ? Icons.check_circle_rounded : Icons.content_copy_rounded;
   }
 
@@ -806,7 +818,7 @@ class _PopupBox extends StatelessWidget {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Icon(_icon, size: 15, color: _hint),
+        Icon(_icon, size: 15, color: _hasWarning ? _warnColor : _hint),
         const SizedBox(width: 8),
         Expanded(
           child: Text(
@@ -832,6 +844,10 @@ class _PopupBox extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         _header(),
+        if (_hasWarning) ...[
+          const SizedBox(height: 6),
+          _warningLine(),
+        ],
         const SizedBox(height: 6),
         Flexible(
           child: SingleChildScrollView(
@@ -858,6 +874,28 @@ class _PopupBox extends StatelessWidget {
                   _altBlock(),
                 ],
               ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// Línea de aviso: por qué el dictado salió como salió. El texto viene de
+  /// [PillPopup.notice], que siempre es una cadena nuestra.
+  Widget _warningLine() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Icon(Icons.info_outline_rounded, size: 13, color: _warnColor),
+        const SizedBox(width: 6),
+        Expanded(
+          child: Text(
+            popup.notice,
+            style: const TextStyle(
+              color: _warnColor,
+              fontSize: 11.5,
+              height: 1.25,
             ),
           ),
         ),

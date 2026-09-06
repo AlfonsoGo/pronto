@@ -1,0 +1,338 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Prototipo 05 — Vocabulario</title>
+<!--
+  PROTOTIPO DESECHABLE. Pregunta: ¿cómo le enseñas a Pronto una palabra que nunca acierta?
+    A — Cuatro secciones en una pantalla (calco de FluidVoice: enseñar / sustituciones / términos / puntuación)
+    B — Un asistente de tres pasos en primer plano: escribes, grabas, eliges lo que oyó
+    C — Bandeja de entrada: Pronto PROPONE desde tus correcciones y tus fallos, y tú apruebas
+  El "grabar" está simulado: suelta variantes plausibles de lo que oiría el motor.
+-->
+<style>
+  :root{--violet:#8B5CF6;--violet-deep:#6D28D9;--violet-soft:#A78BFA;--yellow:#FDE047;
+        --bg:#0B0810;--surface:#0F0B16;--surface-hi:#161021;--ink:#F5F3FF;--muted:#9C93AE;
+        --green:#34D399;--red:#F87171;--orange:#FB923C;--line:rgba(245,243,255,.10)}
+  *{box-sizing:border-box} html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--ink);font:14px/1.5 "Segoe UI",system-ui,sans-serif;
+       display:flex;align-items:center;justify-content:center;padding:20px 20px 96px}
+  button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+  input{font:inherit;color:var(--ink);background:var(--surface-hi);border:1px solid var(--line);
+        border-radius:9px;padding:9px 12px;outline:none;width:100%}
+  input:focus{border-color:var(--violet)}
+  .mut{color:var(--muted)} .oculto{display:none!important}
+  .ventana{width:1000px;height:650px;background:var(--surface);border:1px solid var(--line);
+           border-radius:16px;overflow:hidden;display:flex;flex-direction:column;
+           box-shadow:0 40px 90px rgba(0,0,0,.6)}
+  .top{padding:18px 26px 14px;border-bottom:1px solid var(--line);display:flex;
+       justify-content:space-between;align-items:center}
+  .top h2{margin:0;font-size:19px}
+  .cuerpo{flex:1;overflow:auto;padding:20px 26px}
+  .btn{padding:8px 14px;border-radius:9px;font-weight:600;font-size:13px;
+       background:linear-gradient(180deg,var(--violet),var(--violet-deep));color:#fff}
+  .btn.ghost{background:transparent;border:1px solid var(--line);color:var(--muted)}
+  .btn.sm{padding:5px 11px;font-size:12px}
+  .btn.verde{background:linear-gradient(180deg,#34D399,#059669)}
+  .btn.roja{background:transparent;border:1px solid rgba(248,113,113,.4);color:var(--red)}
+  .tarjeta{background:var(--surface-hi);border:1px solid var(--line);border-radius:13px;padding:17px 19px}
+  .chip{display:inline-block;padding:2px 9px;border-radius:999px;font-size:10.5px;font-weight:700;
+        background:rgba(139,92,246,.18);color:var(--violet-soft)}
+  .chip.ok{background:rgba(52,211,153,.15);color:var(--green)}
+  .chip.gris{background:rgba(245,243,255,.07);color:var(--muted)}
+  .chip.mano{background:rgba(253,224,71,.15);color:var(--yellow)}
+  .fila{display:flex;align-items:center;gap:11px;padding:10px 13px;border-radius:10px;
+        border:1px solid var(--line);margin-bottom:7px;background:rgba(255,255,255,.015)}
+  .flecha{color:var(--muted)}
+  .mono{font-family:Consolas,monospace;font-size:13px}
+  .seccion{margin-bottom:22px}
+  .seccion h3{margin:0 0 3px;font-size:15px}
+  .seccion .sub{font-size:12.5px;color:var(--muted);margin-bottom:11px}
+  .ondas{display:inline-flex;align-items:center;gap:3px;height:26px}
+  .ondas i{width:3px;border-radius:99px;background:var(--violet-soft);animation:sube .6s ease-in-out infinite alternate}
+  @keyframes sube{from{height:5px}to{height:22px}}
+  .pasos{display:flex;gap:8px;margin-bottom:16px}
+  .pasos .p{flex:1;padding:9px 12px;border-radius:9px;font-size:12.5px;background:var(--surface-hi);
+            border:1px solid var(--line);color:var(--muted)}
+  .pasos .p.act{border-color:var(--violet);color:var(--ink);background:rgba(139,92,246,.12)}
+  .pasos .p.ok{border-color:rgba(52,211,153,.4);color:var(--green)}
+  #switcher{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:99;display:flex;
+    align-items:center;gap:4px;padding:6px;background:#fff;color:#111;border-radius:999px;
+    box-shadow:0 10px 30px rgba(0,0,0,.5);font-weight:650;font-size:13px}
+  #switcher button{width:30px;height:30px;border-radius:999px;font-size:15px;color:#111}
+  #switcher .lbl{padding:0 12px;white-space:nowrap}
+</style>
+</head>
+<body>
+<div class="ventana" id="app"></div>
+<div id="switcher"><button id="prev">‹</button><span class="lbl" id="lbl"></span><button id="next">›</button></div>
+
+<script>
+const OIDOS = {          // lo que el motor suele oír en vez de la palabra buena
+  'Serviforn':['servicio forn','servir born','servi forn'],
+  'BeltranLabs':['beltrán labs','veltran laps','beltran lab'],
+  'Supabase':['supabáis','super base','supa base'],
+  'Txonso':['chonso','chon so','tonso'],
+};
+let S = {
+  terminos:[
+    {t:'Serviforn', v:['servicio forn','servir born'], origen:'voz', usos:14},
+    {t:'BeltranLabs', v:['beltrán labs'], origen:'voz', usos:41},
+  ],
+  sust:[
+    {de:'mi correo', a:'txonso5@gmail.com', origen:'mano'},
+    {de:'cloud', a:'Claude', origen:'aprendida', veces:4},
+    {de:'supabáis', a:'Supabase', origen:'aprendida', veces:3},
+  ],
+  punt:[
+    {di:'coma', pon:','}, {di:'punto', pon:'.'}, {di:'punto y aparte', pon:'.\\n\\n'},
+    {di:'nueva línea', pon:'\\n'}, {di:'abre paréntesis', pon:'('},
+  ],
+  propuestas:[
+    {de:'cloud', a:'Claude', razon:'Lo corrigiste 4 veces en 6 días', veces:4, tipo:'sustitución'},
+    {de:'serviform', a:'Serviforn', razon:'Aparece en 3 dictados y siempre lo arreglas', veces:3, tipo:'sustitución'},
+    {de:'creas', a:'crees', razon:'Corregido 2 veces — ojo: puede ser correcto', veces:2, tipo:'sustitución', dudosa:true},
+    {de:'—', a:'Celia Ramos', razon:'Nombre propio que el motor nunca acierta igual dos veces', veces:5, tipo:'término'},
+  ],
+  // asistente
+  paso:0, palabra:'', grabaciones:[], grabando:false, elegidas:new Set(),
+};
+
+function grabar(){
+  if(!S.palabra.trim()) return;
+  S.grabando=true; pinta();
+  setTimeout(()=>{
+    const pool = OIDOS[S.palabra] || OIDOS[Object.keys(OIDOS).find(k=>k.toLowerCase()===S.palabra.toLowerCase())]
+              || [S.palabra.toLowerCase().replace(/[aeiou]/,'a'), S.palabra.toLowerCase().split('').reverse().join('').slice(0,6)];
+    const oido = pool[S.grabaciones.length % pool.length];
+    S.grabaciones.push(oido); S.elegidas.add(oido);
+    S.grabando=false;
+    if(S.grabaciones.length>=1 && S.paso<2) S.paso=2;
+    pinta();
+  }, 1100);
+}
+function guardar(){
+  S.terminos.unshift({t:S.palabra, v:[...S.elegidas], origen:'voz', usos:0});
+  [...S.elegidas].forEach(v=>S.sust.unshift({de:v, a:S.palabra, origen:'voz'}));
+  S.palabra=''; S.grabaciones=[]; S.elegidas=new Set(); S.paso=0; pinta();
+}
+
+const ondasHTML = `<span class="ondas">${[0,1,2,3,4].map(i=>
+  `<i style="animation-delay:${i*0.09}s"></i>`).join('')}</span>`;
+
+function bloqueEnsenar(compacto){
+  return `
+  <div class="tarjeta">
+    <div style="display:flex;gap:11px;align-items:center;margin-bottom:${compacto?10:14}px">
+      <span style="font-size:19px">🎤</span>
+      <div><div style="font-weight:650">Enseñar una palabra</div>
+        <div class="mut" style="font-size:12.5px">Escribe cómo se escribe, dilo dos o tres veces, y
+          Pronto te enseña lo que oyó.</div></div>
+    </div>
+    <div style="display:flex;gap:9px">
+      <input id="palabra" placeholder="Serviforn, BeltranLabs, Txonso…" value="${S.palabra}">
+      <button class="btn" id="grabar" ${S.grabando?'disabled':''} style="white-space:nowrap">
+        ${S.grabando?'Escuchando…':'● Grabar'}</button>
+    </div>
+    ${S.grabando?`<div style="margin-top:12px;display:flex;gap:10px;align-items:center">
+      ${ondasHTML}<span class="mut" style="font-size:12.5px">Di «${S.palabra}»…</span></div>`:''}
+    ${S.grabaciones.length?`
+      <div style="margin-top:14px">
+        <div class="mut" style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;margin-bottom:8px">
+          Lo que oyó (${S.grabaciones.length} ${S.grabaciones.length===1?'toma':'tomas'})</div>
+        ${[...new Set(S.grabaciones)].map(v=>`
+          <div class="fila" style="cursor:pointer" data-toggle="${v}">
+            <span style="width:16px;color:var(--green)">${S.elegidas.has(v)?'✓':''}</span>
+            <span class="mono mut">${v}</span><span class="flecha">→</span>
+            <span class="mono" style="font-weight:650">${S.palabra}</span>
+          </div>`).join('')}
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="btn verde sm" id="guardar" ${S.elegidas.size?'':'disabled'}>
+            Guardar ${S.elegidas.size} ${S.elegidas.size===1?'regla':'reglas'}</button>
+          <button class="btn ghost sm" id="otra">Grabar otra toma</button>
+        </div>
+      </div>`:''}
+  </div>`;
+}
+
+// ---------------------------------------------------------------- VARIANTE A
+function variantA(){
+  return `<div class="top"><h2>Vocabulario</h2>
+    <div style="display:flex;gap:8px"><button class="btn ghost sm">Importar</button>
+      <button class="btn ghost sm">Exportar</button></div></div>
+  <div class="cuerpo">
+    <div class="seccion">${bloqueEnsenar(true)}</div>
+
+    <div class="seccion">
+      <h3>Términos</h3>
+      <div class="sub">Palabras tuyas que el motor debe reconocer tal cual. No cambian el texto: cambian lo que el motor oye.</div>
+      ${S.terminos.map(t=>`<div class="fila">
+        <span class="mono" style="font-weight:650;min-width:130px">${t.t}</span>
+        <span class="mut" style="font-size:12px;flex:1">oído como: ${t.v.join(' · ')}</span>
+        <span class="chip gris">${t.usos} usos</span>
+        <span class="chip">${t.origen==='voz'?'enseñado por voz':'a mano'}</span>
+        <button class="btn ghost sm">✕</button></div>`).join('')}
+    </div>
+
+    <div class="seccion">
+      <h3>Sustituciones</h3>
+      <div class="sub">Esto se cambia por esto otro, después de transcribir. Lo escrito a mano gana siempre.</div>
+      ${S.sust.map(s=>`<div class="fila">
+        <span class="mono mut" style="min-width:130px">${s.de}</span><span class="flecha">→</span>
+        <span class="mono" style="flex:1;font-weight:650">${s.a}</span>
+        <span class="chip ${s.origen==='mano'?'mano':s.origen==='voz'?'':'gris'}">
+          ${s.origen==='mano'?'escrita por ti':s.origen==='voz'?'por voz':`aprendida ×${s.veces}`}</span>
+        <button class="btn ghost sm">✕</button></div>`).join('')}
+      <button class="btn ghost sm" style="margin-top:6px">+ Añadir sustitución a mano</button>
+    </div>
+
+    <div class="seccion">
+      <h3>Puntuación hablada</h3>
+      <div class="sub">Lo que dices en voz alta y sale como signo. Ocurre siempre, antes que nada, y no puede inventar.</div>
+      <div style="display:flex;flex-wrap:wrap;gap:7px">${S.punt.map(p=>`
+        <span class="fila" style="margin:0;padding:7px 12px">
+          <span class="mono mut">«${p.di}»</span><span class="flecha">→</span>
+          <span class="mono">${p.pon}</span></span>`).join('')}
+        <button class="btn ghost sm">+ Añadir</button></div>
+    </div>
+  </div>`;
+}
+
+// ---------------------------------------------------------------- VARIANTE B
+function variantB(){
+  const pasos=['1 · Escribe la palabra','2 · Dila en voz alta','3 · Elige lo que oyó'];
+  const act = S.grabaciones.length?2:(S.palabra?1:0);
+  return `<div class="top"><h2>Enseñar una palabra</h2>
+    <button class="btn ghost sm">Ver todo el Vocabulario (${S.terminos.length+S.sust.length})</button></div>
+  <div class="cuerpo">
+    <div class="pasos">${pasos.map((p,i)=>`
+      <div class="p ${i===act?'act':''} ${i<act?'ok':''}">${i<act?'✓ ':''}${p}</div>`).join('')}</div>
+
+    <div class="tarjeta" style="padding:26px">
+      ${act===0?`
+        <div style="font-size:17px;font-weight:650;margin-bottom:4px">¿Qué palabra nunca acierta?</div>
+        <div class="mut" style="font-size:13px;margin-bottom:16px">Escríbela exactamente como quieres verla escrita.</div>
+        <input id="palabra" placeholder="Serviforn" value="${S.palabra}" style="font-size:17px;padding:13px 15px">`
+      : act===1?`
+        <div style="font-size:17px;font-weight:650;margin-bottom:4px">Ahora dila: «${S.palabra}»</div>
+        <div class="mut" style="font-size:13px;margin-bottom:18px">Dos o tres veces, con tu voz normal.
+          No hace falta vocalizar raro: precisamente queremos saber cómo la dices tú.</div>
+        <div style="display:flex;gap:12px;align-items:center">
+          <button class="btn" id="grabar" ${S.grabando?'disabled':''} style="padding:13px 22px;font-size:15px">
+            ${S.grabando?'Escuchando…':'● Grabar'}</button>
+          ${S.grabando?ondasHTML:''}
+          <button class="btn ghost sm" data-paso0="1">← cambiar la palabra</button>
+        </div>`
+      : `
+        <div style="font-size:17px;font-weight:650;margin-bottom:4px">Esto es lo que oyó</div>
+        <div class="mut" style="font-size:13px;margin-bottom:16px">Marca las que quieras convertir en regla.
+          Cada una arreglará ese fallo para siempre.</div>
+        ${[...new Set(S.grabaciones)].map(v=>`
+          <div class="fila" style="cursor:pointer;padding:14px 16px" data-toggle="${v}">
+            <span style="width:18px;font-size:16px;color:var(--green)">${S.elegidas.has(v)?'✓':'○'}</span>
+            <span class="mono mut" style="font-size:15px">${v}</span>
+            <span class="flecha">→</span>
+            <span class="mono" style="font-size:15px;font-weight:650">${S.palabra}</span>
+          </div>`).join('')}
+        <div style="display:flex;gap:9px;margin-top:16px">
+          <button class="btn verde" id="guardar" ${S.elegidas.size?'':'disabled'}>
+            Guardar ${S.elegidas.size} ${S.elegidas.size===1?'regla':'reglas'}</button>
+          <button class="btn ghost" id="otra">Grabar otra toma</button>
+        </div>`}
+    </div>
+
+    <div style="margin-top:22px">
+      <div class="mut" style="font-size:11px;letter-spacing:.05em;text-transform:uppercase;margin-bottom:9px">
+        Ya enseñadas</div>
+      ${S.terminos.map(t=>`<div class="fila">
+        <span class="mono" style="font-weight:650;min-width:130px">${t.t}</span>
+        <span class="mut" style="font-size:12px;flex:1">${t.v.length} variantes · ${t.usos} usos</span>
+        <span class="chip ok">activa</span></div>`).join('')}
+    </div>
+  </div>`;
+}
+
+// ---------------------------------------------------------------- VARIANTE C
+function variantC(){
+  return `<div class="top"><h2>Vocabulario</h2>
+    <div class="mut" style="font-size:12.5px">${S.propuestas.length} propuestas esperando ·
+      ${S.terminos.length} términos · ${S.sust.length} sustituciones activas</div></div>
+  <div class="cuerpo">
+    <div class="seccion">
+      <h3>Pronto ha notado esto</h3>
+      <div class="sub">Sale de tus correcciones y de los dictados del Historial. Nada se aplica hasta que lo apruebas.</div>
+      ${S.propuestas.map((p,i)=>`
+        <div class="tarjeta" style="margin-bottom:9px;display:flex;gap:14px;align-items:center;padding:14px 17px">
+          <div style="flex:1">
+            <div style="display:flex;gap:9px;align-items:center">
+              ${p.de!=='—'?`<span class="mono mut">${p.de}</span><span class="flecha">→</span>`:''}
+              <span class="mono" style="font-weight:650;font-size:15px">${p.a}</span>
+              <span class="chip ${p.dudosa?'mano':'gris'}">${p.tipo}</span>
+              ${p.dudosa?'<span class="chip mano">⚠ dudosa</span>':''}
+            </div>
+            <div class="mut" style="font-size:12.5px;margin-top:4px">${p.razon}</div>
+          </div>
+          <button class="btn verde sm" data-aprobar="${i}">Aprobar</button>
+          <button class="btn roja sm" data-rechazar="${i}">No</button>
+          <button class="btn ghost sm" data-oir="${i}">Oír el original</button>
+        </div>`).join('') || '<div class="mut">Nada pendiente. Buena señal.</div>'}
+    </div>
+
+    <div class="seccion">
+      <h3>Y si quieres adelantarte</h3>
+      <div class="sub">Enseñarle una palabra a mano, sin esperar a que falle tres veces.</div>
+      ${bloqueEnsenar(true)}
+    </div>
+
+    <div class="seccion">
+      <h3>Activas</h3>
+      ${S.sust.slice(0,4).map(s=>`<div class="fila">
+        <span class="mono mut" style="min-width:130px">${s.de}</span><span class="flecha">→</span>
+        <span class="mono" style="flex:1;font-weight:650">${s.a}</span>
+        <span class="chip ${s.origen==='mano'?'mano':'gris'}">${s.origen}</span></div>`).join('')}
+      <button class="btn ghost sm" style="margin-top:6px">Ver las ${S.sust.length}</button>
+    </div>
+  </div>`;
+}
+
+const VARIANTES=[['A','Cuatro secciones en una pantalla (calco)',variantA],
+                 ['B','Asistente de tres pasos en primer plano',variantB],
+                 ['C','Bandeja de entrada: Pronto propone, tú apruebas',variantC]];
+function clave(){const v=(new URLSearchParams(location.search).get('variant')||'A').toUpperCase();
+  return VARIANTES.some(x=>x[0]===v)?v:'A';}
+function irVariante(k){const u=new URL(location);u.searchParams.set('variant',k);
+  history.replaceState({},'',u);pinta();}
+function pinta(){const k=clave(),v=VARIANTES.find(x=>x[0]===k);
+  const foco=document.activeElement&&document.activeElement.id==='palabra';
+  document.getElementById('app').innerHTML=v[2]();
+  document.getElementById('lbl').textContent=`${k} — ${v[1]}`;
+  if(foco){const i=document.getElementById('palabra');if(i){i.focus();i.setSelectionRange(999,999);}}}
+
+document.addEventListener('click',e=>{
+  const t=e.target.closest('[data-toggle],[data-aprobar],[data-rechazar],[data-paso0],#grabar,#guardar,#otra,#prev,#next');
+  if(!t) return;
+  if(t.id==='prev'||t.id==='next'){const i=VARIANTES.findIndex(x=>x[0]===clave());
+    return irVariante(VARIANTES[(i+(t.id==='next'?1:-1)+3)%3][0]);}
+  if(t.id==='grabar'||t.id==='otra') return grabar();
+  if(t.id==='guardar') return guardar();
+  if(t.dataset.paso0){S.grabaciones=[];S.elegidas=new Set();return pinta();}
+  if(t.dataset.toggle){const v=t.dataset.toggle;
+    S.elegidas.has(v)?S.elegidas.delete(v):S.elegidas.add(v);return pinta();}
+  if(t.dataset.aprobar!==undefined){const p=S.propuestas.splice(+t.dataset.aprobar,1)[0];
+    if(p.tipo==='término') S.terminos.unshift({t:p.a,v:[],origen:'aprendido',usos:p.veces});
+    else S.sust.unshift({de:p.de,a:p.a,origen:'aprendida',veces:p.veces});
+    return pinta();}
+  if(t.dataset.rechazar!==undefined){S.propuestas.splice(+t.dataset.rechazar,1);return pinta();}
+});
+document.addEventListener('input',e=>{ if(e.target.id==='palabra'){S.palabra=e.target.value;
+  const b=document.getElementById('grabar'); if(b)b.disabled=!S.palabra.trim();} });
+document.addEventListener('keydown',e=>{
+  if(/^(INPUT|TEXTAREA)$/.test(e.target.tagName)){ if(e.key==='Enter')grabar(); return; }
+  if(e.key==='ArrowLeft'||e.key==='ArrowRight'){const i=VARIANTES.findIndex(x=>x[0]===clave());
+    irVariante(VARIANTES[(i+(e.key==='ArrowRight'?1:-1)+3)%3][0]);}
+});
+pinta();
+</script>
+</body>
+</html>

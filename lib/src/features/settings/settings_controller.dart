@@ -10,6 +10,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../core/config.dart';
 import '../../platform/global_hotkey_service.dart';
 import '../../platform/text_injector.dart';
+import '../formatting/cloud_cost.dart';
+import '../formatting/text_formatter.dart';
 import '../translation/language_detect.dart';
 
 /// Provider global de ajustes de la app.
@@ -44,14 +46,29 @@ class AppSettings {
   /// Si la app debe arrancar con el sistema.
   final bool autostart;
 
-  /// Si la post-corrección por LLM está activada.
-  final bool llmEnabled;
+  /// Por dónde se formatea el dictado: sin formateo, local o nube.
+  ///
+  /// Sustituye al viejo `llmEnabled`. Son dos cosas distintas: el usuario elige
+  /// SI quiere formateo (esto), y cuando lo ha elegido se ejecuta SIEMPRE — ya
+  /// no hay puerta de confianza que se lo salte por detrás.
+  final FormatPath formatPath;
 
-  /// URL base del servidor LLM (Ollama local o compatible OpenAI).
+  /// URL base del servidor LLM local (Ollama). La comparten el formateo y la
+  /// traducción.
   final String llmBaseUrl;
 
-  /// Modelo LLM a usar para la post-corrección.
-  final String llmModel;
+  /// Modelo local con el que se formatea.
+  final String formatModel;
+
+  /// Modelo de nube con el que se formatea. Siempre uno de [kCloudPrices]: la
+  /// lista blanca es lo que permite que el tope de gasto sepa lo que cuesta.
+  final String cloudModel;
+
+  /// Tope de gasto de nube por día, en dólares.
+  final double cloudDayCapUsd;
+
+  /// Tope de gasto de nube por mes, en dólares.
+  final double cloudMonthCapUsd;
 
   /// Si se capturan ediciones externas (lo que copias en otra app tras dictar)
   /// para alimentar el aprendizaje. Conservador y filtrado por similitud.
@@ -98,11 +115,14 @@ class AppSettings {
     required this.injectionMode,
     required this.triggerMode,
     required this.autostart,
-    required this.llmEnabled,
+    required this.formatPath,
     required this.llmBaseUrl,
-    required this.llmModel,
+    required this.formatModel,
     required this.captureExternalEdits,
     required this.hotkey,
+    this.cloudModel = AppConfig.defaultFormatCloudModel,
+    this.cloudDayCapUsd = AppConfig.defaultCloudDayCapUsd,
+    this.cloudMonthCapUsd = AppConfig.defaultCloudMonthCapUsd,
     this.pillScale = 1.0,
     this.engine = SpeechEngine.parakeet,
     this.textPolish = true,
@@ -126,11 +146,11 @@ class AppSettings {
         injectionMode: InjectionMode.clipboardPaste,
         triggerMode: TriggerMode.toggle,
         autostart: false,
-        llmEnabled: false,
-        // Ollama local por defecto. Solo la RAÍZ del servidor: LlmCorrector
+        formatPath: FormatPath.none,
+        // Ollama local por defecto. Solo la RAÍZ del servidor: TextFormatter
         // añade la ruta (`/api/chat` en Ollama, `/v1/chat/completions` en nube).
         llmBaseUrl: 'http://localhost:11434',
-        llmModel: 'qwen3:4b',
+        formatModel: AppConfig.defaultFormatLocalModel,
         captureExternalEdits: true,
         hotkey: HotkeyCombo.defaultCombo,
       );
@@ -141,9 +161,12 @@ class AppSettings {
     InjectionMode? injectionMode,
     TriggerMode? triggerMode,
     bool? autostart,
-    bool? llmEnabled,
+    FormatPath? formatPath,
     String? llmBaseUrl,
-    String? llmModel,
+    String? formatModel,
+    String? cloudModel,
+    double? cloudDayCapUsd,
+    double? cloudMonthCapUsd,
     bool? captureExternalEdits,
     HotkeyCombo? hotkey,
     double? pillScale,
@@ -165,9 +188,12 @@ class AppSettings {
       injectionMode: injectionMode ?? this.injectionMode,
       triggerMode: triggerMode ?? this.triggerMode,
       autostart: autostart ?? this.autostart,
-      llmEnabled: llmEnabled ?? this.llmEnabled,
+      formatPath: formatPath ?? this.formatPath,
       llmBaseUrl: llmBaseUrl ?? this.llmBaseUrl,
-      llmModel: llmModel ?? this.llmModel,
+      formatModel: formatModel ?? this.formatModel,
+      cloudModel: cloudModel ?? this.cloudModel,
+      cloudDayCapUsd: cloudDayCapUsd ?? this.cloudDayCapUsd,
+      cloudMonthCapUsd: cloudMonthCapUsd ?? this.cloudMonthCapUsd,
       captureExternalEdits: captureExternalEdits ?? this.captureExternalEdits,
       hotkey: hotkey ?? this.hotkey,
       pillScale: pillScale ?? this.pillScale,
@@ -188,9 +214,12 @@ class AppSettings {
         'injectionMode': injectionMode.name,
         'triggerMode': triggerMode.name,
         'autostart': autostart,
-        'llmEnabled': llmEnabled,
+        'formatPath': formatPath.name,
         'llmBaseUrl': llmBaseUrl,
-        'llmModel': llmModel,
+        'formatModel': formatModel,
+        'cloudModel': cloudModel,
+        'cloudDayCapUsd': cloudDayCapUsd,
+        'cloudMonthCapUsd': cloudMonthCapUsd,
         'captureExternalEdits': captureExternalEdits,
         'hotkey': hotkey.toJson(),
         'pillScale': pillScale,
@@ -216,9 +245,16 @@ class AppSettings {
       triggerMode: _triggerFromName(j['triggerMode'] as String?) ??
           d.triggerMode,
       autostart: j['autostart'] as bool? ?? d.autostart,
-      llmEnabled: j['llmEnabled'] as bool? ?? d.llmEnabled,
+      formatPath: _formatPathFromJson(j) ?? d.formatPath,
       llmBaseUrl: j['llmBaseUrl'] as String? ?? d.llmBaseUrl,
-      llmModel: j['llmModel'] as String? ?? d.llmModel,
+      formatModel: _formatModelFromJson(j) ?? d.formatModel,
+      // Lista blanca: un modelo de nube que no conocemos NO se acepta, porque
+      // el tope de gasto no sabría lo que cuesta y dejaría pasar cualquier cosa.
+      cloudModel: kCloudPrices.containsKey(j['cloudModel'])
+          ? j['cloudModel'] as String
+          : d.cloudModel,
+      cloudDayCapUsd: _capFromJson(j['cloudDayCapUsd'], d.cloudDayCapUsd),
+      cloudMonthCapUsd: _capFromJson(j['cloudMonthCapUsd'], d.cloudMonthCapUsd),
       captureExternalEdits:
           j['captureExternalEdits'] as bool? ?? d.captureExternalEdits,
       hotkey: j['hotkey'] is Map
@@ -242,6 +278,55 @@ class AppSettings {
             )
           : d.translateHotkey,
     );
+  }
+
+  /// Lee el camino de formateo, MIGRANDO los ajustes viejos.
+  ///
+  /// Hasta la 0.7.1 esto era `llmEnabled` (un booleano) y el destino siempre era
+  /// Ollama local. Quien lo tuviera encendido se queda en local; quien no, sin
+  /// formateo.
+  ///
+  /// Desde PRNT-11 la nube SÍ es un camino elegible, con sus guardias puestos
+  /// (clave en el almacén de credenciales, tope de gasto comprobado al entrar y
+  /// aviso en la Píldora). Encenderla editando el fichero a mano no salta
+  /// ninguno de los tres: sin clave no sale ni una petición.
+  static FormatPath? _formatPathFromJson(Map<String, dynamic> j) {
+    final name = j['formatPath'] as String?;
+    if (name != null) {
+      for (final v in FormatPath.values) {
+        if (v.name == name) return v;
+      }
+      return null;
+    }
+    final viejo = j['llmEnabled'] as bool?;
+    if (viejo == null) return null;
+    return viejo ? FormatPath.local : FormatPath.none;
+  }
+
+  /// Lee el modelo de formateo, migrando desde `llmModel`.
+  ///
+  /// `qwen3:4b` era el defecto viejo y NO existe en el registro público de
+  /// Ollama: encender el formateo daba 404. Si alguien lo tiene persistido, se
+  /// le cambia por el defecto actual en vez de arrastrarle un modelo que nunca
+  /// pudo funcionar.
+  static String? _formatModelFromJson(Map<String, dynamic> j) {
+    final actual = j['formatModel'] as String?;
+    if (actual != null && actual.isNotEmpty) return actual;
+    final viejo = j['llmModel'] as String?;
+    if (viejo == null || viejo.isEmpty || viejo == 'qwen3:4b') return null;
+    return viejo;
+  }
+
+  /// Lee un tope de gasto persistido. Un valor que no es un número, es
+  /// negativo o no es finito cae al defecto: un tope roto no puede convertirse
+  /// en "sin tope".
+  static double _capFromJson(Object? v, double porDefecto) {
+    if (v is num && v.isFinite && v >= 0) {
+      // Un tope disparatado en el fichero se recorta al techo en vez de
+      // respetarse: se ve en Ajustes y no hay forma de gastar de más a ciegas.
+      return v.toDouble().clamp(0.0, AppConfig.cloudMaxCapUsd);
+    }
+    return porDefecto;
   }
 
   static SpeechEngine? _engineFromName(String? name) {
@@ -276,9 +361,12 @@ class AppSettings {
       other.injectionMode == injectionMode &&
       other.triggerMode == triggerMode &&
       other.autostart == autostart &&
-      other.llmEnabled == llmEnabled &&
+      other.formatPath == formatPath &&
       other.llmBaseUrl == llmBaseUrl &&
-      other.llmModel == llmModel &&
+      other.formatModel == formatModel &&
+      other.cloudModel == cloudModel &&
+      other.cloudDayCapUsd == cloudDayCapUsd &&
+      other.cloudMonthCapUsd == cloudMonthCapUsd &&
       other.captureExternalEdits == captureExternalEdits &&
       other.hotkey == hotkey &&
       other.pillScale == pillScale &&
@@ -292,15 +380,18 @@ class AppSettings {
       other.translateHotkey == translateHotkey;
 
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll([
         modelFile,
         language,
         injectionMode,
         triggerMode,
         autostart,
-        llmEnabled,
+        formatPath,
         llmBaseUrl,
-        llmModel,
+        formatModel,
+        cloudModel,
+        cloudDayCapUsd,
+        cloudMonthCapUsd,
         captureExternalEdits,
         hotkey,
         pillScale,
@@ -312,7 +403,7 @@ class AppSettings {
         outputLanguage,
         translationModel,
         translateHotkey,
-      );
+      ]);
 }
 
 /// Controla y persiste los ajustes de la app con [SharedPreferences].
@@ -398,8 +489,9 @@ class SettingsController extends Notifier<AppSettings> {
     await _applyAutostart(value);
   }
 
-  Future<void> setLlmEnabled(bool value) async {
-    state = state.copyWith(llmEnabled: value);
+  /// Cambia por dónde se formatea el dictado.
+  Future<void> setFormatPath(FormatPath value) async {
+    state = state.copyWith(formatPath: value);
     await _save();
   }
 
@@ -408,8 +500,36 @@ class SettingsController extends Notifier<AppSettings> {
     await _save();
   }
 
-  Future<void> setLlmModel(String value) async {
-    state = state.copyWith(llmModel: value);
+  Future<void> setFormatModel(String value) async {
+    state = state.copyWith(formatModel: value);
+    await _save();
+  }
+
+  /// Cambia el modelo de nube. Solo acepta uno de la lista blanca: fuera de
+  /// ella el tope de gasto no sabría con qué precio contar.
+  Future<void> setCloudModel(String value) async {
+    if (!kCloudPrices.containsKey(value)) return;
+    state = state.copyWith(cloudModel: value);
+    await _save();
+  }
+
+  /// Fija el tope de gasto diario, en dólares. Un valor negativo, o por encima
+  /// del techo de [AppConfig.cloudMaxCapUsd], se ignora: el campo vuelve al
+  /// valor bueno en vez de aceptar un 100 que se quería 1,00.
+  Future<void> setCloudDayCapUsd(double value) async {
+    if (!value.isFinite || value < 0 || value > AppConfig.cloudMaxCapUsd) {
+      return;
+    }
+    state = state.copyWith(cloudDayCapUsd: value);
+    await _save();
+  }
+
+  /// Fija el tope de gasto mensual, en dólares. Mismo techo que el diario.
+  Future<void> setCloudMonthCapUsd(double value) async {
+    if (!value.isFinite || value < 0 || value > AppConfig.cloudMaxCapUsd) {
+      return;
+    }
+    state = state.copyWith(cloudMonthCapUsd: value);
     await _save();
   }
 

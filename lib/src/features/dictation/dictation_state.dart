@@ -7,6 +7,13 @@ enum DictationStatus {
   recording,
   transcribing,
 
+  /// El texto dictado está SALIENDO DEL EQUIPO hacia el proveedor de nube para
+  /// formatearlo. Es un estado propio y no un "pensando" más a propósito: es el
+  /// único momento en que algo de un dictado sale del ordenador, y la Píldora
+  /// tiene que decirlo con todas las letras. Solo se entra aquí cuando la
+  /// petición ya va a salir de verdad.
+  sendingToCloud,
+
   /// Traduciendo antes de pegar (solo si dictaste en un idioma distinto al de
   /// salida). La traducción de cortesía va en segundo plano y NO usa este estado.
   translating,
@@ -55,9 +62,17 @@ class DictationState {
     this.error,
   });
 
+  /// Hay un dictado en marcha y no se puede empezar otro.
+  ///
+  /// [DictationStatus.sendingToCloud] cuenta: si no contara, pulsar el atajo
+  /// con el texto AÚN EN VUELO arrancaría un dictado nuevo, la píldora naranja
+  /// desaparecería mientras el texto sigue fuera del equipo —el aviso que el
+  /// usuario necesita— y quedarían dos formateos volando contra el mismo tope
+  /// de gasto.
   bool get isBusy =>
       status == DictationStatus.recording ||
       status == DictationStatus.transcribing ||
+      status == DictationStatus.sendingToCloud ||
       status == DictationStatus.translating ||
       status == DictationStatus.injecting;
 

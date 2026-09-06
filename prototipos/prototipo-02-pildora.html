@@ -1,0 +1,309 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Prototipo 02 — La Píldora</title>
+<!--
+  PROTOTIPO DESECHABLE. Pregunta: ¿cómo debe verse y comportarse la Píldora mientras dictas?
+  Se juzga SOBRE una app de fondo falsa, porque una píldora sola siempre parece bonita.
+    A — Barra inferior centrada, cuatro tamaños, menús hacia arriba (calco de FluidVoice)
+    B — Punto mínimo que crece hacia el lado, menú numerado 100% teclado (evolución de la actual)
+    C — Píldora diminuta + el texto en vivo como fantasma donde vas a escribir
+  Estados: inactivo · escuchando · procesando · pegado · error.  Teclas: 1-5 estados, M menú, ← → variante
+-->
+<style>
+  :root{
+    --violet:#8B5CF6; --violet-deep:#6D28D9; --violet-soft:#A78BFA; --yellow:#FDE047;
+    --bg:#0B0810; --surface:#0F0B16; --surface-hi:#161021; --ink:#F5F3FF; --muted:#9C93AE;
+    --green:#34D399; --red:#F87171; --line:rgba(245,243,255,.10);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{background:#1b1b1f;color:var(--ink);font:14px/1.5 "Segoe UI",system-ui,sans-serif;
+       display:flex;align-items:center;justify-content:center;padding:20px 20px 96px}
+  button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+  .mut{color:var(--muted)}
+  .oculto{display:none!important}
+
+  /* --------- escritorio falso: una app cualquiera con el cursor dentro --------- */
+  .escritorio{
+    width:1000px;height:620px;border-radius:14px;overflow:hidden;position:relative;
+    background:linear-gradient(160deg,#2a2140,#141021 60%,#0d0b13);
+    box-shadow:0 40px 90px rgba(0,0,0,.65);
+  }
+  .appfalsa{position:absolute;inset:46px 60px 60px;background:#fbfaf7;color:#22201c;
+            border-radius:10px;box-shadow:0 18px 50px rgba(0,0,0,.45);display:flex;flex-direction:column}
+  .appfalsa .tb{height:34px;background:#eeebe4;border-bottom:1px solid #ddd8cd;display:flex;
+                align-items:center;gap:7px;padding:0 12px;font-size:12px;color:#6b6559}
+  .appfalsa .tb i{width:10px;height:10px;border-radius:99px;background:#d6d1c6;display:block}
+  .appfalsa .doc{flex:1;padding:26px 30px;font:15px/1.7 Georgia,serif;overflow:auto;white-space:pre-wrap}
+  .caret{display:inline-block;width:2px;height:1.05em;background:#22201c;vertical-align:-2px;
+         animation:parpadeo 1s steps(1) infinite}
+  @keyframes parpadeo{50%{opacity:0}}
+  .fantasma{color:#a8a296;font-style:italic}
+
+  /* --------- barra de estados (herramienta, no diseño) --------- */
+  .mando{position:fixed;top:14px;left:50%;transform:translateX(-50%);z-index:98;display:flex;gap:6px;
+         background:rgba(20,18,26,.92);border:1px solid var(--line);border-radius:999px;padding:6px 8px;
+         font-size:12.5px;align-items:center;backdrop-filter:blur(8px)}
+  .mando button{padding:5px 11px;border-radius:999px;color:var(--muted)}
+  .mando button.on{background:var(--violet);color:#fff;font-weight:650}
+  .mando .sep{width:1px;height:18px;background:var(--line);margin:0 3px}
+
+  #switcher{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:99;display:flex;
+            align-items:center;gap:4px;padding:6px;background:#fff;color:#111;border-radius:999px;
+            box-shadow:0 10px 30px rgba(0,0,0,.5);font-weight:650;font-size:13px}
+  #switcher button{width:30px;height:30px;border-radius:999px;font-size:15px;color:#111}
+  #switcher button:hover{background:#eee}
+  #switcher .lbl{padding:0 12px;white-space:nowrap}
+
+  /* --------- píldora: piezas comunes de pintura --------- */
+  .vidrio{background:rgba(14,11,20,.86);border:1px solid rgba(245,243,255,.14);
+          backdrop-filter:blur(18px) saturate(1.3);box-shadow:0 16px 44px rgba(0,0,0,.55)}
+  .ondas{display:flex;align-items:center;gap:2.5px;height:30px}
+  .ondas i{width:3px;border-radius:99px;background:var(--ink);transition:height .08s linear,opacity .3s}
+  .ondas.proc i{background:var(--muted);opacity:.35}
+  .brillo{position:absolute;inset:0;pointer-events:none;overflow:hidden;border-radius:inherit}
+  .brillo::after{content:"";position:absolute;top:0;bottom:0;width:70px;
+    background:linear-gradient(90deg,transparent,rgba(255,255,255,.28),transparent);
+    animation:barrido 1.05s linear infinite}
+  @keyframes barrido{from{left:-80px}to{left:100%}}
+  .menu{position:absolute;bottom:calc(100% + 10px);left:0;min-width:260px;border-radius:11px;
+        padding:5px;z-index:5}
+  .menu .grupo{font-size:10.5px;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);
+               padding:7px 9px 4px}
+  .menu .fila{display:flex;align-items:center;gap:9px;padding:7px 9px;border-radius:7px;font-size:13.5px}
+  .menu .fila.sel{background:rgba(255,255,255,.14)}
+  .menu .fila .tecla{margin-left:auto;font-size:10.5px;font-weight:700;color:var(--muted);
+                     background:rgba(255,255,255,.08);border-radius:99px;padding:2px 7px}
+  .menu .sepm{height:1px;background:var(--line);margin:5px 4px}
+
+  /* --------- VARIANTE A --------- */
+  .pA{position:absolute;left:50%;bottom:26px;transform:translateX(-50%);border-radius:var(--r);
+      display:flex;flex-direction:column;gap:9px;padding:var(--p)}
+  .pA .cabeza{display:flex;align-items:center;gap:11px}
+  .pA .txt{font-size:13.5px;line-height:1.45;max-height:64px;overflow:hidden}
+  .pA .ctrl{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted)}
+  .pA .ctrl .pin{padding:2px 8px;border-radius:99px;background:rgba(255,255,255,.07)}
+
+  /* --------- VARIANTE B --------- */
+  .pB{position:absolute;left:50%;bottom:30px;transform:translateX(-50%);display:flex;
+      align-items:center;gap:9px}
+  .pB .punto{width:46px;height:46px;border-radius:99px;display:grid;place-items:center;flex:none;position:relative}
+  .pB .caja{max-width:520px;border-radius:13px;padding:11px 14px;font-size:13.5px}
+  .pB .caja .meta{display:flex;gap:8px;align-items:center;font-size:10.5px;color:var(--muted);margin-bottom:5px}
+
+  /* --------- VARIANTE C --------- */
+  .pC{position:absolute;right:22px;bottom:22px;display:flex;align-items:center;gap:8px;
+      border-radius:99px;padding:7px 13px 7px 9px;font-size:12px}
+</style>
+</head>
+<body>
+
+<div class="mando" id="mando"></div>
+<div class="escritorio" id="app"></div>
+<div id="switcher">
+  <button id="prev" title="Anterior (←)">‹</button><span class="lbl" id="lbl"></span>
+  <button id="next" title="Siguiente (→)">›</button>
+</div>
+
+<script>
+const FRASE = 'Oye, prepárame el resumen de la reunión con Serviforn y mándaselo a Celia antes de las seis.';
+const MODOS = [
+  {n:'Por defecto', k:'Ctrl + Espacio'},
+  {n:'Correo',      k:'Ctrl + Alt + C'},
+  {n:'Terminal',    k:'Ctrl + Alt + T'},
+  {n:'Nota',        k:'Ctrl + Alt + N'},
+];
+const TAMANOS = [
+  {id:'min', nom:'Mínima', w:110, h:46, r:23, p:'8px 12px', barras:8, txt:false, ctrl:false},
+  {id:'med', nom:'Media',  w:380, h:'auto', r:18, p:'12px 16px', barras:9, txt:true, ctrl:false},
+  {id:'gra', nom:'Grande', w:520, h:'auto', r:20, p:'14px 18px', barras:12, txt:true, ctrl:true},
+];
+
+const _q = new URLSearchParams(location.search);
+let S = { estado:_q.get('estado')||'inactivo', tam:_q.get('tam')||'med', modo:0,
+          menu:_q.get('menu')==='1', sel:0, texto:'', nivel:0, error:'' };
+const ESTADOS = ['inactivo','escuchando','procesando','pegado','error'];
+
+// -------- simulación de nivel de voz y de escritura en vivo
+let tNivel=null, tTexto=null;
+function pararTodo(){ clearInterval(tNivel); clearInterval(tTexto); tNivel=tTexto=null; }
+function irA(e){
+  pararTodo(); S.estado=e; S.error='';
+  if(e==='inactivo'||e==='pegado'){ S.texto = e==='pegado'?FRASE:''; }
+  if(e==='error'){ S.texto=''; S.error='No se oyó nada. ¿Micrófono silenciado?'; }
+  if(e==='escuchando'){
+    S.texto='';
+    let i=0;
+    tTexto=setInterval(()=>{ i+=1+Math.floor(Math.random()*2); S.texto=FRASE.slice(0,i);
+      if(i>=FRASE.length){ clearInterval(tTexto); } pinta(); },42);
+    tNivel=setInterval(()=>{ S.nivel=Math.random(); pinta(); },80);
+  }
+  if(e==='procesando'){ S.texto=FRASE; }
+  pinta();
+}
+
+function ondas(n, activa, alto=28){
+  const b=[];
+  for(let i=0;i<n;i++){
+    const base = activa ? (Math.sin(Date.now()/90 + i)*0.5+0.5) : 0;
+    const h = activa ? Math.max(4, (0.35 + 0.65*S.nivel) * alto * (0.35+0.65*base)) : 4;
+    b.push(`<i style="height:${h.toFixed(1)}px"></i>`);
+  }
+  return `<div class="ondas ${activa?'':'proc'}" style="height:${alto}px">${b.join('')}</div>`;
+}
+
+function menuHTML(){
+  if(!S.menu) return '';
+  const filas = [
+    {g:'Modo'}, ...MODOS.map((m,i)=>({t:m.n, k:m.k, i})),
+    {sep:1},
+    {t:'Copiar sin pegar', k:'C'}, {t:'Reintentar', k:'R'}, {t:'Descartar', k:'Esc'},
+  ];
+  let idx=-1;
+  return `<div class="menu vidrio">${filas.map(f=>{
+    if(f.g) return `<div class="grupo">${f.g}</div>`;
+    if(f.sep) return `<div class="sepm"></div>`;
+    idx++;
+    const sel = idx===S.sel;
+    const check = f.i===S.modo ? '✓' : '';
+    return `<div class="fila ${sel?'sel':''}"><span style="width:12px;color:var(--green)">${check}</span>
+      ${f.t}<span class="tecla">${f.k}</span></div>`;
+  }).join('')}
+  <div class="grupo" style="opacity:.7">↑↓ moverse · Enter elegir · Esc cerrar</div></div>`;
+}
+
+function docHTML(fantasma){
+  const escrito = 'Notas de la reunión del jueves\n\nAsistentes: Celia, Txonso.\nPendiente: ';
+  const fin = S.estado==='pegado' ? FRASE
+            : fantasma && S.estado==='escuchando' ? `<span class="fantasma">${S.texto}</span>`
+            : '';
+  return `<div class="appfalsa"><div class="tb"><i></i><i></i><i></i>&nbsp; notas.txt — Bloc de notas</div>
+    <div class="doc">${escrito}${fin}<span class="caret"></span></div></div>`;
+}
+
+// ---------------------------------------------------------------- VARIANTE A
+function variantA(){
+  const t = TAMANOS.find(x=>x.id===S.tam);
+  const esc = S.estado==='escuchando', proc = S.estado==='procesando';
+  const visible = S.estado!=='inactivo';
+  const cuerpo = `
+    <div class="cabeza">
+      ${ondas(t.barras, esc, t.id==='min'?26:30)}
+      ${t.id!=='min' ? `<div style="flex:1;min-width:0">
+          <div style="font-size:10.5px;color:var(--muted);letter-spacing:.04em">
+            ${proc?'FORMATEANDO…':esc?'TE OIGO':S.estado==='error'?'FALLO':'LISTO'} ·
+            ${MODOS[S.modo].n.toUpperCase()}</div>
+        </div>` : ''}
+      ${t.ctrl ? `<div class="ctrl"><span class="pin">${MODOS[S.modo].k}</span>
+                  <button style="color:var(--violet-soft)" data-menu="1">Modo ▾</button></div>` : ''}
+    </div>
+    ${t.txt && (S.texto||S.error) ? `<div class="txt" ${S.error?'style="color:var(--red)"':''}>
+        ${S.error||S.texto}</div>` : ''}`;
+
+  return `${docHTML(false)}
+    <div class="pA vidrio ${visible?'':'oculto'}"
+         style="--r:${t.r}px;--p:${t.p};width:${t.w}px;border-radius:${t.r}px;position:absolute">
+      ${proc?'<div class="brillo"></div>':''}
+      ${cuerpo}${menuHTML()}
+    </div>`;
+}
+
+// ---------------------------------------------------------------- VARIANTE B
+function variantB(){
+  const esc = S.estado==='escuchando', proc = S.estado==='procesando';
+  const visible = S.estado!=='inactivo';
+  const colorPunto = S.estado==='error' ? 'var(--red)' : proc ? 'var(--violet-deep)' : 'var(--violet)';
+  const hayCaja = (S.texto||S.error) && S.tam!=='min';
+  return `${docHTML(false)}
+    <div class="pB ${visible?'':'oculto'}">
+      <div class="punto vidrio" style="box-shadow:0 0 0 3px ${colorPunto}33, 0 10px 30px rgba(0,0,0,.5)">
+        ${proc?'<div class="brillo" style="border-radius:99px"></div>':''}
+        ${ondas(4, esc, 22)}
+        ${menuHTML()}
+      </div>
+      ${hayCaja ? `<div class="caja vidrio">
+        <div class="meta">
+          <span style="color:${colorPunto};font-weight:700">●</span>
+          ${MODOS[S.modo].n} · ${MODOS[S.modo].k}
+          <span style="margin-left:auto">${proc?'formateando…':esc?'te oigo':'pegado'}</span>
+        </div>
+        <div ${S.error?'style="color:var(--red)"':''}>${S.error||S.texto}</div>
+      </div>` : ''}
+    </div>`;
+}
+
+// ---------------------------------------------------------------- VARIANTE C
+function variantC(){
+  const esc = S.estado==='escuchando', proc = S.estado==='procesando';
+  const visible = S.estado!=='inactivo';
+  return `${docHTML(true)}
+    <div class="pC vidrio ${visible?'':'oculto'}" style="position:absolute">
+      ${proc?'<div class="brillo" style="border-radius:99px"></div>':''}
+      ${ondas(6, esc, 18)}
+      <span class="mut">${proc?'formateando':esc?MODOS[S.modo].n:S.estado==='error'?'fallo':'pegado'}</span>
+      ${menuHTML()}
+      ${S.error?`<span style="color:var(--red)">${S.error}</span>`:''}
+    </div>`;
+}
+
+// ---------------------------------------------------------------- armazón
+const VARIANTES = [
+  ['A','Barra inferior con cuatro tamaños (calco de FluidVoice)', variantA],
+  ['B','Punto que crece hacia el lado (evolución de la actual)', variantB],
+  ['C','Píldora diminuta + texto fantasma en tu documento', variantC],
+];
+function clave(){ const v=(new URLSearchParams(location.search).get('variant')||'A').toUpperCase();
+  return VARIANTES.some(x=>x[0]===v)?v:'A'; }
+function irVariante(k){ const u=new URL(location); u.searchParams.set('variant',k);
+  history.replaceState({},'',u); pinta(); }
+
+function pinta(){
+  const k=clave(), v=VARIANTES.find(x=>x[0]===k);
+  document.getElementById('app').innerHTML = v[2]();
+  document.getElementById('lbl').textContent = `${k} — ${v[1]}`;
+  document.getElementById('mando').innerHTML =
+    ESTADOS.map((e,i)=>`<button class="${S.estado===e?'on':''}" data-estado="${e}">${i+1} ${e}</button>`).join('')
+    + '<span class="sep"></span>'
+    + TAMANOS.map(t=>`<button class="${S.tam===t.id?'on':''}" data-tam="${t.id}">${t.nom}</button>`).join('')
+    + '<span class="sep"></span>'
+    + `<button class="${S.menu?'on':''}" data-menu="1">M menú</button>`;
+}
+
+document.addEventListener('click', e=>{
+  const t=e.target.closest('[data-estado],[data-tam],[data-menu],#prev,#next'); if(!t) return;
+  if(t.id==='prev'||t.id==='next'){
+    const i=VARIANTES.findIndex(x=>x[0]===clave());
+    return irVariante(VARIANTES[(i+(t.id==='next'?1:-1)+3)%3][0]);
+  }
+  if(t.dataset.estado) return irA(t.dataset.estado);
+  if(t.dataset.tam){ S.tam=t.dataset.tam; return pinta(); }
+  if(t.dataset.menu){ S.menu=!S.menu; S.sel=0; return pinta(); }
+});
+
+document.addEventListener('keydown', e=>{
+  if(/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
+  const n=+e.key;
+  if(n>=1&&n<=5){ return irA(ESTADOS[n-1]); }
+  if(e.key.toLowerCase()==='m'){ S.menu=!S.menu; S.sel=0; return pinta(); }
+  if(S.menu){
+    const total = MODOS.length+3;
+    if(e.key==='ArrowDown'){ S.sel=(S.sel+1)%total; e.preventDefault(); return pinta(); }
+    if(e.key==='ArrowUp'){ S.sel=(S.sel-1+total)%total; e.preventDefault(); return pinta(); }
+    if(e.key==='Enter'){ if(S.sel<MODOS.length) S.modo=S.sel; S.menu=false; return pinta(); }
+    if(e.key==='Escape'){ S.menu=false; return pinta(); }
+    return;
+  }
+  if(e.key==='ArrowLeft'||e.key==='ArrowRight'){
+    const i=VARIANTES.findIndex(x=>x[0]===clave());
+    irVariante(VARIANTES[(i+(e.key==='ArrowRight'?1:-1)+3)%3][0]);
+  }
+});
+
+irA(_q.get('estado')||'escuchando');
+if(_q.get('menu')==='1'){ S.menu=true; pinta(); }
+</script>
+</body>
+</html>

@@ -1,0 +1,342 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>taste 03 — Cristal etéreo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<!--
+  taste-skill · skills/soft-skill  (name: high-end-visual-design, MIT, Leonxlnx)
+  Motor de varianza, seccion 3: Vibe A1 "Ethereal Glass (SaaS / AI / Tech)"
+                                Layout B1 "The Asymmetrical Bento"
+
+  APLICADO de la skill:
+    · Prohibidos Inter / Roboto / Arial / Open Sans / Helvetica -> Plus Jakarta Sans
+    · Prohibidos los bordes 1px gris genericos y las sombras duras -> hairlines white/8-10
+    · "Double-Bezel": ninguna tarjeta se apoya plana. Carcasa exterior (padding 6px,
+      radio 32px, white/4, borde white/8) + nucleo interior con radio concentrico
+      calc(32px - 6px) y brillo interno inset 0 1px 1px rgba(255,255,255,.15)
+    · CTA pill rounded-full px-6 py-3 con "button-in-button": la flecha va dentro de su
+      propio circulo, a ras del padding derecho
+    · Eyebrow tag: 10px mayusculas tracking 0.2em antes del titular
+    · Macro-espacio: el doble de lo normal
+    · Prohibido linear / ease-in-out -> cubic-bezier(.32,.72,0,1), 700ms
+    · Hover magnetico: la pieza baja a scale(.98) al pulsar, el icono interior se
+      desplaza en diagonal y crece
+    · Entrada por scroll con blur: translateY(16px) blur(6px) opacity 0 -> resuelto
+    · Solo se anima transform y opacity. backdrop-blur solo en capas fijas.
+    · Sin z-index arbitrarios
+
+  OVERRIDE (manda la paleta de Pronto, lib/src/core/theme.dart):
+    · La skill pide OLED #050505 con orbes "purple/emerald". Se queda el negro
+      #050505 pero los orbes son los NUESTROS: violeta #8B5CF6 y amarillo #FDE047.
+      Nada de esmeralda decorativa; el verde solo dice "hecho".
+
+  AVISO HONESTO: de las tres, esta es la que mas se parece al slop de IA de 2025
+  (cristal + orbe violeta + radios enormes). Es el arquetipo "Ethereal Glass" de la
+  propia skill, no una desviacion. Mirala sabiendo eso.
+-->
+<style>
+  :root{
+    --violet:#8B5CF6; --violet-deep:#6D28D9; --violet-soft:#A78BFA; --yellow:#FDE047;
+    --ink:#F5F3FF; --muted:#9C93AE; --green:#34D399;
+    --oled:#050505;
+    --hair:rgba(255,255,255,.08); --hair-2:rgba(255,255,255,.14);
+    --brillo:inset 0 1px 1px rgba(255,255,255,.15);
+    --e:cubic-bezier(.32,.72,0,1);
+    --f:"Plus Jakarta Sans","Segoe UI",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%}
+  body{background:var(--oled);color:var(--ink);font:15px/1.6 var(--f);
+       display:flex;align-items:center;justify-content:center;padding:40px 24px 96px;
+       position:relative;overflow-x:hidden}
+  button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+  .mut{color:var(--muted)}
+
+  /* malla radial de fondo: capa fija, sin eventos (regla 6 de la skill) */
+  .malla{position:fixed;inset:0;pointer-events:none;
+    background:
+      radial-gradient(48vw 42vw at 18% 8%, rgba(139,92,246,.20), transparent 62%),
+      radial-gradient(38vw 34vw at 88% 74%, rgba(109,40,217,.18), transparent 64%),
+      radial-gradient(24vw 22vw at 72% 12%, rgba(253,224,71,.055), transparent 66%)}
+
+  /* ---------- Double-Bezel: carcasa + nucleo ---------- */
+  .carcasa{position:relative;width:1000px;padding:6px;border-radius:32px;
+           background:rgba(255,255,255,.04);border:1px solid var(--hair);
+           box-shadow:0 40px 120px rgba(0,0,0,.7)}
+  .nucleo{border-radius:26px;background:rgba(10,8,14,.72);border:1px solid var(--hair);
+          box-shadow:var(--brillo);backdrop-filter:blur(28px) saturate(1.25);
+          overflow:hidden}
+
+  .cab{padding:44px 44px 34px;display:grid;grid-template-columns:1fr auto;
+       align-items:end;gap:28px;border-bottom:1px solid var(--hair)}
+  .eyebrow{display:inline-flex;align-items:center;gap:8px;padding:5px 13px;border-radius:999px;
+    background:rgba(255,255,255,.05);border:1px solid var(--hair);
+    font-size:10px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;color:var(--violet-soft)}
+  .eyebrow .pt{width:5px;height:5px;border-radius:99px;background:var(--yellow)}
+  .cab h1{margin:16px 0 0;font-size:40px;line-height:1.06;font-weight:800;letter-spacing:-.03em}
+  .cab h1 span{background:linear-gradient(100deg,var(--ink) 30%,var(--violet-soft));
+    -webkit-background-clip:text;background-clip:text;color:transparent}
+  .cab .sub{margin-top:12px;color:var(--muted);font-size:14.5px;max-width:44ch}
+  .medidor{text-align:right}
+  .medidor .n{font-size:40px;font-weight:800;letter-spacing:-.03em;line-height:1}
+  .medidor .t{font-size:10px;font-weight:600;letter-spacing:.2em;text-transform:uppercase;
+              color:var(--muted);margin-top:8px}
+
+  /* ---------- bento asimetrico ---------- */
+  .bento{display:grid;grid-template-columns:repeat(12,1fr);gap:14px;padding:28px 44px 44px}
+  .tarj{position:relative;padding:5px;border-radius:24px;background:rgba(255,255,255,.035);
+        border:1px solid var(--hair);
+        opacity:0;transform:translateY(16px);filter:blur(6px);
+        animation:sube 800ms var(--e) forwards;animation-delay:calc(var(--i) * 90ms)}
+  @keyframes sube{to{opacity:1;transform:none;filter:none}}
+  .tarj > .in{border-radius:19px;background:rgba(255,255,255,.028);border:1px solid var(--hair);
+              box-shadow:var(--brillo);padding:24px 26px;height:100%}
+  .c12{grid-column:span 12} .c8{grid-column:span 8} .c4{grid-column:span 4}
+  .c7{grid-column:span 7} .c5{grid-column:span 5}
+
+  .cap{display:flex;align-items:center;gap:10px;font-size:10px;font-weight:700;
+       letter-spacing:.2em;text-transform:uppercase;color:var(--muted);margin-bottom:14px}
+  .cap .est{margin-left:auto;padding:4px 10px;border-radius:999px;letter-spacing:.14em;
+            background:rgba(255,255,255,.05);font-size:9px}
+  .cap .est.ok{background:rgba(52,211,153,.14);color:var(--green)}
+  .tarj h3{margin:0 0 6px;font-size:19px;font-weight:700;letter-spacing:-.015em}
+  .tarj p{margin:0;color:var(--muted);font-size:13.5px}
+
+  /* ---------- botones ---------- */
+  .pill{display:inline-flex;align-items:center;gap:12px;padding:11px 11px 11px 22px;
+        border-radius:999px;background:linear-gradient(180deg,var(--violet),var(--violet-deep));
+        color:#fff;font-weight:600;font-size:14px;box-shadow:var(--brillo),0 8px 30px rgba(109,40,217,.4);
+        transition:transform 400ms var(--e),box-shadow 400ms var(--e)}
+  .pill .circ{width:30px;height:30px;border-radius:999px;background:rgba(255,255,255,.16);
+              display:grid;place-items:center;
+              transition:transform 400ms var(--e),background 400ms var(--e)}
+  .pill:hover .circ{transform:translate(4px,-1px) scale(1.06);background:rgba(255,255,255,.26)}
+  .pill:active{transform:scale(.98)}
+  .pill[disabled]{opacity:.4;cursor:not-allowed;box-shadow:none}
+  .pill[disabled]:hover .circ{transform:none}
+
+  .chip{padding:9px 17px;border-radius:999px;background:rgba(255,255,255,.05);
+        border:1px solid var(--hair);font-size:13px;font-weight:600;
+        transition:transform 300ms var(--e),background 300ms var(--e),border-color 300ms var(--e)}
+  .chip:hover{background:rgba(255,255,255,.09);border-color:var(--hair-2)}
+  .chip:active{transform:scale(.98)}
+  .chip.on{background:rgba(139,92,246,.20);border-color:rgba(139,92,246,.6);color:#fff;
+           box-shadow:var(--brillo)}
+  .chips{display:flex;gap:9px;flex-wrap:wrap;margin-top:16px}
+  :focus-visible{outline:2px solid var(--violet-soft);outline-offset:3px;border-radius:999px}
+
+  /* ---------- lista de motores ---------- */
+  .mando{display:flex;align-items:center;gap:16px;margin:18px 0 16px;font-size:11px;
+         font-weight:600;letter-spacing:.16em;text-transform:uppercase;color:var(--muted)}
+  /* Track a mano: el de serie sale crema y rompe el cristal. */
+  .mando input[type=range]{flex:1;-webkit-appearance:none;appearance:none;height:4px;
+    background:rgba(255,255,255,.12);border-radius:99px;cursor:pointer;box-shadow:var(--brillo)}
+  .mando input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;
+    border-radius:99px;background:var(--violet);cursor:pointer;
+    box-shadow:0 0 14px rgba(139,92,246,.7),var(--brillo)}
+  .mando input[type=range]::-moz-range-thumb{width:16px;height:16px;border:0;
+    border-radius:99px;background:var(--violet);cursor:pointer}
+  .motor{display:flex;align-items:center;gap:16px;padding:5px;border-radius:20px;
+         background:rgba(255,255,255,.03);border:1px solid transparent;margin-bottom:10px;
+         cursor:pointer;transition:transform 400ms var(--e),background 400ms var(--e),border-color 400ms var(--e)}
+  .motor:hover{background:rgba(255,255,255,.06)}
+  .motor:active{transform:scale(.995)}
+  .motor.sel{background:rgba(139,92,246,.13);border-color:rgba(139,92,246,.42);
+             box-shadow:var(--brillo),0 0 40px rgba(139,92,246,.16)}
+  .motor > .in{display:flex;align-items:center;gap:16px;width:100%;padding:13px 16px;
+               border-radius:15px;background:rgba(255,255,255,.025);border:1px solid var(--hair)}
+  .motor .nom{flex:1;min-width:0}
+  .motor .nom b{font-size:14.5px;font-weight:700;display:flex;align-items:center;gap:9px}
+  .motor .nom small{display:block;color:var(--muted);font-size:12px;margin-top:3px}
+  .anillo{width:34px;height:34px;border-radius:999px;display:grid;place-items:center;flex:none;
+          background:rgba(255,255,255,.05);border:1px solid var(--hair);
+          font-size:11px;font-weight:700;color:var(--muted)}
+  .motor.sel .anillo{background:rgba(139,92,246,.28);color:#fff;border-color:transparent}
+  .med{width:120px;display:flex;flex-direction:column;gap:6px}
+  .med .l{display:flex;align-items:center;gap:8px;font-size:10px;font-weight:600;
+          letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+  .pip{display:flex;gap:3px;flex:1}
+  .pip i{height:4px;flex:1;border-radius:99px;background:rgba(255,255,255,.10)}
+  .pip i.on{background:var(--violet-soft)}
+  .pip.pre i.on{background:var(--green)}
+  .badge{padding:5px 11px;border-radius:999px;font-size:10px;font-weight:700;
+         letter-spacing:.1em;text-transform:uppercase;white-space:nowrap}
+  .badge.ok{background:rgba(52,211,153,.15);color:var(--green)}
+  .badge.dl{background:rgba(139,92,246,.18);color:var(--violet-soft)}
+  .badge.spark{background:rgba(253,224,71,.15);color:var(--yellow)}
+
+  .caja{border-radius:16px;background:rgba(0,0,0,.35);border:1px solid var(--hair);
+        box-shadow:var(--brillo);padding:18px;margin-top:16px;min-height:60px;color:var(--muted)}
+  kbd{font:600 11px/1 var(--f);border:1px solid var(--hair-2);border-radius:7px;
+      background:rgba(255,255,255,.07);box-shadow:var(--brillo);padding:5px 8px}
+  .nota{margin-top:14px;font-size:11.5px;line-height:1.65;color:var(--muted)}
+
+  .pie{display:flex;justify-content:space-between;align-items:center;
+       padding:22px 44px 32px;border-top:1px solid var(--hair)}
+  .pie .est{font-size:12.5px;color:var(--muted)}
+  svg.i{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.4;
+        stroke-linecap:round;stroke-linejoin:round;flex:none}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}
+    .tarj{opacity:1;transform:none;filter:none}}
+  @media (max-width:768px){
+    .carcasa{width:100%}
+    .bento{grid-template-columns:1fr;padding:20px 16px 28px;gap:12px}
+    .c12,.c8,.c4,.c7,.c5{grid-column:span 1}
+    .cab{padding:24px 16px;grid-template-columns:1fr}
+  }
+
+  #vuelta{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);z-index:9;
+    padding:9px 18px;background:#fff;color:#111;border-radius:999px;
+    box-shadow:0 10px 30px rgba(0,0,0,.6);font:600 12.5px/1 system-ui;text-decoration:none}
+</style>
+</head>
+<body>
+<div class="malla"></div>
+
+<svg style="display:none" aria-hidden="true">
+  <symbol id="i-arrow" viewBox="0 0 24 24"><path d="M7 17 17 7M9 7h8v8"/></symbol>
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 9-12h-7l1-8z"/></symbol>
+  <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9.5" y="2.5" width="5" height="11" rx="2.5"/><path d="M18.5 11a6.5 6.5 0 0 1-13 0M12 17.5V21"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><rect x="2.5" y="6.5" width="19" height="11" rx="2"/><path d="M7 14h10"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5 18 12 8 18.5v-13z"/></symbol>
+</svg>
+
+<div id="app"></div>
+<a id="vuelta" href="index.html">&lsaquo; volver al índice</a>
+
+<script>
+const MOTORES = [
+  { id:'parakeet3', nom:'Parakeet TDT v3', idiomas:'25 idiomas · español nativo · 498 MB',
+    vel:1.00, pre:0.92, estado:'ok' },
+  { id:'whisper-s', nom:'Whisper small', idiomas:'99 idiomas · 466 MB',
+    vel:0.60, pre:0.70, estado:'dl' },
+  { id:'whisper-l', nom:'Whisper large-v3', idiomas:'99 idiomas · requiere GPU · 2,9 GB',
+    vel:0.20, pre:1.00, estado:'no' },
+];
+const IDIOMAS = [{id:'es',nom:'Español'},{id:'auto',nom:'Detección automática'},{id:'en',nom:'English'}];
+const FORMATEOS = [
+  {id:'no',nom:'Sin Formateo',sub:'El texto sale tal cual lo oye el motor. Cero espera, cero coste.'},
+  {id:'local',nom:'Local, en tu equipo',sub:'Un modelo pequeño arregla tildes, comas y muletillas. No sale nada del PC. ~1,2 GB.'},
+  {id:'nube',nom:'Nube, con tu clave',sub:'La mejor calidad. Sale el TEXTO, nunca el audio. Con tope de gasto.'},
+];
+let S = { idioma:'es', motor:'parakeet3', formateo:'no', preferencia:50,
+          permisos:{mic:true, inyeccion:false} };
+
+function ico(id){ return '<svg class="i"><use href="#i-'+id+'"></use></svg>'; }
+function pips(v,cls){
+  return '<span class="pip '+cls+'">'+[1,2,3,4,5].map(function(n){
+    return '<i class="'+(v*5>=n-0.5?'on':'')+'"></i>';
+  }).join('')+'</span>';
+}
+
+function pinta(){
+  const p = S.preferencia/100;
+  const orden = MOTORES.slice().sort(function(a,b){
+    return ((1-p)*b.vel + p*b.pre) - ((1-p)*a.vel + p*a.pre);
+  });
+  const permOK = S.permisos.mic && S.permisos.inyeccion;
+  const hechos = 1 + 1 + (permOK?1:0) + 0 + 1;
+
+  const motores = orden.map(function(x,i){
+    let badge;
+    if(x.estado==='ok') badge = '<span class="badge ok">instalado</span>';
+    else if(x.estado==='dl') badge = '<span class="badge dl">bajando 62 %</span>';
+    else badge = '<button class="chip" style="padding:7px 14px;font-size:12px">Descargar</button>';
+    return '<div class="motor '+(S.motor===x.id?'sel':'')+'" data-motor="'+x.id+'" tabindex="0"><div class="in">'+
+      '<span class="anillo">'+(i+1)+'</span>'+
+      '<span class="nom"><b>'+x.nom+(i===0?' <span class="badge spark">mejor encaje</span>':'')+'</b>'+
+        '<small>'+x.idiomas+'</small></span>'+
+      '<span class="med"><span class="l">'+ico('bolt')+pips(x.vel,'')+'</span>'+
+        '<span class="l">'+ico('target')+pips(x.pre,'pre')+'</span></span>'+
+      badge+'</div></div>';
+  }).join('');
+
+  document.getElementById('app').innerHTML =
+  '<div class="carcasa"><div class="nucleo">'+
+
+    '<div class="cab"><div>'+
+      '<span class="eyebrow"><span class="pt"></span>Primera puesta en marcha</span>'+
+      '<h1>Poner Pronto <span>en marcha</span></h1>'+
+      '<div class="sub">Todo en una pantalla. Puedes hacerlo en el orden que quieras.</div>'+
+    '</div><div class="medidor"><div class="n">'+hechos+'/5</div><div class="t">Hechos</div></div></div>'+
+
+    '<div class="bento">'+
+
+      '<div class="tarj c5" style="--i:0"><div class="in">'+
+        '<div class="cap">01 · Idioma<span class="est ok">listo</span></div>'+
+        '<h3>¿En qué vas a dictar?</h3>'+
+        '<div class="chips">'+IDIOMAS.map(function(i){
+          return '<button class="chip '+(S.idioma===i.id?'on':'')+'" data-idioma="'+i.id+'">'+i.nom+'</button>';
+        }).join('')+'</div></div></div>'+
+
+      '<div class="tarj c7" style="--i:1"><div class="in">'+
+        '<div class="cap">03 · Permisos de Windows'+
+        '<span class="est'+(permOK?' ok':'')+'">'+(permOK?'listo':'pendiente')+'</span></div>'+
+        '<h3>Dos permisos, una vez</h3>'+
+        '<p>Sin ellos Pronto oye pero no puede escribir.</p>'+
+        '<div class="chips">'+
+        [['mic','Micrófono','mic'],['inyeccion','Escribir en otras apps','key']].map(function(t){
+          return S.permisos[t[0]]
+            ? '<span class="chip on" style="cursor:default">'+t[1]+' · concedido</span>'
+            : '<button class="chip" data-permiso="'+t[0]+'">'+ico(t[2])+' Conceder '+t[1]+'</button>';
+        }).join('')+'</div></div></div>'+
+
+      '<div class="tarj c12" style="--i:2"><div class="in">'+
+        '<div class="cap">02 · Motor de voz<span class="est ok">listo</span></div>'+
+        '<h3>El que escucha</h3>'+
+        '<p>Ordena la lista según lo que te importe. La descarga es de una vez.</p>'+
+        '<div class="mando"><span>'+ico('bolt')+' Rapidez</span>'+
+          '<input type="range" id="pref" min="0" max="100" value="'+S.preferencia+'" aria-label="Rapidez o precisión">'+
+          '<span>Precisión '+ico('target')+'</span></div>'+
+        motores+
+        '<div class="nota">Las marcas no llevan número porque todavía no hemos medido el WER '+
+        'en español. El orden sí es real: sale de tu mando.</div></div></div>'+
+
+      '<div class="tarj c7" style="--i:3"><div class="in">'+
+        '<div class="cap">04 · Prueba un dictado<span class="est">opcional</span></div>'+
+        '<h3>Compruébalo aquí mismo</h3>'+
+        '<p>Pulsa <kbd>Ctrl</kbd> <kbd>Espacio</kbd>, habla, suelta.</p>'+
+        '<div class="caja">Lo que digas aparecerá aquí.</div>'+
+        '<div class="chips"><button class="chip">'+ico('play')+' Simular</button></div></div></div>'+
+
+      '<div class="tarj c5" style="--i:4"><div class="in">'+
+        '<div class="cap">05 · Formateo con IA<span class="est">de fábrica: off</span></div>'+
+        '<h3>Quién pone las comas</h3>'+
+        '<div class="chips">'+FORMATEOS.map(function(f){
+          return '<button class="chip '+(S.formateo===f.id?'on':'')+'" data-formateo="'+f.id+'">'+f.nom+'</button>';
+        }).join('')+'</div>'+
+        '<div class="nota">'+FORMATEOS.filter(function(f){return f.id===S.formateo;})[0].sub+'</div></div></div>'+
+
+    '</div>'+
+
+    '<div class="pie"><span class="est">'+(permOK?'Todo lo imprescindible está hecho.'
+      :'Faltan los permisos de Windows.')+'</span>'+
+      '<button class="pill"'+(permOK?'':' disabled')+'>Empezar a dictar'+
+        '<span class="circ">'+ico('arrow')+'</span></button></div>'+
+
+  '</div></div>';
+}
+
+document.addEventListener('click', function(e){
+  const t = e.target.closest('[data-idioma],[data-formateo],[data-motor],[data-permiso]');
+  if(!t) return;
+  const d = t.dataset;
+  if(d.idioma) S.idioma = d.idioma;
+  if(d.formateo) S.formateo = d.formateo;
+  if(d.motor) S.motor = d.motor;
+  if(d.permiso) S.permisos[d.permiso] = true;
+  pinta();
+});
+document.addEventListener('input', function(e){
+  if(e.target.id==='pref'){ S.preferencia = +e.target.value; pinta();
+    const el = document.getElementById('pref'); if(el) el.focus(); }
+});
+pinta();
+</script>
+</body>
+</html>

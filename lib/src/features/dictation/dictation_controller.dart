@@ -15,7 +15,8 @@ import '../../platform/text_injector.dart';
 import '../../platform/whisper_engine.dart';
 import '../learning/learning_service.dart';
 import '../overlay/pill_popup_controller.dart';
-import '../post_correction/llm_provider.dart';
+import '../formatting/cloud_budget_provider.dart';
+import '../formatting/formatter_provider.dart';
 import '../settings/settings_controller.dart';
 import '../transcription/parakeet_engine.dart';
 import '../translation/language_detect.dart';
@@ -29,7 +30,7 @@ final dictationControllerProvider =
 
 /// Orquesta el pipeline completo:
 /// hotkey down -> grabar -> hotkey up -> transcribir (en isolate) ->
-/// diccionario aprendido -> [LLM opcional] -> insertar -> registrar.
+/// diccionario aprendido -> pulido -> formateo -> insertar -> registrar.
 class DictationController extends Notifier<DictationState> {
   // Motor de voz activo (Parakeet o Whisper). Se elige en initialize(), tras
   // cargar los ajustes persistidos; nulo hasta entonces.
@@ -86,6 +87,11 @@ class DictationController extends Notifier<DictationState> {
   /// Carga modelo, refresca aprendizaje y registra el atajo global.
   Future<void> initialize({String? modelPath}) async {
     try {
+      // Despierta el libro de cuentas del gasto de nube al arrancar: hasta que
+      // se ha leído de disco, el guardia corta por seguridad, y no queremos que
+      // el primer dictado de la sesión se quede sin formatear por eso.
+      ref.read(cloudSpendProvider);
+
       await _learning.refresh();
 
       // Espera a los ajustes persistidos para elegir el motor correcto
@@ -248,11 +254,20 @@ class DictationController extends Notifier<DictationState> {
         finalText = TextPolish.apply(finalText);
       }
 
-      // 2) Post-corrección LLM (opcional). Hace passthrough si está desactivada
-      //    o si la confianza es alta; ante error devuelve el texto sin tocar.
-      finalText = await ref
-          .read(llmCorrectorProvider)
-          .correct(finalText, result.avgLogProb);
+      // 2) Formateo con modelo de lenguaje (opcional). Es un paso NORMAL del
+      //    pipeline: si el usuario eligió un camino de formateo, se ejecuta
+      //    SIEMPRE. Ya no hay puerta de confianza — con Parakeet valía siempre
+      //    y dejaba el formateo muerto sin decírselo a nadie.
+      //    El aviso de que el texto sale del equipo lo dispara la PETICIÓN, no
+      //    la intención: si el tope de gasto la frena o falta la clave, no se
+      //    enciende nada porque no ha salido nada.
+      final formato = await ref.read(textFormatterProvider).format(
+            finalText,
+            onLeavingDevice: () => state = state.copyWith(
+              status: DictationStatus.sendingToCloud,
+            ),
+          );
+      finalText = formato.text;
 
       // 3) Traducción español ⇄ inglés (opcional). Decide QUÉ texto se pega y
       //    cuál queda como "la otra versión" de la caja de la píldora.
@@ -287,6 +302,7 @@ class DictationController extends Notifier<DictationState> {
           altText: plan.altText ?? '',
           altLang: plan.altLang,
           altPending: plan.altPending,
+          notice: formato.notice,
         );
       } else {
         popup.showTranscription(
@@ -295,6 +311,7 @@ class DictationController extends Notifier<DictationState> {
           altText: plan.altText ?? '',
           altLang: plan.altLang,
           altPending: plan.altPending,
+          notice: formato.notice,
         );
       }
 

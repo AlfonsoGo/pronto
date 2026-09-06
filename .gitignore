@@ -25,6 +25,13 @@ build/
 # Clon de whisper.cpp: lo descarga build_whisper.ps1, NO se versiona
 /native/whisper/whisper.cpp/
 
+# Secretos. El repo es PÚBLICO y el banco de pruebas lee OPENROUTER_API_KEY del
+# entorno: el paso siguiente natural es dejarla en un .env o en un script.
+.env
+.env.*
+*.key
+*.pem
+
 # Instaladores generados (se publican como Release assets, no en el repo)
 /dist/
 

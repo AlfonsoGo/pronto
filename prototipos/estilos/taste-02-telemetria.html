@@ -1,0 +1,284 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>taste 02 — Telemetría táctica</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Archivo+Black&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
+<!--
+  taste-skill · skills/brutalist-skill  (name: industrial-brutalist-ui, MIT, Leonxlnx)
+  Archetipo elegido: 2.2 "Tactical Telemetry & CRT Terminal" (la skill obliga a elegir UNO).
+
+  APLICADO de la skill:
+    · Archivo Black para el macro-titular, clamp(), tracking -0.04em, leading 0.9, mayusculas
+    · JetBrains Mono 10-12px, tracking 0.09em, mayusculas para TODO el resto
+    · Rechazo absoluto del border-radius: 0px en todo, 90 grados
+    · Grid con gap:1px sobre fondo de linea -> divisorias de un pixel exacto
+    · Compartimentacion visible: 1px solid delimitando cada zona
+    · Framing ASCII: [ MOTOR DE VOZ ], >>>, ///
+    · Cruces (+) en las intersecciones del grid
+    · Marcadores industriales: (R), REV 0.9, UNIT PRNT-13
+    · Scanlines CRT por repeating-linear-gradient
+    · Grano mecanico global por feTurbulence SVG, fixed y pointer-events:none
+    · Semantica rigida: <table>, <data>, <samp>, <kbd>, <output>
+    · Densidad bimodal: metadatos apretados junto a vacio calculado
+
+  OVERRIDE (manda la paleta de Pronto, lib/src/core/theme.dart):
+    · La skill fija el acento en rojo aviacion #E61919. DESCARTADO -> violeta #8B5CF6.
+    · Su "terminal green #4AF626, un solo elemento" -> amarillo #FDE047, un solo uso.
+    · Su fondo #0A0A0A -> el negro violaceo de Pronto #0B0810.
+-->
+<style>
+  :root{
+    --violet:#8B5CF6; --violet-soft:#A78BFA; --yellow:#FDE047;
+    --bg:#0B0810; --panel:#0F0B16; --panel-hi:#161021;
+    --ink:#EAE7F5; --muted:#8A8199; --green:#34D399;
+    --linea:#241C33;
+    --mono:"JetBrains Mono","Cascadia Mono",Consolas,monospace;
+    --black:"Archivo Black","Segoe UI",system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;border-radius:0!important}
+  html,body{margin:0;height:100%}
+  body{background:var(--bg);color:var(--ink);
+       font:400 12px/1.35 var(--mono);letter-spacing:.04em;
+       display:flex;align-items:flex-start;justify-content:center;padding:30px 24px 92px}
+  button{font:inherit;color:inherit;cursor:pointer;border:0;background:none;letter-spacing:inherit}
+  .mut{color:var(--muted)}
+
+  /* grano mecanico + scanlines, capa fija y sin eventos (regla 7 de la skill) */
+  .grano{position:fixed;inset:0;z-index:60;pointer-events:none;opacity:.055;
+         background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/></filter><rect width='140' height='140' filter='url(%23n)'/></svg>")}
+  .scan{position:fixed;inset:0;z-index:59;pointer-events:none;
+        background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.16) 2px,rgba(0,0,0,.16) 4px)}
+
+  /* Sin altura fija: con 660px el scroll interno tapaba los bloques 03, 04 y 05. */
+  .ventana{width:1000px;background:var(--panel);border:1px solid var(--linea);
+           display:flex;flex-direction:column;position:relative}
+  /* cruces en las cuatro esquinas de la unidad */
+  .ventana::before,.ventana::after{content:"+";position:absolute;font:400 13px/1 var(--mono);
+    color:var(--violet);opacity:.8}
+  .ventana::before{top:-7px;left:-5px}
+  .ventana::after{bottom:-7px;right:-5px}
+
+  /* ---- cabecera de unidad ---- */
+  .hdr{border-bottom:1px solid var(--linea);flex:none}
+  .hdr .franja{display:flex;justify-content:space-between;align-items:center;
+               padding:7px 16px;border-bottom:1px solid var(--linea);
+               font-size:10px;letter-spacing:.11em;color:var(--muted)}
+  .hdr .franja .sep{color:var(--violet)}
+  .hdr .cuerpo{padding:26px 20px 22px;display:grid;grid-template-columns:1fr auto;
+               align-items:end;gap:20px}
+  .hdr h1{margin:0;font:400 clamp(30px,4.4vw,52px)/.9 var(--black);
+          letter-spacing:-.04em;text-transform:uppercase}
+  .hdr .lema{margin-top:10px;font-size:10.5px;letter-spacing:.11em;color:var(--muted);
+             text-transform:uppercase}
+  .hdr .contador{text-align:right;font:400 10.5px/1.7 var(--mono);letter-spacing:.11em;
+                 color:var(--muted);text-transform:uppercase}
+  .hdr .contador b{display:block;font:400 40px/1 var(--black);color:var(--ink);letter-spacing:-.03em}
+
+  /* ---- rejilla de bloques con divisorias de 1px por gap ---- */
+  .lista{display:grid;gap:1px;background:var(--linea);
+         align-content:start;border-bottom:1px solid var(--linea)}
+  .bloque{background:var(--panel);padding:18px 20px 20px}
+  .marca{display:flex;align-items:center;gap:10px;font-size:10px;letter-spacing:.13em;
+         text-transform:uppercase;color:var(--muted);margin-bottom:12px}
+  .marca .id{color:var(--violet)}
+  .marca .est{margin-left:auto;padding:2px 7px;border:1px solid var(--linea)}
+  .marca .est.ok{color:var(--green);border-color:rgba(52,211,153,.4)}
+  .marca .est.no{color:var(--violet-soft);border-color:rgba(139,92,246,.45)}
+  .desc{color:var(--muted);font-size:11px;letter-spacing:.05em;margin:0 0 12px;max-width:74ch}
+
+  /* ---- controles ---- */
+  .btn{padding:7px 13px;border:1px solid var(--linea);background:var(--panel-hi);
+       font:500 10.5px/1 var(--mono);letter-spacing:.11em;text-transform:uppercase;
+       transition:background 120ms linear,border-color 120ms linear}
+  .btn:hover{border-color:var(--violet);background:rgba(139,92,246,.10)}
+  .btn.on{background:var(--violet);border-color:var(--violet);color:#fff}
+  .btn[disabled]{opacity:.32;cursor:not-allowed}
+  .btn:active{transform:translateY(1px)}
+  .fila-btn{display:flex;gap:1px;background:var(--linea);border:1px solid var(--linea);width:max-content}
+  .fila-btn .btn{border:0}
+  :focus-visible{outline:1px solid var(--yellow);outline-offset:2px}
+
+  .mando{display:grid;grid-template-columns:auto 1fr auto;align-items:center;gap:14px;
+         margin:4px 0 14px;font-size:10px;letter-spacing:.13em;text-transform:uppercase;color:var(--muted)}
+  /* Pulgar cuadrado: la skill prohibe el border-radius en todo. */
+  .mando input[type=range]{-webkit-appearance:none;appearance:none;height:2px;
+    background:var(--linea);cursor:pointer}
+  .mando input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;
+    background:var(--violet);cursor:pointer}
+  .mando input[type=range]::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:0;
+    background:var(--violet);cursor:pointer}
+
+  /* ---- tabla de telemetria ---- */
+  table{width:100%;border-collapse:collapse;font-size:11px;letter-spacing:.05em}
+  thead th{text-align:left;font-weight:500;font-size:9.5px;letter-spacing:.14em;
+           text-transform:uppercase;color:var(--muted);padding:0 10px 8px 0;
+           border-bottom:1px solid var(--linea)}
+  thead th:last-child{text-align:right;padding-right:0}
+  tbody tr{border-bottom:1px solid var(--linea);cursor:pointer;transition:background 120ms linear}
+  tbody tr:hover{background:rgba(139,92,246,.06)}
+  tbody tr.sel{background:rgba(139,92,246,.11);box-shadow:inset 2px 0 0 var(--violet)}
+  tbody td{padding:11px 10px 11px 0;vertical-align:middle}
+  tbody td:first-child{padding-left:10px;color:var(--muted);width:34px}
+  tbody td:last-child{text-align:right;padding-right:10px}
+  .unidad{font-weight:700;font-size:12px;letter-spacing:.02em}
+  .sub{color:var(--muted);font-size:9.5px;letter-spacing:.11em;text-transform:uppercase;margin-top:3px}
+  samp{font:inherit;letter-spacing:.22em;color:var(--violet-soft)}
+  samp.pre{color:var(--green)}
+  samp .off{color:var(--linea)}
+  .flag{padding:2px 6px;border:1px solid rgba(253,224,71,.45);color:var(--yellow);
+        font-size:9px;letter-spacing:.13em}
+  .estado{font-size:9.5px;letter-spacing:.12em;text-transform:uppercase}
+  .estado.ok{color:var(--green)}
+  .estado.dl{color:var(--violet-soft)}
+
+  kbd{font:500 10px/1 var(--mono);border:1px solid var(--linea);background:var(--panel-hi);
+      padding:4px 6px;letter-spacing:.08em}
+  output{display:block;border:1px solid var(--linea);background:var(--bg);padding:14px;
+         margin-top:10px;min-height:52px;color:var(--muted);font-size:11px;letter-spacing:.05em}
+  .aviso{margin-top:12px;padding:9px 12px;border-left:2px solid var(--violet);
+         background:rgba(139,92,246,.06);font-size:10px;letter-spacing:.07em;
+         color:var(--muted);line-height:1.6}
+
+  .pie{flex:none;display:flex;justify-content:space-between;align-items:center;
+       padding:12px 20px;font-size:10px;letter-spacing:.12em;text-transform:uppercase;color:var(--muted)}
+  .barras{display:flex;gap:3px;align-items:center}
+  .barras i{display:block;width:14px;height:9px;background:var(--linea)}
+  .barras i.on{background:var(--violet)}
+  @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+
+  #vuelta{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:99;
+    padding:8px 16px;background:#fff;color:#111;box-shadow:0 10px 30px rgba(0,0,0,.5);
+    font:600 12px/1 system-ui;text-decoration:none;letter-spacing:.06em;text-transform:uppercase}
+</style>
+</head>
+<body>
+<div class="grano"></div><div class="scan"></div>
+
+<div id="app"></div>
+<a id="vuelta" href="index.html">&lsaquo;&lsaquo; indice</a>
+
+<script>
+const MOTORES = [
+  { id:'parakeet3', nom:'PARAKEET TDT V3', idiomas:'25 IDIOMAS / ES NATIVO', mb:'498 MB',
+    vel:1.00, pre:0.92, estado:'ok',  et:'INSTALADO' },
+  { id:'whisper-s', nom:'WHISPER SMALL',   idiomas:'99 IDIOMAS',             mb:'466 MB',
+    vel:0.60, pre:0.70, estado:'dl',  et:'BAJANDO 62%' },
+  { id:'whisper-l', nom:'WHISPER LARGE-V3',idiomas:'99 IDIOMAS / REQ. GPU',  mb:'2,9 GB',
+    vel:0.20, pre:1.00, estado:'no',  et:'DESCARGAR' },
+];
+const IDIOMAS = [{id:'es',nom:'ESPAÑOL'},{id:'auto',nom:'AUTO ES/EN'},{id:'en',nom:'ENGLISH'}];
+const FORMATEOS = [
+  {id:'no',nom:'NINGUNO',sub:'EL TEXTO SALE TAL CUAL LO OYE EL MOTOR. CERO ESPERA, CERO COSTE.'},
+  {id:'local',nom:'LOCAL',sub:'UN MODELO PEQUEÑO ARREGLA TILDES, COMAS Y MULETILLAS. NO SALE NADA DEL PC. ~1,2 GB.'},
+  {id:'nube',nom:'NUBE',sub:'LA MEJOR CALIDAD. SALE EL TEXTO, NUNCA EL AUDIO. CON TOPE DE GASTO.'},
+];
+let S = { idioma:'es', motor:'parakeet3', formateo:'no', preferencia:50,
+          permisos:{mic:true, inyeccion:false} };
+
+function bloques(v){
+  let s='';
+  for(let i=0;i<5;i++) s += (v*5 >= i+0.5) ? '▮' : '<span class="off">▮</span>';
+  return s;
+}
+
+function pinta(){
+  const p = S.preferencia/100;
+  const orden = MOTORES.slice().sort(function(a,b){
+    return ((1-p)*b.vel + p*b.pre) - ((1-p)*a.vel + p*a.pre);
+  });
+  const permOK = S.permisos.mic && S.permisos.inyeccion;
+  const hechos = 1 + 1 + (permOK?1:0) + 0 + 1;
+
+  const filas = orden.map(function(x,i){
+    return '<tr class="'+(S.motor===x.id?'sel':'')+'" data-motor="'+x.id+'" tabindex="0">'+
+      '<td><data value="'+(i+1)+'">'+String(i+1).padStart(2,'0')+'</data></td>'+
+      '<td><div class="unidad">'+x.nom+(i===0?' <span class="flag">MEJOR ENCAJE</span>':'')+'</div>'+
+        '<div class="sub">'+x.idiomas+' /// '+x.mb+'</div></td>'+
+      '<td><samp>'+bloques(x.vel)+'</samp></td>'+
+      '<td><samp class="pre">'+bloques(x.pre)+'</samp></td>'+
+      '<td><span class="estado '+(x.estado==='ok'?'ok':x.estado==='dl'?'dl':'')+'">'+
+        (x.estado==='no'?'<button class="btn">'+x.et+'</button>':x.et)+'</span></td></tr>';
+  }).join('');
+
+  document.getElementById('app').innerHTML =
+  '<div class="ventana">'+
+    '<div class="hdr">'+
+      '<div class="franja"><span>PRONTO<sup>&reg;</sup> <span class="sep">///</span> PUESTA EN MARCHA</span>'+
+        '<span>REV 0.9 <span class="sep">/</span> UNIT PRNT-13 <span class="sep">/</span> ES-ES <span class="sep">/</span> LOCAL</span></div>'+
+      '<div class="cuerpo"><div>'+
+        '<h1>Poner Pronto<br>en marcha</h1>'+
+        '<div class="lema">&gt;&gt;&gt; TODO EN UNA PANTALLA / EN EL ORDEN QUE QUIERAS</div>'+
+      '</div><div class="contador"><b>'+hechos+'/5</b>UNIDADES LISTAS</div></div>'+
+    '</div>'+
+
+    '<div class="lista">'+
+
+    '<div class="bloque"><div class="marca"><span class="id">[ 01 ]</span> IDIOMA'+
+      '<span class="est ok">OK</span></div>'+
+      '<div class="fila-btn">'+IDIOMAS.map(function(i){
+        return '<button class="btn '+(S.idioma===i.id?'on':'')+'" data-idioma="'+i.id+'">'+i.nom+'</button>';
+      }).join('')+'</div></div>'+
+
+    '<div class="bloque"><div class="marca"><span class="id">[ 02 ]</span> MOTOR DE VOZ'+
+      '<span class="est ok">OK</span></div>'+
+      '<p class="desc">ORDENA LA LISTA SEGÚN LO QUE TE IMPORTE. LA DESCARGA ES DE UNA VEZ.</p>'+
+      '<div class="mando"><span>&lt; RAPIDEZ</span>'+
+        '<input type="range" id="pref" min="0" max="100" value="'+S.preferencia+'" aria-label="Rapidez o precisión">'+
+        '<span>PRECISIÓN &gt;</span></div>'+
+      '<table><thead><tr><th>#</th><th>UNIDAD</th><th>RAPIDEZ</th><th>PRECISIÓN</th><th>ESTADO</th></tr></thead>'+
+      '<tbody>'+filas+'</tbody></table>'+
+      '<div class="aviso">SIN CIFRA: NO HAY WER MEDIDO EN ESPAÑOL. LOS BLOQUES SON ORDINALES, NO PORCENTAJES. '+
+      'EL ORDEN SÍ ES REAL — LO FIJA TU MANDO.</div></div>'+
+
+    '<div class="bloque"><div class="marca"><span class="id">[ 03 ]</span> PERMISOS DE WINDOWS'+
+      '<span class="est '+(permOK?'ok':'no')+'">'+(permOK?'OK':'PENDIENTE')+'</span></div>'+
+      '<div class="fila-btn">'+
+      [['mic','MICRÓFONO'],['inyeccion','ESCRIBIR EN OTRAS APPS']].map(function(t){
+        return S.permisos[t[0]]
+          ? '<button class="btn on" disabled>'+t[1]+' /// OK</button>'
+          : '<button class="btn" data-permiso="'+t[0]+'">CONCEDER '+t[1]+'</button>';
+      }).join('')+'</div></div>'+
+
+    '<div class="bloque"><div class="marca"><span class="id">[ 04 ]</span> PRUEBA DE DICTADO'+
+      '<span class="est">OPCIONAL</span></div>'+
+      '<p class="desc">PULSA <kbd>CTRL</kbd> + <kbd>ESPACIO</kbd>, HABLA, SUELTA.</p>'+
+      '<output>&gt; ESPERANDO ENTRADA DE AUDIO_</output></div>'+
+
+    '<div class="bloque"><div class="marca"><span class="id">[ 05 ]</span> FORMATEO CON IA'+
+      '<span class="est">APAGADO DE FÁBRICA</span></div>'+
+      '<div class="fila-btn">'+FORMATEOS.map(function(f){
+        return '<button class="btn '+(S.formateo===f.id?'on':'')+'" data-formateo="'+f.id+'">'+f.nom+'</button>';
+      }).join('')+'</div>'+
+      '<div class="aviso">'+FORMATEOS.filter(function(f){return f.id===S.formateo;})[0].sub+'</div></div>'+
+
+    '</div>'+
+    '<div class="pie"><span class="barras">'+
+      [0,1,2,3,4].map(function(i){return '<i class="'+(i<hechos?'on':'')+'"></i>';}).join('')+
+      '</span>'+
+      '<span>'+(permOK?'SISTEMA LISTO':'BLOQUEADO /// FALTAN PERMISOS')+'</span>'+
+      '<button class="btn on"'+(permOK?'':' disabled')+'>EMPEZAR A DICTAR &gt;&gt;</button></div>'+
+  '</div>';
+}
+
+document.addEventListener('click', function(e){
+  const t = e.target.closest('[data-idioma],[data-formateo],[data-motor],[data-permiso]');
+  if(!t) return;
+  const d = t.dataset;
+  if(d.idioma) S.idioma = d.idioma;
+  if(d.formateo) S.formateo = d.formateo;
+  if(d.motor) S.motor = d.motor;
+  if(d.permiso) S.permisos[d.permiso] = true;
+  pinta();
+});
+document.addEventListener('input', function(e){
+  if(e.target.id==='pref'){ S.preferencia = +e.target.value; pinta();
+    const el = document.getElementById('pref'); if(el) el.focus(); }
+});
+pinta();
+</script>
+</body>
+</html>

@@ -1,0 +1,495 @@
+<!doctype html>
+<html lang="es" data-estilo="imp">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Estilos — Instalación C</title>
+<!--
+  COMPARADOR DE ESTILOS. Desechable, como el resto de prototipos.
+
+  Pregunta: sobre la MISMA pantalla ganadora (prototipo-01, variante C), ¿qué le hace
+  a Pronto cada skill de diseño, respetando la paleta de la marca?
+
+  Mismo marcado y mismo contenido en las dos propuestas. Solo cambia el sistema de diseño.
+    actual  — el fichero original tal cual, en un iframe (el control, sin tocar)
+    imp     — /impeccable, modo Operate: artesanía nativa de Windows
+    pmx     — ui-ux-pro-max, lo que devolvió su base de datos
+
+  PALETA CONGELADA. ui-ux-pro-max recomendó slate #1E293B + verde #22C55E como
+  acento. Se DESCARTA: manda la paleta real de lib/src/core/theme.dart. De su ficha
+  se aplica todo lo demás (Inter, OLED, glow, iconos SVG, checklist de 7 puntos).
+
+  Teclas: flechas cambian de estilo · F ficha de decisiones · ?estilo=actual|imp|pmx
+-->
+<style>
+  /* ============ paleta de marca — IDENTICA en los tres, no se toca ============ */
+  :root{
+    --violet:#8B5CF6; --violet-deep:#6D28D9; --violet-soft:#A78BFA;
+    --yellow:#FDE047; --bg:#0B0810; --surface:#0F0B16; --surface-hi:#161021;
+    --ink:#F5F3FF; --muted:#9C93AE; --green:#34D399; --orange:#FB923C;
+  }
+
+  /* ============ ESTILO A · /impeccable — Operate, nativo Windows 11 ============
+     Decisiones, con numero:
+     · Rampa tipografica de Windows: Caption 12 / Body 14 / Subtitle 20 / Title 28.
+       Segoe UI Variable, que YA esta en el equipo: cero descargas, y lee a app de
+       Windows, no a pagina web.
+     · Radios Fluent: 4px controles, 8px tarjetas, 12px ventana. (Antes: 9/11/16.)
+     · El boton pierde el degradado violeta->violeta. Plano + filo de 1px arriba
+       (el "control stroke" de Fluent). El degradado vertical es el tell numero 1.
+     · Sombra de 0 40px 90px/.60 -> 0 8px 24px/.45. La sombra gigante y difusa
+       es el tell numero 2.
+     · Cero emoji como icono: SVG de trazo 1.75.
+     · Las barras de medida pasan a 5 muescas. El texto dice que no hay WER medido;
+       una barra continua promete una precision que no tenemos.
+     · Cifras con tabular-nums: el % de descarga deja de bailar.
+     · Foco 2px --ink con offset 2 (el anillo de Fluent). Movimiento 160ms.
+     · El amarillo aparece UNA vez en toda la pantalla: la chispa de "mejor encaje".
+  */
+  [data-estilo="imp"]{
+    --f-ui:"Segoe UI Variable Text","Segoe UI Variable Small","Segoe UI",system-ui,sans-serif;
+    --f-tit:"Segoe UI Variable Display","Segoe UI Variable Text","Segoe UI",system-ui,sans-serif;
+    --t-cap:12px; --t-body:14px; --t-sub:20px;
+    --lh:1.42; --track-tit:-.015em;
+    --r-ctrl:4px; --r-card:8px; --r-win:12px;
+    --u:4px; --pad-x:24px; --gap-fila:10px; --h-fila:auto;
+    --linea:rgba(245,243,255,.07); --linea-fuerte:rgba(245,243,255,.13);
+    --fondo:var(--bg); --panel:var(--surface); --panel-hi:var(--surface-hi);
+    --sombra:0 8px 24px rgba(0,0,0,.45);
+    --btn-fondo:var(--violet); --btn-filo:inset 0 1px 0 rgba(255,255,255,.16);
+    --dur:160ms; --ease:cubic-bezier(.2,0,0,1);
+    --glow:none; --foco:var(--ink);
+  }
+
+  /* ============ ESTILO B · ui-ux-pro-max — su ficha, aplicada literal ============
+     Lo que devolvio search.py --design-system:
+       Style "Dark Mode (OLED)" · Typography Inter/Inter · Effects "minimal glow
+       (text-shadow: 0 0 10px), low white emission, visible focus" · checklist de
+       7 puntos (sin emoji, hover 150-300ms, foco visible, reduced-motion...).
+     Aplicado: fondo a negro real #000 (OLED), Inter 300-700, glow en titulares y
+     acento, radios 12px, filas de 44px (su regla de touch target), hover 200ms.
+     NO aplicado: su paleta. Va la de Pronto.
+  */
+  [data-estilo="pmx"]{
+    --f-ui:"Inter","Segoe UI",system-ui,sans-serif;
+    --f-tit:"Inter","Segoe UI",system-ui,sans-serif;
+    --t-cap:12px; --t-body:15px; --t-sub:22px;
+    --lh:1.55; --track-tit:-.02em;
+    --r-ctrl:10px; --r-card:12px; --r-win:16px;
+    --u:4px; --pad-x:30px; --gap-fila:12px; --h-fila:44px;
+    --linea:rgba(245,243,255,.10); --linea-fuerte:rgba(245,243,255,.18);
+    --fondo:#000000; --panel:#08060D; --panel-hi:#120D1C;
+    --sombra:0 24px 64px rgba(0,0,0,.85);
+    --btn-fondo:linear-gradient(180deg,var(--violet),var(--violet-deep));
+    --btn-filo:0 0 18px rgba(139,92,246,.35);
+    --dur:200ms; --ease:cubic-bezier(.4,0,.2,1);
+    --glow:0 0 10px rgba(167,139,250,.45); --foco:var(--violet-soft);
+  }
+
+  /* ============ estructura comun — identica en las dos ============ */
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%}
+  body{
+    background:var(--fondo); color:var(--ink);
+    font:var(--t-body)/var(--lh) var(--f-ui);
+    display:flex; align-items:center; justify-content:center; padding:24px 24px 92px;
+    transition:background var(--dur) var(--ease);
+  }
+  h1,h2,h3{margin:0; font-family:var(--f-tit); font-weight:600; letter-spacing:var(--track-tit)}
+  button{font:inherit; color:inherit; cursor:pointer; border:0; background:none}
+  .mut{color:var(--muted)}
+  .num{font-variant-numeric:tabular-nums}
+  svg.i{width:16px;height:16px;fill:none;stroke:currentColor;stroke-width:1.75;
+        stroke-linecap:round;stroke-linejoin:round;flex:none}
+
+  .ventana{
+    width:960px; height:640px; background:var(--panel);
+    border:1px solid var(--linea); border-radius:var(--r-win);
+    overflow:hidden; display:flex; flex-direction:column; box-shadow:var(--sombra);
+  }
+  .top{padding:calc(var(--u)*5) var(--pad-x) calc(var(--u)*3.5);
+       border-bottom:1px solid var(--linea); display:flex;
+       justify-content:space-between; align-items:flex-end}
+  .top h2{font-size:var(--t-sub); text-shadow:var(--glow)}
+  .top .sub{font-size:var(--t-cap); color:var(--muted); margin-top:2px}
+  .lista{flex:1; overflow:auto; padding:calc(var(--u)*2) var(--pad-x) calc(var(--u)*6)}
+  .pie{padding:calc(var(--u)*3.5) var(--pad-x); border-top:1px solid var(--linea);
+       display:flex; justify-content:space-between; align-items:center}
+
+  .bloque{border-bottom:1px solid var(--linea); padding:calc(var(--u)*4.5) 0;
+          display:grid; grid-template-columns:32px 1fr; gap:calc(var(--u)*3.5)}
+  .bloque:last-child{border-bottom:0}
+  .tick{width:24px;height:24px;border-radius:99px;border:1.5px solid var(--linea-fuerte);
+        display:grid;place-items:center;color:var(--muted);
+        transition:background var(--dur) var(--ease),color var(--dur) var(--ease)}
+  .bloque.ok .tick{background:rgba(52,211,153,.14); border-color:transparent; color:var(--green)}
+  .tit{font-weight:600; display:flex; gap:10px; align-items:center; margin-bottom:2px}
+
+  .chip{font-size:11px; padding:2px 8px; border-radius:var(--r-ctrl);
+        background:rgba(245,243,255,.07); color:var(--muted); font-weight:500}
+  .chip.ok{background:rgba(52,211,153,.14); color:var(--green);
+           display:inline-flex; align-items:center; gap:5px}
+  .chip.spark{background:rgba(253,224,71,.14); color:var(--yellow)}
+
+  .btn{padding:8px 16px; border-radius:var(--r-ctrl); font-weight:600; font-size:var(--t-body);
+       background:var(--btn-fondo); color:#fff; box-shadow:var(--btn-filo);
+       display:inline-flex; align-items:center; gap:7px;
+       transition:filter var(--dur) var(--ease),background var(--dur) var(--ease)}
+  .btn:hover{filter:brightness(1.12)}
+  .btn.sm{padding:5px 11px; font-size:var(--t-cap)}
+  .btn.ghost{background:transparent; color:var(--ink); box-shadow:none;
+             border:1px solid var(--linea-fuerte)}
+  .btn.ghost:hover{background:rgba(245,243,255,.06)}
+  .btn[disabled]{opacity:.4; cursor:not-allowed; filter:none}
+  :focus-visible{outline:2px solid var(--foco); outline-offset:2px; border-radius:var(--r-ctrl)}
+
+  .mando{display:flex; align-items:center; gap:12px; margin:calc(var(--u)*3.5) 0 calc(var(--u)*2.5);
+         font-size:var(--t-cap); color:var(--muted)}
+  .mando span{display:inline-flex; align-items:center; gap:6px}
+  .mando input[type=range]{flex:1; accent-color:var(--violet)}
+
+  .fila{display:flex; align-items:center; gap:12px; min-height:var(--h-fila);
+        padding:11px 13px; border-radius:var(--r-card); border:1px solid var(--linea);
+        background:var(--panel-hi); margin-bottom:var(--gap-fila); cursor:pointer;
+        position:relative; transition:border-color var(--dur) var(--ease),background var(--dur) var(--ease)}
+  .fila:hover{border-color:var(--linea-fuerte)}
+  .fila .nom{flex:1; min-width:0}
+  .fila .medida{width:150px; display:flex; flex-direction:column; gap:5px}
+
+  /* seleccionada: filo lateral (A) vs. tinte + halo (B) */
+  [data-estilo="imp"] .fila.sel{border-color:var(--linea-fuerte); background:rgba(139,92,246,.07)}
+  [data-estilo="imp"] .fila.sel::before{content:"";position:absolute;left:0;top:9px;bottom:9px;
+    width:2px;border-radius:2px;background:var(--violet)}
+  [data-estilo="pmx"] .fila.sel{border-color:var(--violet); background:rgba(139,92,246,.12);
+    box-shadow:0 0 20px rgba(139,92,246,.20)}
+
+  /* medida: 5 muescas honestas (A) vs. barra continua con glow (B) */
+  .med{display:flex; align-items:center; gap:7px; font-size:11px; color:var(--muted)}
+  .muescas{display:flex; gap:3px; flex:1}
+  .muescas i{height:5px; flex:1; border-radius:1px; background:rgba(245,243,255,.09)}
+  .muescas i.on{background:var(--violet-soft)}
+  .muescas.pre i.on{background:var(--green)}
+  .barra{height:5px; flex:1; border-radius:99px; background:rgba(245,243,255,.09); overflow:hidden}
+  .barra i{display:block; height:100%; border-radius:99px; background:var(--violet-soft);
+           box-shadow:var(--glow)}
+  .barra.pre i{background:var(--green)}
+  .barra.dl i{background:var(--violet)}
+  [data-estilo="imp"] .barra-wrap{display:none}
+  [data-estilo="pmx"] .muescas-wrap{display:none}
+
+  .caja{background:var(--panel-hi); border:1px solid var(--linea);
+        border-radius:var(--r-card); padding:14px; margin-top:calc(var(--u)*2); min-height:56px}
+
+  /* ============ herramienta (no es diseno de Pronto) ============ */
+  #switcher{position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:99;
+    display:flex;align-items:center;gap:4px;padding:6px;background:#fff;color:#111;
+    border-radius:999px;box-shadow:0 10px 30px rgba(0,0,0,.5);font:600 13px/1 system-ui;}
+  #switcher button{width:30px;height:30px;border-radius:999px;font-size:15px;color:#111}
+  #switcher button:hover{background:#eee}
+  #switcher .lbl{padding:0 10px;white-space:nowrap}
+  #switcher .k{opacity:.45;font-weight:500;padding-right:8px}
+  #marco{width:1010px;height:700px;border:0;border-radius:14px;background:#0B0810}
+  #ficha{position:fixed;right:18px;top:18px;width:310px;z-index:97;font:12px/1.5 system-ui;
+    background:rgba(10,8,14,.96);border:1px solid rgba(245,243,255,.14);border-radius:10px;
+    padding:14px 16px;color:#F5F3FF;box-shadow:0 18px 50px rgba(0,0,0,.6)}
+  #ficha h4{margin:0 0 9px;font:600 13px/1 system-ui}
+  #ficha table{width:100%;border-collapse:collapse}
+  #ficha td{padding:3px 0;vertical-align:top}
+  #ficha td:first-child{color:#9C93AE;padding-right:10px;white-space:nowrap}
+  #ficha .n{font-variant-numeric:tabular-nums}
+  #ficha .pie2{margin-top:10px;padding-top:9px;border-top:1px solid rgba(245,243,255,.12);
+    color:#9C93AE}
+  @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+</style>
+</head>
+<body>
+
+<svg style="display:none" aria-hidden="true">
+  <symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2 3 14h8l-1 8 10-12h-8l1-8z"/></symbol>
+  <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1.5"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><path d="M12 19v3"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M6 9h.01M10 9h.01M14 9h.01M18 9h.01M8 13h.01M12 13h.01M16 13h.01M7 16h10"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="m6 3 14 9-14 9V3z"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m20 6-11 11-5-5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 3v12"/><path d="m7 11 5 5 5-5"/><path d="M4 21h16"/></symbol>
+</svg>
+
+<div id="app"></div>
+<div id="ficha" hidden></div>
+
+<div id="switcher">
+  <button id="prev" title="Anterior (flecha izquierda)">&lsaquo;</button>
+  <span class="lbl" id="lbl"></span>
+  <span class="k">F ficha</span>
+  <button id="next" title="Siguiente (flecha derecha)">&rsaquo;</button>
+</div>
+
+<script>
+// ------------------------------------------------- datos: COPIADOS TAL CUAL del prototipo 01
+// Nada de contenido cambia entre estilos. Solo cambia como se pinta.
+const MOTORES = [
+  { id:'parakeet3', nom:'Parakeet TDT v3', idiomas:'25 idiomas / espanol nativo', mb:498,
+    vel:1.00, pre:0.92 },
+  { id:'whisper-s', nom:'Whisper small', idiomas:'99 idiomas', mb:466, vel:0.60, pre:0.70 },
+  { id:'whisper-l', nom:'Whisper large-v3', idiomas:'99 idiomas', mb:2900, vel:0.20, pre:1.00 },
+];
+const IDIOMAS = [
+  {id:'es', nom:'Espanol'}, {id:'auto', nom:'Deteccion automatica'}, {id:'en', nom:'English'},
+];
+const FORMATEOS = [
+  {id:'no', nom:'Sin Formateo', sub:'El texto sale tal cual lo oye el motor. Cero espera, cero coste.'},
+  {id:'local', nom:'Local, en tu equipo', sub:'Un modelo pequeno arregla tildes, comas y muletillas. No sale nada del PC. ~1,2 GB.'},
+  {id:'nube', nom:'Nube, con tu clave', sub:'La mejor calidad. Sale el TEXTO, nunca el audio. Con tope de gasto.'},
+];
+
+const ESTILOS = [
+  ['actual','Original — sin tocar (el control)'],
+  ['imp',   '/impeccable — Operate, nativo Windows 11'],
+  ['pmx',   'ui-ux-pro-max — Dark OLED + Inter (paleta congelada)'],
+];
+
+const FICHAS = {
+  imp: {
+    titulo:'/impeccable — Operate',
+    filas:[
+      ['Tipografia','Segoe UI Variable (ya instalada)'],
+      ['Rampa','12 / 14 / 20 px — la de Windows'],
+      ['Radios','4 control / 8 tarjeta / 12 ventana'],
+      ['Sombra','0 8px 24px rgba(0,0,0,.45)'],
+      ['Boton','plano + filo 1px (sin degradado)'],
+      ['Iconos','SVG trazo 1.75 (0 emoji)'],
+      ['Medida','5 muescas (no barra continua)'],
+      ['Movimiento','160 ms · cubic-bezier(.2,0,0,1)'],
+      ['Amarillo','1 uso en toda la pantalla'],
+    ],
+    nota:'Preserva la identidad y arregla el oficio. Se lee a app de Windows.'
+  },
+  pmx: {
+    titulo:'ui-ux-pro-max — su ficha',
+    filas:[
+      ['Tipografia','Inter 300-700 (Google Fonts)'],
+      ['Rampa','12 / 15 / 22 px'],
+      ['Radios','10 control / 12 tarjeta / 16 ventana'],
+      ['Sombra','0 24px 64px rgba(0,0,0,.85)'],
+      ['Boton','degradado violeta + halo 18px'],
+      ['Fondo','#000 real (regla OLED)'],
+      ['Filas','44 px minimo (touch target)'],
+      ['Glow','text-shadow 0 0 10px'],
+      ['Movimiento','200 ms · cubic-bezier(.4,0,.2,1)'],
+    ],
+    nota:'Su paleta era slate #1E293B + verde #22C55E: DESCARTADA. Todo lo demas es suyo.'
+  },
+  actual: {
+    titulo:'Original — el control',
+    filas:[
+      ['Tipografia','Segoe UI'],
+      ['Radios','9 control / 11 tarjeta / 16 ventana'],
+      ['Sombra','0 40px 90px rgba(0,0,0,.60)'],
+      ['Boton','degradado violeta vertical'],
+      ['Iconos','emoji'],
+      ['Medida','barras continuas de %'],
+    ],
+    nota:'Se abre el fichero real, sin modificar. Es lo que hay hoy.'
+  },
+};
+
+// ------------------------------------------------- estado (nada persiste)
+const _q = new URLSearchParams(location.search);
+let S = {
+  idioma:'es', motor:'parakeet3', formateo:'no',
+  descargados:{}, descargando:null, progreso:0,
+  permisos:{mic:false, inyeccion:false},
+  prueba:'', preferencia:50,
+};
+
+function mb(n){ return n>=1000 ? (n/1000).toFixed(1).replace('.',',')+' GB' : n+' MB'; }
+function listo(){ return !!S.descargados[S.motor]; }
+function icono(id,cls){ return '<svg class="i '+(cls||'')+'"><use href="#i-'+id+'"></use></svg>'; }
+
+let temporizador=null;
+function descargar(id){
+  if(S.descargando) return;
+  S.descargando=id; S.progreso=0; pinta();
+  temporizador=setInterval(function(){
+    S.progreso += 4 + Math.random()*7;
+    if(S.progreso>=100){ clearInterval(temporizador); S.descargados[id]=true;
+                         S.descargando=null; S.progreso=0; }
+    pinta();
+  },110);
+}
+function cancelar(){ clearInterval(temporizador); S.descargando=null; S.progreso=0; pinta(); }
+
+// ------------------------------------------------- la pantalla (marcado unico)
+function medida(icon, valor, clasePre){
+  const muescas = [1,2,3,4,5].map(function(n){
+    return '<i class="'+(valor*5 >= n-0.5 ? 'on':'')+'"></i>';
+  }).join('');
+  return '<div class="med">'+icono(icon)+
+    '<span class="muescas-wrap" style="flex:1"><span class="muescas '+clasePre+'" style="display:flex;gap:3px">'+muescas+'</span></span>'+
+    '<span class="barra-wrap" style="flex:1;display:flex"><span class="barra '+clasePre+'" style="flex:1"><i style="width:'+(valor*100)+'%"></i></span></span>'+
+    '</div>';
+}
+
+function pantalla(){
+  const p = S.preferencia/100;
+  const punt = function(x){ return (1-p)*x.vel + p*x.pre; };
+  const ordenados = MOTORES.slice().sort(function(a,b){ return punt(b)-punt(a); });
+  const hechos = [1, listo()?1:0, (S.permisos.mic&&S.permisos.inyeccion)?1:0, S.prueba?1:0, 1]
+                 .reduce(function(a,b){return a+b;},0);
+
+  const bloque = function(ok,tit,chip,cuerpo){
+    return '<div class="bloque '+(ok?'ok':'')+'">'+
+      '<div class="tick">'+(ok?icono('check'):'')+'</div>'+
+      '<div><div class="tit">'+tit+(chip?' <span class="chip">'+chip+'</span>':'')+'</div>'+cuerpo+'</div></div>';
+  };
+
+  const motores = ordenados.map(function(x,idx){
+    const bajando = S.descargando===x.id, hay = S.descargados[x.id];
+    let accion;
+    if(bajando){
+      accion = '<div style="width:118px"><span class="barra dl" style="display:flex"><i style="width:'+S.progreso+'%"></i></span>'+
+        '<div class="mut num" style="font-size:11px;margin-top:5px;display:flex;align-items:center;gap:6px">'+
+        Math.round(S.progreso)+' %<button data-cancelar="1" aria-label="Cancelar descarga" style="color:var(--violet-soft);display:inline-flex">'+icono('x')+'</button></div></div>';
+    } else if(hay){
+      accion = '<span class="chip ok">'+icono('check')+'instalado</span>';
+    } else {
+      accion = '<button class="btn sm" data-descargar="'+x.id+'">'+icono('down')+'Descargar</button>';
+    }
+    return '<div class="fila '+(S.motor===x.id?'sel':'')+'" data-motor="'+x.id+'" tabindex="0">'+
+      '<span class="mut num" style="width:14px">'+(idx+1)+'</span>'+
+      '<div class="nom"><div style="font-weight:600">'+x.nom+
+        (idx===0?' <span class="chip spark">mejor encaje</span>':'')+'</div>'+
+        '<div class="mut num" style="font-size:12px">'+x.idiomas+' / '+mb(x.mb)+'</div></div>'+
+      '<div class="medida">'+medida('bolt',x.vel,'')+medida('target',x.pre,'pre')+'</div>'+
+      accion+'</div>';
+  }).join('');
+
+  return '<div class="ventana"><div style="display:flex;flex-direction:column;height:100%">'+
+    '<div class="top"><div><h2>Poner Pronto en marcha</h2>'+
+      '<div class="sub">Todo en una pantalla. Puedes hacerlo en el orden que quieras.</div></div>'+
+      '<div class="mut num" style="font-size:var(--t-cap)">'+hechos+' de 5</div></div>'+
+    '<div class="lista">'+
+
+    bloque(true,'Idioma','',
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'+
+      IDIOMAS.map(function(i){
+        return '<button class="btn '+(S.idioma===i.id?'':'ghost')+' sm" data-idioma="'+i.id+'">'+i.nom+'</button>';
+      }).join('')+'</div>')+
+
+    bloque(listo(),'Motor de voz', listo()?'':'pendiente',
+      '<div class="mut" style="font-size:var(--t-cap)">Ordena la lista segun lo que te importe. La descarga es de una vez.</div>'+
+      '<div class="mando"><span>'+icono('bolt')+'Rapidez</span>'+
+        '<input type="range" id="pref" min="0" max="100" value="'+S.preferencia+'" aria-label="Rapidez o precision">'+
+        '<span>'+icono('target')+'Precision</span></div>'+
+      motores+
+      '<p class="mut" style="font-size:11.5px;margin:4px 0 0">Las medidas no llevan numero porque todavia '+
+      'no hemos medido el WER en espanol. El orden si es real: sale de tu mando.</p>')+
+
+    bloque(S.permisos.mic&&S.permisos.inyeccion,'Permisos de Windows','',
+      '<div style="display:flex;gap:10px;margin-top:8px">'+
+      [['mic','Microfono','mic'],['inyeccion','Escribir en otras apps','key']].map(function(t){
+        return S.permisos[t[0]]
+          ? '<span class="chip ok">'+icono('check')+t[1]+'</span>'
+          : '<button class="btn ghost sm" data-permiso="'+t[0]+'">'+icono(t[2])+t[1]+'</button>';
+      }).join('')+'</div>')+
+
+    bloque(!!S.prueba,'Prueba un dictado','opcional',
+      '<div class="mut" style="font-size:var(--t-cap)">Ctrl + Espacio, habla, suelta.</div>'+
+      '<div class="caja"><span id="pruebaCaja">'+(S.prueba||'<span class="mut">...</span>')+'</span></div>'+
+      '<button class="btn ghost sm" id="simular" style="margin-top:8px">'+icono('play')+'Simular</button>')+
+
+    bloque(S.formateo!=='no','Formateo con IA','apagado de fabrica',
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px">'+
+      FORMATEOS.map(function(f){
+        return '<button class="btn '+(S.formateo===f.id?'':'ghost')+' sm" data-formateo="'+f.id+'">'+f.nom+'</button>';
+      }).join('')+'</div>'+
+      '<div class="mut" style="font-size:12px;margin-top:8px">'+
+      FORMATEOS.filter(function(f){return f.id===S.formateo;})[0].sub+'</div>')+
+
+    '</div><div class="pie">'+
+      '<span class="mut" style="font-size:var(--t-cap)">'+
+      (listo()?'Todo lo imprescindible esta hecho.':'Falta descargar un Motor de voz.')+'</span>'+
+      '<button class="btn" data-fin="1"'+(listo()?'':' disabled')+'>Empezar a dictar</button>'+
+    '</div></div></div>';
+}
+
+// ------------------------------------------------- switcher
+function claveEstilo(){
+  const v = (new URLSearchParams(location.search).get('estilo')||'imp').toLowerCase();
+  return ESTILOS.some(function(x){return x[0]===v;}) ? v : 'imp';
+}
+function irEstilo(k){
+  const u = new URL(location); u.searchParams.set('estilo',k);
+  history.replaceState({},'',u); pinta();
+}
+
+function pinta(){
+  const k = claveEstilo();
+  document.documentElement.dataset.estilo = k;
+  document.getElementById('app').innerHTML = (k==='actual')
+    ? '<iframe id="marco" src="../prototipo-01-instalacion.html?variant=C" title="Original"></iframe>'
+    : pantalla();
+  document.getElementById('lbl').textContent =
+    ESTILOS.filter(function(x){return x[0]===k;})[0][1];
+  pintaFicha();
+}
+
+function pintaFicha(){
+  const f = FICHAS[claveEstilo()], el = document.getElementById('ficha');
+  el.innerHTML = '<h4>'+f.titulo+'</h4><table>'+
+    f.filas.map(function(r){ return '<tr><td>'+r[0]+'</td><td class="n">'+r[1]+'</td></tr>'; }).join('')+
+    '</table><div class="pie2">'+f.nota+'</div>';
+}
+
+document.addEventListener('click', function(e){
+  const t = e.target.closest('[data-motor],[data-idioma],[data-formateo],[data-descargar],[data-cancelar],[data-permiso],[data-fin],#simular,#prev,#next');
+  if(!t) return;
+  const d = t.dataset;
+  if(t.id==='prev'||t.id==='next'){
+    const k=claveEstilo();
+    let i=0; ESTILOS.forEach(function(x,n){ if(x[0]===k) i=n; });
+    const n=(i+(t.id==='next'?1:-1)+ESTILOS.length)%ESTILOS.length;
+    return irEstilo(ESTILOS[n][0]);
+  }
+  if(d.descargar) return descargar(d.descargar);
+  if(d.cancelar)  return cancelar();
+  if(d.permiso){ S.permisos[d.permiso]=true; return pinta(); }
+  if(d.idioma){ S.idioma=d.idioma; return pinta(); }
+  if(d.formateo){ S.formateo=d.formateo; return pinta(); }
+  if(d.motor){ S.motor=d.motor; return pinta(); }
+  if(d.fin){ alert('Fin del asistente (prototipo).'); return; }
+  if(t.id==='simular'){
+    const frase='Prueba de dictado en Pronto, a ver que tal escribe esto.';
+    S.prueba=''; pinta();
+    let i=0; const id=setInterval(function(){
+      S.prueba=frase.slice(0,++i);
+      const c=document.getElementById('pruebaCaja'); if(c) c.textContent=S.prueba;
+      if(i>=frase.length){ clearInterval(id); pinta(); }
+    },28);
+  }
+});
+
+document.addEventListener('keydown', function(e){
+  if(/^(INPUT|TEXTAREA)$/.test(e.target.tagName)) return;
+  if(e.key==='f'||e.key==='F'){
+    const el=document.getElementById('ficha'); el.hidden=!el.hidden; return;
+  }
+  if(e.key!=='ArrowLeft'&&e.key!=='ArrowRight') return;
+  const k=claveEstilo();
+  let i=0; ESTILOS.forEach(function(x,n){ if(x[0]===k) i=n; });
+  const n=(i+(e.key==='ArrowRight'?1:-1)+ESTILOS.length)%ESTILOS.length;
+  irEstilo(ESTILOS[n][0]);
+});
+
+document.addEventListener('input', function(e){
+  if(e.target.id==='pref'){
+    S.preferencia=+e.target.value; pinta();
+    const el=document.getElementById('pref'); if(el) el.focus();
+  }
+});
+
+pinta();
+</script>
+</body>
+</html>
