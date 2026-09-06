@@ -5,6 +5,7 @@ import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../features/home/home_screen.dart';
+import '../features/migration/migration_notice.dart';
 import '../features/overlay/overlay_pill_screen.dart';
 import '../features/overlay/window_mode_controller.dart';
 import '../features/splash/splash_screen.dart';
@@ -34,7 +35,8 @@ class _Root extends ConsumerStatefulWidget {
   ConsumerState<_Root> createState() => _RootState();
 }
 
-class _RootState extends ConsumerState<_Root> with TrayListener, WindowListener {
+class _RootState extends ConsumerState<_Root>
+    with TrayListener, WindowListener {
   @override
   void initState() {
     super.initState();
@@ -47,6 +49,23 @@ class _RootState extends ConsumerState<_Root> with TrayListener, WindowListener 
     // el re-chequeo periódico. Antes solo se creaba al observarlo la píldora, así
     // que si arrancabas en el panel el aviso (punto morado) no aparecía solo.
     ref.read(updateProvider.notifier);
+    _prepararBaseDeDatos();
+  }
+
+  /// Abre `pronto.db` YA —con su copia previa y su migración— en vez de esperar
+  /// al primer dictado: si el esquema tiene que cambiar, tiene que cambiar
+  /// antes de que nadie lo use. Y si hubo algo que contar, abre el panel, que
+  /// es donde está el aviso: un aviso en una pantalla que el usuario no mira
+  /// no es un aviso.
+  Future<void> _prepararBaseDeDatos() async {
+    try {
+      await ref.read(avisoMigracionProvider.notifier).listo;
+      if (!mounted) return;
+      if (ref.read(avisoMigracionProvider) == null) return;
+      await ref.read(windowModeProvider.notifier).toPanel();
+    } catch (e) {
+      debugPrint('No se pudo preparar la base de datos al arrancar: $e');
+    }
   }
 
   /// La primera vez que se abre la app mostramos el PANEL (no la píldora) para

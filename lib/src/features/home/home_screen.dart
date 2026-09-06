@@ -6,6 +6,7 @@ import '../../core/build_channel.dart';
 import '../../platform/global_hotkey_service.dart';
 import '../dictation/dictation_controller.dart';
 import '../dictation/dictation_state.dart';
+import '../migration/migration_banner.dart';
 import '../settings/settings_controller.dart';
 import '../settings/settings_screen.dart';
 import '../update/update_controller.dart';
@@ -154,6 +155,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
+                // Aviso de que la actualización tocó la base de datos y dónde
+                // quedó la copia previa (PRNT-20).
+                const MigracionBanner(),
+
                 // Aviso de actualización disponible (auto-actualizador).
                 const _UpdateBanner(),
 
@@ -222,8 +227,11 @@ class _ModoDictadoCard extends ConsumerWidget {
           children: [
             Row(
               children: [
-                Icon(Icons.keyboard_command_key_rounded,
-                    color: scheme.primary, size: 24,),
+                Icon(
+                  Icons.keyboard_command_key_rounded,
+                  color: scheme.primary,
+                  size: 24,
+                ),
                 const SizedBox(width: 10),
                 Text(
                   'Cómo quieres dictar',
@@ -377,8 +385,11 @@ class _CorreccionSection extends StatelessWidget {
       children: [
         Row(
           children: [
-            Icon(Icons.auto_fix_high_rounded,
-                size: 20, color: scheme.primary,),
+            Icon(
+              Icons.auto_fix_high_rounded,
+              size: 20,
+              color: scheme.primary,
+            ),
             const SizedBox(width: 8),
             Text(
               'Última transcripción',

@@ -230,10 +230,14 @@ class UpdateController extends Notifier<UpdateState> {
       // mismo GitHub Release que el .exe (misma fuente), así que un release
       // comprometido serviría ambos. La verificación ROBUSTA es la firma
       // Authenticode (code-signing) del instalador, que el propio Windows
-      // valida al ejecutarlo. Eso queda FUERA DE SCOPE aquí (requiere un
-      // certificado de firma). Mitigaciones ya presentes: la descarga va por
-      // HTTPS y el instalador lo lanza el usuario (no es silencioso a espaldas
-      // suyas). TODO: firmar el instalador con Authenticode y exigir la firma.
+      // valida al ejecutarlo. Está SIN HACER: es el PRNT-21, porque un
+      // certificado cuesta dinero y lo decide Txonso.
+      //
+      // Lo único que hay hoy es que la descarga va por HTTPS. Y conviene no
+      // engañarse con el alcance del clic del usuario: él acepta actualizar,
+      // pero a partir de ahí [_launchSilentInstallerAndQuit] instala en
+      // VENTANA OCULTA, en silencio, y MATA la app si no se cierra sola. Lo
+      // que aprueba es la intención, no ve lo que se ejecuta.
       state = state.copyWith(status: UpdateStatus.installing, progress: 1);
       await _launchSilentInstallerAndQuit(outPath);
     } catch (e) {

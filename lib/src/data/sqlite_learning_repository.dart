@@ -1,20 +1,23 @@
 import 'dart:async';
 
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
 import 'package:sqlite3/sqlite3.dart';
 
 import '../features/learning/learning_repository.dart';
+import 'pronto_database.dart';
 
 /// Implementación con SQLite del [LearningRepository].
 ///
 /// Usa `package:sqlite3` (con `sqlite3_flutter_libs` para bundlear la librería
 /// nativa en Windows). La base de datos `pronto.db` se guarda en el directorio
-/// de soporte de la aplicación ([getApplicationSupportDirectory]).
+/// de soporte de la aplicación.
 ///
 /// La apertura es PEREZOSA: la BD no se abre hasta la primera operación, y la
 /// instancia se cachea para reutilizarla. Todas las consultas usan parámetros
 /// enlazados (prepared statements), nunca interpolación de strings.
+///
+/// Abrir es MÁS que abrir un fichero: [abrirBaseDeDatosDePronto] copia la
+/// carpeta de datos y migra el esquema si hace falta (PRNT-20). Lo que pasó
+/// queda en [informe], que es lo que se le enseña al usuario tras actualizar.
 class SqliteLearningRepository implements LearningRepository {
   /// Instancia cacheada de la BD (se crea en la primera llamada a [_db]).
   Database? _database;
@@ -23,10 +26,22 @@ class SqliteLearningRepository implements LearningRepository {
   /// varias operaciones concurrentes antes de terminar la primera apertura.
   Future<Database>? _opening;
 
-  /// Devuelve la BD abriéndola de forma perezosa la primera vez.
-  ///
-  /// Ubica `pronto.db` con [getApplicationSupportDirectory], la abre con
-  /// [sqlite3.open] y crea las tablas si no existen. Cachea la instancia.
+  final Completer<InformeApertura> _informe = Completer<InformeApertura>();
+
+  /// Lo que pasó al abrir la base: si se migró, dónde quedó la copia previa y
+  /// qué falló, si algo falló. Se completa en la primera apertura.
+  Future<InformeApertura> get informe => _informe.future;
+
+  /// Fuerza la apertura (y con ella la copia y la migración) sin esperar a que
+  /// alguien dicte. Se llama al arrancar: migrar tiene que pasar ANTES de que
+  /// nada toque la base, no la primera vez que el usuario habla.
+  Future<InformeApertura> asegurarAbierta() async {
+    await _db();
+    return informe;
+  }
+
+  /// Devuelve la BD abriéndola de forma perezosa la primera vez, con su copia
+  /// previa y su migración. Cachea la instancia.
   Future<Database> _db() {
     final cached = _database;
     if (cached != null) return Future.value(cached);
@@ -37,48 +52,23 @@ class SqliteLearningRepository implements LearningRepository {
 
   Future<Database> _open() async {
     try {
-      final dir = await getApplicationSupportDirectory();
-      final path = p.join(dir.path, 'pronto.db');
-      final db = sqlite3.open(path);
-      _createSchema(db);
-      _database = db;
-      return db;
+      final apertura = await abrirBaseDeDatosDePronto();
+      _database = apertura.db;
+      if (!_informe.isCompleted) _informe.complete(apertura.informe);
+      return apertura.db;
     } catch (e) {
       // Si falla la apertura, limpia el future en curso para reintentar luego.
       _opening = null;
+      // El informe se completa igual: si no, quien lo espere para enseñar el
+      // aviso se quedaría colgado para siempre.
+      if (!_informe.isCompleted) {
+        _informe.complete(InformeApertura(errorApertura: '$e'));
+      }
       throw StateError('No se pudo abrir la base de datos de aprendizaje: $e');
     } finally {
       // Una vez resuelta (con éxito o no), deja de marcar la apertura en curso.
       _opening = null;
     }
-  }
-
-  /// Crea las tablas del esquema si no existen.
-  void _createSchema(Database db) {
-    db.execute('''
-      CREATE TABLE IF NOT EXISTS corrections (
-        raw TEXT,
-        corrected TEXT,
-        freq INTEGER NOT NULL DEFAULT 0,
-        last_seen INTEGER,
-        PRIMARY KEY (raw, corrected)
-      );
-    ''');
-    db.execute('''
-      CREATE TABLE IF NOT EXISTS vocab_terms (
-        term TEXT PRIMARY KEY,
-        freq INTEGER NOT NULL DEFAULT 0
-      );
-    ''');
-    db.execute('''
-      CREATE TABLE IF NOT EXISTS dictation_log (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        raw TEXT,
-        final TEXT,
-        avg_logprob REAL,
-        ts INTEGER
-      );
-    ''');
   }
 
   @override
