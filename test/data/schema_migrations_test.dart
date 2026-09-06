@@ -89,13 +89,21 @@ void main() {
 
       final beforeCorr = rows('SELECT * FROM corrections ORDER BY raw');
       final beforeVocab = rows('SELECT * FROM vocab_terms ORDER BY term');
-      final beforeLog = rows('SELECT * FROM dictation_log ORDER BY id');
+      // Del log se comparan las columnas que YA existían: las que añade una
+      // migración salen a null y compararlas con `SELECT *` haría fallar este
+      // test cada vez que el esquema crece, sin que se haya perdido nada.
+      const logColumns = 'id, raw, final, avg_logprob, ts';
+      final beforeLog =
+          rows('SELECT $logColumns FROM dictation_log ORDER BY id');
 
       migrateSchema(old);
 
       expect(rows('SELECT * FROM corrections ORDER BY raw'), beforeCorr);
       expect(rows('SELECT * FROM vocab_terms ORDER BY term'), beforeVocab);
-      expect(rows('SELECT * FROM dictation_log ORDER BY id'), beforeLog);
+      expect(
+        rows('SELECT $logColumns FROM dictation_log ORDER BY id'),
+        beforeLog,
+      );
       // Tildes y ñ del vocabulario propio sobreviven al viaje.
       expect(
         old

@@ -56,6 +56,11 @@ const List<Migration> kProntoMigrations = [
     name: 'esquema base (correcciones, vocabulario, log de dictados)',
     apply: _v1BaseSchema,
   ),
+  Migration(
+    version: 2,
+    name: 'historial: metadatos del dictado e índice por fecha',
+    apply: _v2HistoryColumns,
+  ),
 ];
 
 void _v1BaseSchema(Database db) {
@@ -83,6 +88,64 @@ void _v1BaseSchema(Database db) {
       ts INTEGER
     );
   ''');
+}
+
+/// PRNT-16. `dictation_log` guardaba cuatro campos: crudo, final, confianza y
+/// fecha. El Historial necesita saber además POR DÓNDE pasó cada dictado —qué
+/// motor, qué formateo, cuánto tardó cada etapa, qué costó y en qué app
+/// aterrizó— porque eso es lo que convierte la pantalla en una herramienta de
+/// diagnóstico y no en un archivo.
+///
+/// Todas las columnas nuevas son opcionales salvo [source]: las filas que ya
+/// existen se quedan como estaban y solo ganan huecos vacíos.
+void _v2HistoryColumns(Database db) {
+  // `source` separa lo que el usuario dictó de verdad de las pruebas que hace
+  // el asistente de instalación (PRNT-13). El Historial enseña solo lo primero.
+  _addColumn(db, 'dictation_log', 'source', "TEXT NOT NULL DEFAULT 'dictado'");
+  // El Modo con el que se dictó (PRNT-3). Hoy nadie lo escribe: queda a null
+  // hasta que los Modos existan, y entonces las filas viejas dirán la verdad
+  // —no se sabe— en vez de mentir con «Por defecto».
+  _addColumn(db, 'dictation_log', 'mode', 'TEXT');
+  _addColumn(db, 'dictation_log', 'engine', 'TEXT');
+  _addColumn(db, 'dictation_log', 'format_path', 'TEXT');
+  _addColumn(db, 'dictation_log', 'format_model', 'TEXT');
+  // El aviso es SIEMPRE una cadena nuestra, nunca la respuesta del proveedor:
+  // el texto del modelo no habla con la voz del sistema.
+  _addColumn(db, 'dictation_log', 'format_notice', 'TEXT');
+  // ¿Lo que se pegó era una TRADUCCIÓN de lo dictado? Si lo es, el crudo y el
+  // final están en idiomas distintos y su diferencia no es una corrección:
+  // aprender de ella envenena el diccionario. Sin esta columna, el Historial no
+  // tiene forma de saberlo y la corrección a mano lo haría a ciegas.
+  _addColumn(db, 'dictation_log', 'translated', 'INTEGER NOT NULL DEFAULT 0');
+  _addColumn(db, 'dictation_log', 'app_name', 'TEXT');
+  _addColumn(db, 'dictation_log', 'window_title', 'TEXT');
+  // Cuánto se habló. Es el dato honesto del «tiempo ahorrado»: sin él habría
+  // que estimarlo, y una estimación en una pantalla de estadísticas se lee
+  // como una medida.
+  _addColumn(db, 'dictation_log', 'spoken_ms', 'INTEGER');
+  _addColumn(db, 'dictation_log', 'transcribe_ms', 'INTEGER');
+  _addColumn(db, 'dictation_log', 'format_ms', 'INTEGER');
+  // En dólares, que es la moneda en la que factura OpenRouter. Convertirlo a
+  // euros aquí sería inventarse un tipo de cambio.
+  _addColumn(db, 'dictation_log', 'cost_usd', 'REAL');
+
+  // La lista se pagina por fecha descendente. Sin índice, 5.000 entradas son
+  // un scan de tabla en cada tecla de la búsqueda.
+  db.execute(
+    'CREATE INDEX IF NOT EXISTS idx_dictation_log_ts '
+    'ON dictation_log (ts DESC)',
+  );
+}
+
+/// `ALTER TABLE ... ADD COLUMN` sin `IF NOT EXISTS` (SQLite no lo tiene): se
+/// mira antes `PRAGMA table_info`. Sin esto, la migración revienta al segundo
+/// intento y el contrato de idempotencia se queda en el comentario.
+void _addColumn(Database db, String table, String column, String decl) {
+  final existe = db
+      .select('PRAGMA table_info($table)')
+      .any((r) => r['name'] == column);
+  if (existe) return;
+  db.execute('ALTER TABLE $table ADD COLUMN $column $decl');
 }
 
 /// Lo que pasó al migrar el esquema.

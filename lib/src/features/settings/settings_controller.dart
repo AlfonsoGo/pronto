@@ -109,6 +109,12 @@ class AppSettings {
   /// Atajo global que alterna el idioma de salida (español ⇄ inglés).
   final HotkeyCombo translateHotkey;
 
+  /// Días que se guarda el Historial. **0 = para siempre**, y eso hay que
+  /// elegirlo a mano: el historial lleva dentro todo lo que has dictado nunca,
+  /// sin cifrar, así que una retención infinita por defecto sería un olvido
+  /// disfrazado de decisión (ADR 0009).
+  final int historyRetentionDays;
+
   const AppSettings({
     required this.modelFile,
     required this.language,
@@ -132,6 +138,7 @@ class AppSettings {
     this.outputLanguage = AppConfig.defaultOutputLanguage,
     this.translationModel = AppConfig.defaultTranslationModel,
     this.translateHotkey = HotkeyCombo.translateDefault,
+    this.historyRetentionDays = AppConfig.defaultHistoryRetentionDays,
   });
 
   /// Idioma en el que se pega el dictado, ya validado ('es' o 'en'; cae a
@@ -181,6 +188,7 @@ class AppSettings {
     String? outputLanguage,
     String? translationModel,
     HotkeyCombo? translateHotkey,
+    int? historyRetentionDays,
   }) {
     return AppSettings(
       modelFile: modelFile ?? this.modelFile,
@@ -205,6 +213,7 @@ class AppSettings {
       outputLanguage: outputLanguage ?? this.outputLanguage,
       translationModel: translationModel ?? this.translationModel,
       translateHotkey: translateHotkey ?? this.translateHotkey,
+      historyRetentionDays: historyRetentionDays ?? this.historyRetentionDays,
     );
   }
 
@@ -231,6 +240,7 @@ class AppSettings {
         'outputLanguage': outputLanguage,
         'translationModel': translationModel,
         'translateHotkey': translateHotkey.toJson(),
+        'historyRetentionDays': historyRetentionDays,
       };
 
   /// Reconstruye desde JSON tolerando claves ausentes o valores inválidos:
@@ -277,7 +287,22 @@ class AppSettings {
               Map<String, dynamic>.from(j['translateHotkey'] as Map),
             )
           : d.translateHotkey,
+      historyRetentionDays: _retentionFromJson(
+        j['historyRetentionDays'],
+        d.historyRetentionDays,
+      ),
     );
+  }
+
+  /// Días de retención del Historial. Un valor negativo, disparatado o que no
+  /// es un número cae al defecto: nunca a cero, que aquí significa «guardar
+  /// para siempre». El tope se aplica también al LEER, no solo al escribir: un
+  /// fichero de ajustes editado a mano no pasa por el setter.
+  static int _retentionFromJson(Object? value, int fallback) {
+    if (value is! num || !value.isFinite) return fallback;
+    final days = value.toInt();
+    if (days < 0 || days > AppConfig.maxHistoryRetentionDays) return fallback;
+    return days;
   }
 
   /// Lee el camino de formateo, MIGRANDO los ajustes viejos.
@@ -377,7 +402,8 @@ class AppSettings {
       other.translationEnabled == translationEnabled &&
       other.outputLanguage == outputLanguage &&
       other.translationModel == translationModel &&
-      other.translateHotkey == translateHotkey;
+      other.translateHotkey == translateHotkey &&
+      other.historyRetentionDays == historyRetentionDays;
 
   @override
   int get hashCode => Object.hashAll([
@@ -403,6 +429,7 @@ class AppSettings {
         outputLanguage,
         translationModel,
         translateHotkey,
+        historyRetentionDays,
       ]);
 }
 
@@ -530,6 +557,14 @@ class SettingsController extends Notifier<AppSettings> {
       return;
     }
     state = state.copyWith(cloudMonthCapUsd: value);
+    await _save();
+  }
+
+  /// Cambia los días que se guarda el Historial. 0 = para siempre. Un valor
+  /// absurdo (negativo o de años) se ignora en vez de aceptarse a medias.
+  Future<void> setHistoryRetentionDays(int value) async {
+    if (value < 0 || value > AppConfig.maxHistoryRetentionDays) return;
+    state = state.copyWith(historyRetentionDays: value);
     await _save();
   }
 

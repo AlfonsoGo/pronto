@@ -13,6 +13,7 @@ import 'package:sqlite3/sqlite3.dart';
 
 import 'data_backup.dart';
 import 'schema_migrations.dart';
+import 'sql_functions.dart';
 
 /// Nombre del fichero de la base de datos dentro de la carpeta de datos.
 const String kDatabaseFile = 'pronto.db';
@@ -128,7 +129,7 @@ Future<OpenedDatabase> openDatabase({
   supportDir.createSync(recursive: true);
   final path = p.join(supportDir.path, kDatabaseFile);
 
-  var db = sqlite3.open(path);
+  var db = _openWithFunctions(path);
   try {
     final from = schemaVersion(db);
     final fresh = databaseIsEmpty(db);
@@ -163,7 +164,7 @@ Future<OpenedDatabase> openDatabase({
         // Sin copia no se migra. La app arranca con el esquema viejo y el
         // usuario se entera por el aviso, en vez de descubrirlo cuando le
         // falten datos.
-        db = sqlite3.open(path);
+        db = _openWithFunctions(path);
         return OpenedDatabase(
           db,
           OpenReport(
@@ -174,7 +175,7 @@ Future<OpenedDatabase> openDatabase({
           ),
         );
       }
-      db = sqlite3.open(path);
+      db = _openWithFunctions(path);
     }
 
     try {
@@ -211,6 +212,18 @@ Future<OpenedDatabase> openDatabase({
     } catch (_) {}
     rethrow;
   }
+}
+
+/// Abre el fichero y le deja puestas las funciones propias.
+///
+/// `pronto_fold` la usa la búsqueda del Historial, y una función SQL vive en la
+/// CONEXIÓN, no en el fichero: si se registra en un solo sitio y luego se
+/// reabre la base (el camino de la copia previa lo hace), la consulta falla en
+/// tiempo de ejecución. Por eso pasa por aquí toda apertura.
+Database _openWithFunctions(String path) {
+  final db = sqlite3.open(path);
+  registerProntoFunctions(db);
+  return db;
 }
 
 /// Igual que [openDatabase] pero resolviendo las carpetas reales de la app: los

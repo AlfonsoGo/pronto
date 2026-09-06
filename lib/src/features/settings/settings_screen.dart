@@ -38,6 +38,10 @@ class SettingsScreen extends ConsumerWidget {
     ),
   ];
 
+  /// Retenciones del Historial que se ofrecen. El 0 es «para siempre» y va el
+  /// último a propósito: es la que hay que elegir a conciencia.
+  static const List<int> _retentionOptions = [7, 30, 90, 365, 0];
+
   /// Idiomas disponibles (código -> etiqueta).
   static const List<({String code, String label})> _languages = [
     (code: 'es', label: 'Español'),
@@ -297,6 +301,35 @@ class SettingsScreen extends ConsumerWidget {
             ),
             value: settings.captureExternalEdits,
             onChanged: controller.setCaptureExternalEdits,
+          ),
+
+          _SectionHeader('Historial', theme: theme),
+
+          ListTile(
+            title: const Text('Cuánto se guarda'),
+            subtitle: Text(
+              settings.historyRetentionDays == 0
+                  ? 'Para siempre. En pronto.db, sin cifrar, queda todo lo que '
+                      'dictes: correos, nombres, lo que digas en voz alta.'
+                  : 'Los dictados de más de ${settings.historyRetentionDays} '
+                      'días se borran solos al arrancar Pronto.',
+            ),
+            trailing: DropdownButton<int>(
+              value: _retentionOptions.contains(settings.historyRetentionDays)
+                  ? settings.historyRetentionDays
+                  : null,
+              hint: Text('${settings.historyRetentionDays} días'),
+              items: const [
+                DropdownMenuItem(value: 7, child: Text('7 días')),
+                DropdownMenuItem(value: 30, child: Text('30 días')),
+                DropdownMenuItem(value: 90, child: Text('90 días')),
+                DropdownMenuItem(value: 365, child: Text('1 año')),
+                DropdownMenuItem(value: 0, child: Text('Para siempre')),
+              ],
+              onChanged: (v) {
+                if (v != null) controller.setHistoryRetentionDays(v);
+              },
+            ),
           ),
 
           const SizedBox(height: 24),

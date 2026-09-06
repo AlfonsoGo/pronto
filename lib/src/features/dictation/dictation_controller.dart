@@ -11,12 +11,15 @@ import '../../platform/audio_capture.dart';
 import '../../platform/global_hotkey_service.dart';
 import '../../platform/platform_services.dart';
 import '../../platform/sounds.dart';
+import '../../platform/foreground_app.dart';
 import '../../platform/text_injector.dart';
 import '../../platform/whisper_engine.dart';
+import '../history/history_repository.dart';
 import '../learning/learning_service.dart';
 import '../overlay/pill_popup_controller.dart';
 import '../formatting/cloud_budget_provider.dart';
 import '../formatting/formatter_provider.dart';
+import '../formatting/text_formatter.dart';
 import '../settings/settings_controller.dart';
 import '../transcription/parakeet_engine.dart';
 import '../translation/language_detect.dart';
@@ -39,6 +42,14 @@ class DictationController extends Notifier<DictationState> {
   late final TextInjector _injector;
   late final GlobalHotkeyService _hotkeys;
   late final LearningService _learning;
+
+  /// La escritura en el Historial del último dictado, en curso o ya terminada.
+  ///
+  /// Se guarda el FUTURO, no el `id`: apuntar el dictado no bloquea el pegado,
+  /// así que cuando el usuario corrige puede que la fila todavía no exista. Con
+  /// el id a secas, esa corrección leería el de un dictado ANTERIOR y le
+  /// cambiaría el texto al dictado equivocado.
+  Future<int?>? _lastLogWrite;
 
   StreamSubscription<HotkeyEvent>? _hotkeySub;
   StreamSubscription<double>? _levelSub;
@@ -99,6 +110,11 @@ class DictationController extends Notifier<DictationState> {
       await ref.read(settingsProvider.notifier).loaded;
       final engine = ref.read(whisperEngineProvider);
       _engine = engine;
+
+      // La retención se aplica AL ARRANCAR, una vez, y no bloquea nada: si
+      // solo se aplicara al abrir la pantalla del Historial, quien no la abre
+      // nunca guardaría para siempre sin haberlo elegido.
+      unawaited(_purgeOldHistory());
 
       final path = modelPath ?? await _resolveModelPath();
 
@@ -233,11 +249,13 @@ class DictationController extends Notifier<DictationState> {
         return;
       }
       final initialPrompt = _learning.buildInitialPrompt();
+      final relojMotor = Stopwatch()..start();
       final result = await engine.transcribe(
         pcm,
         language: AppConfig.defaultLanguage,
         initialPrompt: initialPrompt.isEmpty ? null : initialPrompt,
       );
+      relojMotor.stop();
 
       if (result.isEmpty) {
         state = state.copyWith(status: DictationStatus.idle);
@@ -273,8 +291,11 @@ class DictationController extends Notifier<DictationState> {
       //    cuál queda como "la otra versión" de la caja de la píldora.
       final plan = await _planOutput(finalText);
 
-      // 4) Insertar en la app con foco.
+      // 4) Insertar en la app con foco. Quién lo tiene se lee AQUÍ, justo
+      //    antes de pegar: un instante después el usuario ya pudo cambiar de
+      //    ventana y el Historial apuntaría la app equivocada.
       state = state.copyWith(status: DictationStatus.injecting);
+      final destino = ref.read(foregroundAppProvider).current();
       final injected = await _injector.insert(plan.text);
 
       state = state.copyWith(
@@ -321,6 +342,20 @@ class DictationController extends Notifier<DictationState> {
         unawaited(_translateInBackground(plan.text, plan.lang!));
       }
 
+      // Registrar el dictado. TODOS, no solo los que se corrigen: el
+      // historial es el corpus con el que se mide el formateo, el vocabulario y
+      // la velocidad. Si falla, el dictado ya está pegado y no se pierde nada:
+      // no se le estropea el trabajo al usuario por no poder apuntarlo.
+      _lastLogWrite = _logDictation(
+        raw: result.text,
+        pasted: plan.text,
+        spoken: Duration(milliseconds: result.audioMs),
+        transcribe: relojMotor.elapsed,
+        format: formato,
+        target: destino,
+        translated: plan.translated,
+      );
+
       // Arma la captura de ediciones externas: si el usuario corrige el texto
       // en su app y lo copia, lo aprenderemos (no-op si está desactivada).
       // Se salta cuando lo pegado es una TRADUCCIÓN: comparar el inglés que el
@@ -333,6 +368,76 @@ class DictationController extends Notifier<DictationState> {
         status: DictationStatus.error,
         error: 'Error procesando dictado: $e',
       );
+    }
+  }
+
+  /// Borra del Historial lo más viejo que la retención elegida.
+  ///
+  /// Con la retención en 0 (guardar para siempre) no borra nada: eso lo
+  /// garantiza [HistoryRepository.purgeOlderThan], que trata el cero como
+  /// «no toques nada» en vez de como «todo es viejo».
+  Future<void> _purgeOldHistory() async {
+    final days = ref.read(settingsProvider).historyRetentionDays;
+    if (days <= 0) return;
+    final history = ref.read(historyRepositoryProvider);
+    if (history == null) return;
+    try {
+      final borradas = await history.purgeOlderThan(Duration(days: days));
+      if (borradas > 0) {
+        debugPrint('[TF] historial: $borradas entradas por retención ($days d)');
+      }
+    } catch (e) {
+      debugPrint('[TF] no se pudo aplicar la retención del historial: $e');
+    }
+  }
+
+  /// Apunta el dictado en el Historial.
+  ///
+  /// El `id` se guarda para que una corrección posterior arregle ESA fila en
+  /// vez de dejar dos versiones del mismo dictado.
+  Future<int?> _logDictation({
+    required String raw,
+    required String pasted,
+    required Duration spoken,
+    required Duration transcribe,
+    required FormatResult format,
+    required ForegroundApp? target,
+    required bool translated,
+  }) async {
+    final history = ref.read(historyRepositoryProvider);
+    if (history == null) return null;
+    final settings = ref.read(settingsProvider);
+    try {
+      return await history.log(
+        DictationRecord(
+          raw: raw,
+          finalText: pasted,
+          at: DateTime.now(),
+          engine: settings.engine.name,
+          formatPath: settings.formatPath.name,
+          // El modelo que de verdad iba a hacer el trabajo. Con el formateo
+          // apagado no hay ninguno, y decir el que está configurado haría
+          // pensar que corrió.
+          formatModel: switch (settings.formatPath) {
+            FormatPath.none => null,
+            FormatPath.local => settings.formatModel,
+            FormatPath.cloud => settings.cloudModel,
+          },
+          formatNotice: format.notice,
+          appName: target?.appName,
+          windowTitle: target?.windowTitle,
+          spoken: spoken,
+          transcribe: transcribe,
+          format: format.elapsed,
+          costUsd: format.costUsd,
+          translated: translated,
+        ),
+      );
+    } catch (e) {
+      // El historial es un cuaderno, no el trabajo. Que no se pueda escribir se
+      // anota y se sigue.
+      debugPrint('[TF] no se pudo registrar el dictado: $e');
+      return null;
     }
   }
 
@@ -417,6 +522,18 @@ class DictationController extends Notifier<DictationState> {
     }
     await _learning.recordEdit(raw, editedText);
     await _learning.refresh();
+    // La corrección es lo que el dictado DEBERÍA haber dejado: se arregla su
+    // fila del Historial, que si no se quedaría enseñando el texto malo como si
+    // fuera lo bueno.
+    final id = await _lastLogWrite;
+    final history = ref.read(historyRepositoryProvider);
+    if (id != null && history != null) {
+      try {
+        await history.updateFinalText(id, editedText);
+      } catch (e) {
+        debugPrint('[TF] no se pudo corregir la fila del historial: $e');
+      }
+    }
     state = state.copyWith(lastText: editedText);
   }
 

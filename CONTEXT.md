@@ -131,6 +131,29 @@ El cambio que haces tú a mano sobre un Dictado ya insertado. Es de donde salen 
 los Términos aprendidos.
 _Avoid_: edición, feedback, arreglo
 
+### El Historial
+
+**Historial**:
+Todos los Dictados que has hecho, con lo que oyó el Motor y lo que se acabó pegando. Vive en el
+equipo, en `pronto.db`, **sin cifrar**, y se guarda un tiempo limitado
+([ADR 0009](docs/adr/0009-el-historial-no-se-guarda-para-siempre.md)).
+_Avoid_: registro, log, archivo, historia
+
+**Entrada**:
+Un Dictado del Historial con todo lo que se sabe de él: la fecha, el Modo, el Motor, el Modelo de
+formateo, dónde se pegó, lo que tardó cada etapa y lo que costó.
+_Avoid_: fila, registro, ítem, evento
+
+**Retención**:
+Cuántos días se guarda el Historial antes de borrarse solo. Cero significa **para siempre**, y es
+una elección explícita, no el valor de fábrica.
+_Avoid_: caducidad, TTL, expiración, purga
+
+**Corpus**:
+El Historial exportado a CSV o JSON. Es con lo que se MIDE el Formateo y el Vocabulario: sin él,
+todo lo demás son opiniones.
+_Avoid_: dataset, muestra, export
+
 ---
 
 Cómo se llaman estos términos en el código: [ADR 0003](docs/adr/0003-el-modo-se-llama-dictationmode-en-el-codigo.md).

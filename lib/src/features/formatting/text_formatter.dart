@@ -75,12 +75,19 @@ class FormatResult {
   /// salida que medir.
   final ContentDrift? drift;
 
+  /// Lo que costó esta llamada, en dólares, si salió por la nube. `null` en el
+  /// camino local y cuando no llegó a salir nada. Es el importe que se apuntó
+  /// en el libro de cuentas, no una estimación aparte: el Historial y el tope
+  /// de gasto cuentan lo mismo.
+  final double? costUsd;
+
   const FormatResult({
     required this.text,
     required this.outcome,
     this.notice,
     this.elapsed = Duration.zero,
     this.drift,
+    this.costUsd,
   });
 }
 
@@ -175,6 +182,9 @@ class TextFormatter {
     // o no entendamos lo que contesta. Un bucle de tiempos agotados gastaría
     // dinero de verdad con el contador a cero.
     var salio = false;
+    // Lo que se ACABA apuntando en el libro de cuentas. Se recuerda para que el
+    // Historial enseñe el mismo importe que descontó el tope.
+    double? gasto;
     void avisar() {
       salio = true;
       onLeavingDevice?.call();
@@ -189,20 +199,23 @@ class TextFormatter {
       // El dinero se apunta en cuanto el proveedor contesta, ANTES de juzgar su
       // salida: una respuesta que el guardia descarta se ha pagado igual.
       if (_useCloud && respuesta.costUsd != null) {
+        gasto = respuesta.costUsd;
         await budget?.record(respuesta.costUsd!);
       }
       if (respuesta.error != null) {
         // Un 200 que no se entiende YA se ha cobrado; un 4xx/5xx no.
         if (_useCloud && respuesta.cobrada) {
-          await budget?.record(
-            estimateCallCostUsd(model: cloudModel, textChars: text.length),
-          );
+          final estimado =
+              estimateCallCostUsd(model: cloudModel, textChars: text.length);
+          gasto = estimado;
+          await budget?.record(estimado);
         }
         return FormatResult(
           text: text,
           outcome: FormatOutcome.unavailable,
           notice: respuesta.error,
           elapsed: reloj.elapsed,
+      costUsd: gasto,
         );
       }
       raw = respuesta.content!;
@@ -211,15 +224,17 @@ class TextFormatter {
       // clasifica aquí, con cadenas nuestras; nunca se enseña el error crudo.
       reloj.stop();
       if (_useCloud && salio) {
-        await budget?.record(
-          estimateCallCostUsd(model: cloudModel, textChars: text.length),
-        );
+        final estimado =
+            estimateCallCostUsd(model: cloudModel, textChars: text.length);
+        gasto = estimado;
+        await budget?.record(estimado);
       }
       return FormatResult(
         text: text,
         outcome: FormatOutcome.unavailable,
         notice: _motivoDe(e),
         elapsed: reloj.elapsed,
+      costUsd: gasto,
       );
     }
 
@@ -230,6 +245,7 @@ class TextFormatter {
         outcome: FormatOutcome.unavailable,
         notice: 'Sin formatear: el modelo devolvió una respuesta vacía',
         elapsed: reloj.elapsed,
+      costUsd: gasto,
       );
     }
 
@@ -242,6 +258,7 @@ class TextFormatter {
         outcome: FormatOutcome.rejected,
         notice: 'Sin formatear: el modelo cambió una cifra que dictaste',
         elapsed: reloj.elapsed,
+      costUsd: gasto,
         drift: measureContentDrift(text, limpio),
       );
     }
@@ -253,6 +270,7 @@ class TextFormatter {
         outcome: FormatOutcome.rejected,
         notice: 'Sin formatear: el modelo añadió texto que no dictaste',
         elapsed: reloj.elapsed,
+      costUsd: gasto,
         drift: drift,
       );
     }
@@ -262,6 +280,7 @@ class TextFormatter {
         outcome: FormatOutcome.rejected,
         notice: 'Sin formatear: el modelo se dejó parte de lo que dictaste',
         elapsed: reloj.elapsed,
+      costUsd: gasto,
         drift: drift,
       );
     }
@@ -271,6 +290,7 @@ class TextFormatter {
       outcome:
           limpio == text ? FormatOutcome.unchanged : FormatOutcome.formatted,
       elapsed: reloj.elapsed,
+      costUsd: gasto,
       drift: drift,
     );
   }

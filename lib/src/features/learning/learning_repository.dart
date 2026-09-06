@@ -12,7 +12,12 @@ class CorrectionEntry {
   });
 }
 
-/// Persistencia del perfil de aprendizaje (correcciones + vocabulario + log).
+/// Persistencia del perfil de aprendizaje (correcciones + vocabulario).
+///
+/// El log de dictados NO está aquí: lo escribe el Historial
+/// (`HistoryRepository`), que es su único escritor. Antes lo escribía
+/// [recordEdit], así que solo quedaba fila cuando el usuario corregía algo — el
+/// historial nacía casi vacío y no había corpus que medir.
 ///
 /// Implementación con SQLite: [SqliteLearningRepository] (ver data/).
 /// En tests se usa una implementación en memoria.
@@ -29,11 +34,4 @@ abstract class LearningRepository {
 
   /// Términos de vocabulario más frecuentes (orden descendente por freq).
   Future<List<String>> topVocab({int limit = 45});
-
-  /// Registra un dictado para auditoría/aprendizaje.
-  Future<void> logDictation({
-    required String raw,
-    required String finalText,
-    required double avgLogProb,
-  });
 }

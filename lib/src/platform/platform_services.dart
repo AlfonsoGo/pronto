@@ -5,19 +5,23 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../core/config.dart';
+import '../data/sqlite_history_repository.dart';
 import '../data/sqlite_learning_repository.dart';
 import '../features/audio_capture/audio_capture_record.dart';
 import '../features/learning/external_edit_capture.dart';
 import '../features/learning/learning_repository.dart';
+import '../features/history/history_repository.dart';
 import '../features/learning/learning_service.dart';
 import '../features/settings/settings_controller.dart';
 import '../features/transcription/parakeet_engine.dart';
 import 'audio_capture.dart';
 import 'clipboard_watcher.dart';
+import 'foreground_app.dart';
 import 'global_hotkey_service.dart';
 import 'text_injector.dart';
 import 'whisper_engine.dart';
 import 'windows/windows_clipboard_watcher.dart';
+import 'windows/windows_foreground_app.dart';
 import 'windows/windows_hotkey_service.dart';
 import 'windows/windows_text_injector.dart';
 
@@ -72,8 +76,27 @@ final learningRepositoryProvider = Provider<LearningRepository>((ref) {
   return SqliteLearningRepository();
 });
 
+/// El Historial, colgado de la MISMA base que el aprendizaje.
+///
+/// No abre nada por su cuenta: pide la conexión ya migrada a
+/// [SqliteLearningRepository]. Con un repositorio en memoria (tests de la app
+/// sin SQLite) no hay historial que enseñar, y eso es preferible a abrir una
+/// segunda base a espaldas de la primera.
+final historyRepositoryProvider = Provider<HistoryRepository?>((ref) {
+  final repo = ref.watch(learningRepositoryProvider);
+  if (repo is! SqliteLearningRepository) return null;
+  return SqliteHistoryRepository(() => repo.database);
+});
+
 final learningServiceProvider = Provider<LearningService>((ref) {
   return LearningService(ref.watch(learningRepositoryProvider));
+});
+
+/// Quién tiene el foco al pegar. Fuera de Windows no se sabe, y el Historial
+/// prefiere el hueco vacío a un nombre inventado.
+final foregroundAppProvider = Provider<ForegroundAppReader>((ref) {
+  if (Platform.isWindows) return const WindowsForegroundApp();
+  return const UnknownForegroundApp();
 });
 
 final clipboardWatcherProvider = Provider<ClipboardWatcher>((ref) {

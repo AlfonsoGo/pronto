@@ -6,7 +6,6 @@ import 'package:pronto/src/features/learning/learning_service.dart';
 class FakeLearningRepository implements LearningRepository {
   final Map<String, ({String corrected, int freq})> corrections = {};
   final Map<String, int> vocab = {};
-  final List<String> log = [];
 
   @override
   Future<void> bumpCorrection(String raw, String corrected) async {
@@ -39,14 +38,6 @@ class FakeLearningRepository implements LearningRepository {
     return entries.take(limit).map((e) => e.key).toList();
   }
 
-  @override
-  Future<void> logDictation({
-    required String raw,
-    required String finalText,
-    required double avgLogProb,
-  }) async {
-    log.add('$raw | $finalText');
-  }
 }
 
 void main() {

@@ -6,6 +6,7 @@ import '../../core/build_channel.dart';
 import '../../platform/global_hotkey_service.dart';
 import '../dictation/dictation_controller.dart';
 import '../dictation/dictation_state.dart';
+import '../history/history_screen.dart';
 import '../migration/migration_banner.dart';
 import '../settings/settings_controller.dart';
 import '../settings/settings_screen.dart';
@@ -136,6 +137,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           ],
         ),
         actions: [
+          IconButton(
+            tooltip: 'Historial',
+            icon: const Icon(Icons.history),
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(
+                builder: (_) => const HistoryScreen(),
+              ),
+            ),
+          ),
           IconButton(
             tooltip: 'Configuración',
             icon: const Icon(Icons.settings_outlined),

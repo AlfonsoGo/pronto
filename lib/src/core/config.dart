@@ -179,6 +179,21 @@ class AppConfig {
   /// es de sobra para cualquier uso imaginable de dictado.
   static const double cloudMaxCapUsd = 10.0;
 
+  // --- Historial (PRNT-16) ---
+  /// Días que se guarda el Historial de fábrica.
+  ///
+  /// **No es infinito a propósito** (ADR 0009). En `pronto.db`, sin cifrar,
+  /// está todo lo que el usuario ha dictado nunca: correos, nombres de
+  /// clientes, lo que dijera en voz alta sin pensar. Tres meses son de sobra
+  /// para el uso real del historial —buscar lo de la semana pasada, sacar el
+  /// corpus, ver las estadísticas del mes— y quien quiera guardarlo todo lo
+  /// pone a 0 a mano, que es una decisión, no un olvido.
+  static const int defaultHistoryRetentionDays = 90;
+
+  /// Tope de la retención, en días (unos diez años). Por encima de esto el
+  /// número es un resbalón de dedo, no una intención.
+  static const int maxHistoryRetentionDays = 3650;
+
   // --- Traducción al dictar (español ⇄ inglés, opcional) ---
   /// Modelo por defecto para traducir. Se usa contra el mismo servidor LLM que
   /// la post-corrección ([AppSettings.llmBaseUrl]); Ollama local por defecto.

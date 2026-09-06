@@ -386,6 +386,7 @@ void main() {
         'outputLanguage',
         'translationModel',
         'translateHotkey',
+        'historyRetentionDays',
       });
     });
 

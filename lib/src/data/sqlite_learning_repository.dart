@@ -45,6 +45,13 @@ class SqliteLearningRepository implements LearningRepository {
     return openReport;
   }
 
+  /// La base ya abierta, migrada y con las funciones propias puestas.
+  ///
+  /// Es la puerta que usa el Historial ([SqliteHistoryRepository]) para no
+  /// abrir `pronto.db` por su cuenta: dos aperturas serían dos migraciones
+  /// compitiendo por el mismo fichero.
+  Future<Database> get database => _db();
+
   /// Devuelve la BD abriéndola de forma perezosa la primera vez, con su copia
   /// previa y su migración. Cachea la instancia.
   Future<Database> _db() {
@@ -150,25 +157,6 @@ class SqliteLearningRepository implements LearningRepository {
       return [
         for (final Row row in rows) row['term'] as String,
       ];
-    } finally {
-      stmt.dispose();
-    }
-  }
-
-  @override
-  Future<void> logDictation({
-    required String raw,
-    required String finalText,
-    required double avgLogProb,
-  }) async {
-    final db = await _db();
-    final ts = DateTime.now().millisecondsSinceEpoch;
-    final stmt = db.prepare('''
-      INSERT INTO dictation_log (raw, final, avg_logprob, ts)
-      VALUES (?, ?, ?, ?)
-    ''');
-    try {
-      stmt.execute([raw, finalText, avgLogProb, ts]);
     } finally {
       stmt.dispose();
     }

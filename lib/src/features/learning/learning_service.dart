@@ -48,17 +48,11 @@ class LearningService {
   /// Aprende de una edición del usuario.
   ///
   /// [raw] = lo que dijo Whisper; [edited] = lo que el usuario dejó tras editar.
-  Future<void> recordEdit(
-    String raw,
-    String edited, {
-    double avgLogProb = 0.0,
-  }) async {
-    await _repo.logDictation(
-      raw: raw,
-      finalText: edited,
-      avgLogProb: avgLogProb,
-    );
-
+  ///
+  /// Solo aprende. El dictado ya quedó registrado en el Historial cuando se
+  /// pegó: escribir aquí otra fila duplicaría el mismo dictado cada vez que se
+  /// corrige.
+  Future<void> recordEdit(String raw, String edited) async {
     final a = tokenizeWords(raw);
     final b = tokenizeWords(edited);
     if (a.isEmpty || b.isEmpty) return;
