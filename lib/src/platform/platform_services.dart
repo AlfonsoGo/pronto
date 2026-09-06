@@ -18,11 +18,13 @@ import 'audio_capture.dart';
 import 'clipboard_watcher.dart';
 import 'foreground_app.dart';
 import 'global_hotkey_service.dart';
+import 'system_permissions.dart';
 import 'text_injector.dart';
 import 'whisper_engine.dart';
 import 'windows/windows_clipboard_watcher.dart';
 import 'windows/windows_foreground_app.dart';
 import 'windows/windows_hotkey_service.dart';
+import 'windows/windows_system_permissions.dart';
 import 'windows/windows_text_injector.dart';
 
 /// Factory por plataforma. El MVP solo implementa Windows; al portar
@@ -38,6 +40,16 @@ final whisperEngineProvider = Provider<WhisperEngine>((ref) {
   final impl = ParakeetEngine();
   ref.onDispose(impl.dispose);
   return impl;
+});
+
+/// Lo que Windows deja hacer a Pronto (micrófono, escribir en otras apps). Lo
+/// usa el asistente de instalación para enseñar el estado REAL en vez de un
+/// texto fijo que diría lo mismo pasara lo que pasara.
+final systemPermissionsProvider = Provider<SystemPermissions>((ref) {
+  if (Platform.isWindows) {
+    return WindowsSystemPermissions(ref.watch(audioCaptureProvider));
+  }
+  throw UnimplementedError('Permisos del sistema solo en Windows (MVP).');
 });
 
 final textInjectorProvider = Provider<TextInjector>((ref) {

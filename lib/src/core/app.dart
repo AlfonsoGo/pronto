@@ -6,6 +6,8 @@ import 'package:window_manager/window_manager.dart';
 
 import '../features/home/home_screen.dart';
 import '../features/migration/migration_notice.dart';
+import '../features/onboarding/onboarding_progress.dart';
+import '../features/onboarding/onboarding_screen.dart';
 import '../features/overlay/overlay_pill_screen.dart';
 import '../features/overlay/window_mode_controller.dart';
 import '../features/splash/splash_screen.dart';
@@ -162,10 +164,23 @@ class _RootState extends ConsumerState<_Root>
 
   @override
   Widget build(BuildContext context) {
-    // Instalación / primer arranque: NO abrimos Pronto hasta que TODO esté listo
+    // Primera vez de todas: el asistente de instalación (PRNT-13). Manda sobre
+    // el splash porque hace su trabajo y más — es él quien descarga el Motor de
+    // voz, comprueba los permisos y deja dictar una vez antes de soltarte en la
+    // app.
+    //
+    // 🔴 A quien ya tenía Pronto funcionando NO se le abre: Pronto se actualiza
+    // solo y esta versión aterriza en equipos ajenos (PRNT-20). Eso lo decide
+    // [OnboardingController], que nace «terminado» si encuentra la huella de
+    // una instalación que ya iba.
+    if (ref.watch(debeAbrirAsistenteProvider) == true) {
+      return const OnboardingScreen();
+    }
+
+    // Arranques posteriores: NO abrimos Pronto hasta que TODO esté listo
     // (modelo descargado + motor cargado en memoria). El splash se muestra si
-    // falta el modelo o en el primer arranque logrado (ver shouldSplashProvider);
-    // en arranques normales posteriores no aparece.
+    // falta el modelo (p. ej. lo borraron desde el asistente); en arranques
+    // normales no aparece.
     final ready = ref.watch(modelReadyProvider);
     if (!ready && (ref.watch(shouldSplashProvider).valueOrNull ?? false)) {
       return const SplashScreen();

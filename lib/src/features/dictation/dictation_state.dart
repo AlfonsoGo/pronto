@@ -21,8 +21,32 @@ enum DictationStatus {
   error,
 }
 
+/// Para qué se está grabando.
+///
+/// No es un detalle de la interfaz: decide si el texto se pega en la aplicación
+/// con foco, si entra en el Historial y si el Vocabulario aprende de él. Un
+/// Dictado de prueba que se colara como Dictado de verdad ensuciaría el Corpus
+/// con el que se mide todo lo demás.
+enum DictationPurpose {
+  /// Lo normal: se pega, se apunta en el Historial y se aprende de él.
+  dictado,
+
+  /// La prueba del asistente de instalación. NO se pega en ninguna aplicación
+  /// (el texto se enseña dentro del asistente), NO cuenta como Historial y NO
+  /// alimenta el aprendizaje.
+  prueba,
+}
+
 class DictationState {
   final DictationStatus status;
+
+  /// Para qué se graba ahora mismo.
+  final DictationPurpose purpose;
+
+  /// El texto del último Dictado de prueba. Vive aparte de [lastText] a
+  /// propósito: si compartieran hueco, «copiar la última transcripción» y las
+  /// Correcciones acabarían trabajando sobre una prueba.
+  final String? lastTestText;
 
   /// Última transcripción CRUDA (lo que dijo Whisper, antes de corregir).
   final String? lastRaw;
@@ -52,6 +76,8 @@ class DictationState {
 
   const DictationState({
     this.status = DictationStatus.uninitialized,
+    this.purpose = DictationPurpose.dictado,
+    this.lastTestText,
     this.lastRaw,
     this.lastText,
     this.lastLang,
@@ -86,6 +112,9 @@ class DictationState {
   /// pasar de un valor a null.
   DictationState copyWith({
     DictationStatus? status,
+    DictationPurpose? purpose,
+    String? lastTestText,
+    bool clearTestText = false,
     String? lastRaw,
     String? lastText,
     TextLanguage? lastLang,
@@ -98,6 +127,9 @@ class DictationState {
   }) {
     return DictationState(
       status: status ?? this.status,
+      purpose: purpose ?? this.purpose,
+      lastTestText:
+          clearTestText ? null : (lastTestText ?? this.lastTestText),
       lastRaw: lastRaw ?? this.lastRaw,
       lastText: lastText ?? this.lastText,
       lastLang: lastLang ?? this.lastLang,

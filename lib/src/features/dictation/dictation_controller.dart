@@ -14,6 +14,7 @@ import '../../platform/sounds.dart';
 import '../../platform/foreground_app.dart';
 import '../../platform/text_injector.dart';
 import '../../platform/whisper_engine.dart';
+import '../history/dictation_entry.dart';
 import '../history/history_repository.dart';
 import '../learning/learning_service.dart';
 import '../overlay/pill_popup_controller.dart';
@@ -50,6 +51,16 @@ class DictationController extends Notifier<DictationState> {
   /// el id a secas, esa corrección leería el de un dictado ANTERIOR y le
   /// cambiaría el texto al dictado equivocado.
   Future<int?>? _lastLogWrite;
+
+  /// La escritura pendiente en el Historial, para poder esperarla en una prueba.
+  ///
+  /// El pegado NO la espera a propósito (apuntar el dictado no puede retrasar
+  /// el texto del usuario), y por eso un test que mire el Historial justo
+  /// después de dictar puede encontrarlo vacío **aunque la fila vaya a
+  /// escribirse**: un verde que no prueba nada. Se espera esto y se mira
+  /// después.
+  @visibleForTesting
+  Future<int?>? get lastLogWrite => _lastLogWrite;
 
   StreamSubscription<HotkeyEvent>? _hotkeySub;
   StreamSubscription<double>? _levelSub;
@@ -204,6 +215,28 @@ class DictationController extends Notifier<DictationState> {
     popup.showNotice('Pegar en ${next.label.toLowerCase()}');
   }
 
+  /// Arma el Dictado de prueba del asistente de instalación.
+  ///
+  /// A partir de aquí y hasta [desarmarPrueba], lo que se dicte con el Atajo de
+  /// siempre NO se pega en ninguna aplicación, NO cuenta como Historial y NO
+  /// enseña nada al Vocabulario: sale en la caja del asistente y ahí se queda.
+  /// El Atajo es el de verdad a conciencia — la prueba sirve para comprobar que
+  /// el Atajo funciona, y un botón «grabar» no comprueba eso.
+  void armarPrueba() {
+    if (state.isBusy) return;
+    state = state.copyWith(
+      purpose: DictationPurpose.prueba,
+      clearTestText: true,
+    );
+  }
+
+  /// Vuelve al Dictado normal. Se llama al salir del asistente: dejarlo armado
+  /// haría que el siguiente dictado de verdad se perdiera sin pegarse.
+  void desarmarPrueba() {
+    if (state.purpose == DictationPurpose.dictado) return;
+    state = state.copyWith(purpose: DictationPurpose.dictado);
+  }
+
   Future<void> startRecording() async {
     if (state.isBusy || !(_engine?.isLoaded ?? false)) return;
     try {
@@ -233,6 +266,10 @@ class DictationController extends Notifier<DictationState> {
 
   Future<void> stopAndProcess() async {
     if (state.status != DictationStatus.recording) return;
+    // Para qué se grabó se decide AQUÍ, una vez, y no se vuelve a mirar: si se
+    // consultara en cada paso, desarmar la prueba a mitad del procesado dejaría
+    // media vuelta tratada como prueba y la otra media como dictado de verdad.
+    final purpose = state.purpose;
     if (ref.read(settingsProvider).sounds) Sounds.recordStop();
     try {
       final pcm = await _audio.stop();
@@ -286,6 +323,30 @@ class DictationController extends Notifier<DictationState> {
             ),
           );
       finalText = formato.text;
+
+      // Prueba del asistente: aquí se acaba el camino. El texto se enseña en la
+      // caja del asistente y NO se pega, NO se traduce, NO cuenta como Historial
+      // y NO arma la captura de Correcciones. Se registra con `source: prueba`,
+      // que es justo lo que el Historial filtra: queda constancia de que la
+      // instalación se probó sin ensuciar el Corpus con el que se miden el
+      // Formateo y el Vocabulario.
+      if (purpose == DictationPurpose.prueba) {
+        state = state.copyWith(
+          status: DictationStatus.idle,
+          lastTestText: finalText,
+        );
+        _lastLogWrite = _logDictation(
+          raw: result.text,
+          pasted: finalText,
+          spoken: Duration(milliseconds: result.audioMs),
+          transcribe: relojMotor.elapsed,
+          format: formato,
+          target: null,
+          translated: false,
+          source: DictationSource.prueba,
+        );
+        return;
+      }
 
       // 3) Traducción español ⇄ inglés (opcional). Decide QUÉ texto se pega y
       //    cuál queda como "la otra versión" de la caja de la píldora.
@@ -403,6 +464,7 @@ class DictationController extends Notifier<DictationState> {
     required FormatResult format,
     required ForegroundApp? target,
     required bool translated,
+    DictationSource source = DictationSource.dictado,
   }) async {
     final history = ref.read(historyRepositoryProvider);
     if (history == null) return null;
@@ -413,6 +475,7 @@ class DictationController extends Notifier<DictationState> {
           raw: raw,
           finalText: pasted,
           at: DateTime.now(),
+          source: source,
           engine: settings.engine.name,
           formatPath: settings.formatPath.name,
           // El modelo que de verdad iba a hacer el trabajo. Con el formateo

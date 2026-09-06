@@ -15,6 +15,7 @@ import '../formatting/cloud_budget_provider.dart';
 import '../formatting/cloud_cost.dart';
 import '../formatting/cloud_key.dart';
 import '../formatting/text_formatter.dart';
+import '../onboarding/onboarding_progress.dart';
 import '../translation/language_detect.dart';
 import '../translation/translator.dart';
 import '../update/update_controller.dart';
@@ -220,6 +221,7 @@ class SettingsScreen extends ConsumerWidget {
           ),
 
           const _UpdateTile(),
+          const _RepetirInstalacionTile(),
 
           const Divider(height: 24),
 
@@ -656,6 +658,35 @@ class _PillSizeTile extends ConsumerWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+/// «Repetir la instalación»: vuelve a abrir el asistente de primera vez.
+///
+/// Para quien actualizó desde una versión anterior y nunca lo vio, y para quien
+/// quiera rehacer una parte (cambiar de idioma, volver a bajar el modelo,
+/// comprobar los permisos) sin ir bloque a bloque por los Ajustes.
+class _RepetirInstalacionTile extends ConsumerWidget {
+  const _RepetirInstalacionTile();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    return ListTile(
+      leading: const Icon(Icons.restart_alt_rounded, color: Color(0xFFA78BFA)),
+      title: const Text('Repetir la instalación'),
+      subtitle: const Text(
+        'Vuelve a abrir el asistente de primera vez. No borra nada de lo que '
+        'has dictado ni lo que Pronto ha aprendido.',
+      ),
+      onTap: () async {
+        final navigator = Navigator.of(context);
+        await ref.read(onboardingProvider.notifier).repetir();
+        // Cierra Ajustes: el asistente se dibuja en la raíz, y si esta pantalla
+        // se queda encima el usuario vería su propia barra "← Ajustes" flotando
+        // sobre el asistente.
+        if (navigator.canPop()) navigator.popUntil((r) => r.isFirst);
+      },
     );
   }
 }
