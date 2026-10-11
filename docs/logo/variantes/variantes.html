@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8">
+<style>
+  @font-face { font-family: "PJS"; src: url("../../../ui/assets/fonts/PlusJakartaSans-ExtraBold.ttf"); font-weight: 800; }
+  @font-face { font-family: "PJS"; src: url("../../../ui/assets/fonts/PlusJakartaSans-SemiBold.ttf"); font-weight: 600; }
+  html, body { margin: 0; background: #050505; color: #9C93AE; font-family: "PJS", sans-serif; }
+  .row { display: flex; align-items: center; gap: 40px; padding: 26px 40px; border-bottom: 1px solid rgba(255,255,255,.08); }
+  .tag { width: 230px; font-weight: 600; font-size: 19px; line-height: 1.35; }
+  .tag b { display: block; color: #F5F3FF; font-size: 30px; font-weight: 800; margin-bottom: 6px; }
+  svg { display: block; }
+</style></head>
+<body>
+<svg width="0" height="0" style="position:absolute">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#A78BFA"/><stop offset=".5" stop-color="#8B5CF6"/><stop offset="1" stop-color="#6D28D9"/>
+    </linearGradient>
+    <radialGradient id="orb" cx=".5" cy=".55" r=".6"><stop offset="0" stop-color="#8B5CF6" stop-opacity=".45"/><stop offset="1" stop-color="#8B5CF6" stop-opacity="0"/></radialGradient>
+  </defs>
+</svg>
+<div id="rows"></div>
+<script>
+// Alto de la P = altura de mayúscula de Plus Jakarta Sans (0,745 em). Base de la P = línea base.
+const H = 170, FS = H / 0.745, BASE = 200, X0 = 20;
+const cap = (x, y, w, h, fill) => `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${w / 2}" fill="${fill}"/>`;
+
+// Marca actual (MARK, viewBox 844x900) escalada a alto H.
+const MARK = [[0,0,124,900],[180,25,124,235],[180,360,124,180],[360,0,124,250],[360,350,124,210],[540,35,124,205],[540,340,124,180]];
+const YEL = [720,110,124,360];
+function markActual(x, y, h, color) {
+  const k = h / 900;
+  return MARK.map(([a,b,c,d]) => cap(x + a*k, y + b*k, c*k, d*k, color)).join('') + cap(x + YEL[0]*k, y + YEL[1]*k, YEL[2]*k, YEL[3]*k, '#FDE047');
+}
+// A: P maciza — cápsulas con el grosor del trazo de la fuente; la panza es una cúpula de 3
+// cápsulas enteras (alturas en onda) que cierran en la amarilla. Sin trocear: nada de bolitas.
+function markMaciza(x, y, h, color) {
+  const w = 0.15 * FS, g = w * 0.38;
+  const cols = [[0.00, 0.62], [0.035, 0.585], [0.11, 0.50]];   // [inicio, fin] en fracción de h
+  let out = cap(x, y, w, h, color);
+  cols.forEach(([a, b], i) => {
+    const cx = x + (w + g) * (i + 1);
+    out += cap(cx, y + a * h, w, (b - a) * h, i === 2 ? '#FDE047' : color);
+  });
+  return out;
+}
+function width(kind, h) {
+  if (kind === 'A') { const w = 0.15 * FS; return w * 4 + w * 0.38 * 3; }
+  return 844 * h / 900;
+}
+function lockup(kind, color, word) {
+  const y = BASE - H;
+  const m = kind === 'A' ? markMaciza(X0, y, H, color) : markActual(X0, y, H, color);
+  const tx = X0 + width(kind, H) + 0.04 * FS;
+  return `<svg width="900" height="250" viewBox="0 0 900 250"><ellipse cx="200" cy="150" rx="360" ry="140" fill="url(#orb)"/>${m}
+    <text x="${tx}" y="${BASE}" font-family="PJS" font-weight="800" font-size="${FS}" letter-spacing="${-0.03 * FS}" fill="#F5F3FF">${word}</text></svg>`;
+}
+function iconLockup() {
+  // C: icono (marca actual en cuadrado redondeado) + la palabra entera.
+  const S = 190, r = S * 0.22, mh = S * 0.62;
+  const mx = (S - 844 * mh / 900) / 2, my = (S - mh) / 2;
+  const icon = `<rect x="${X0}" y="${BASE - S + 8}" width="${S}" height="${S}" rx="${r}" fill="#0E0B14" stroke="rgba(255,255,255,.14)" stroke-width="2"/>
+    <ellipse cx="${X0 + S/2}" cy="${BASE - S/2 + 20}" rx="${S*0.42}" ry="${S*0.38}" fill="url(#orb)"/>
+    ${markActual(X0 + mx, BASE - S + 8 + my, mh, 'url(#g)')}`;
+  const tx = X0 + S + 34;
+  return `<svg width="900" height="250" viewBox="0 0 900 250">${icon}
+    <text x="${tx}" y="${BASE - 28}" font-family="PJS" font-weight="800" font-size="${FS * 0.82}" letter-spacing="${-0.03 * FS * 0.82}" fill="#F5F3FF">Pronto</text></svg>`;
+}
+const rows = [
+  ['Actual', 'P de cápsulas finas + «ronto». Las letras pesan un 46 % más que la P.', lockup('B', 'url(#g)', 'ronto')],
+  ['A · P maciza', 'P con el grosor de la letra: asta + 3 cápsulas enteras en cúpula (la última, la chispa amarilla).', lockup('A', 'url(#g)', 'ronto')],
+  ['B · Todo blanco', 'Misma P actual pero blanca como el texto; solo la chispa amarilla de color.', lockup('B', '#F5F3FF', 'ronto')],
+  ['C · Icono + nombre', 'Como Wispr («|ılı Flow»): la P vive en el icono y al lado va «Pronto» entero.', iconLockup()],
+];
+document.getElementById('rows').innerHTML = rows.map(([t, d, s]) => `<div class="row"><div class="tag"><b>${t}</b>${d}</div>${s}</div>`).join('');
+</script>
+</body></html>

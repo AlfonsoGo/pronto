@@ -1,0 +1,29 @@
+{
+  "category": "logo-reveal",
+  "duration_s": 3.5,
+  "fps": 30,
+  "canvas": { "w": 1080, "h": 1080, "aspect": "1:1" },
+  "style": "Cristal etéreo de Pronto: OLED #050505, orbes violeta + amarillo al 5 %, brillo interno de 1 px. Marca de cápsulas gruesas con extremos redondos; referencia de estilo (no copia): marca de Wispr Flow.",
+  "palette": ["#050505", "#A78BFA", "#8B5CF6", "#6D28D9", "#FDE047", "#F5F3FF"],
+  "font": "Plus Jakarta Sans ExtraBold (local, assets/PlusJakartaSans-ExtraBold.ttf)",
+  "beats": [1.5, 2.1, 2.5],
+  "export": "mp4",
+  "asset_needs": [],
+  "block": null,
+  "customize": {
+    "catalog_search": "hyperframes catalog --query 'audio waveform bars logo reveal': waveform = shader WebGPU azul/rosa (no encaja), logo-outro = ensamblado genérico; ninguno dibuja una P de cápsulas -> hand-author (gap de geometría propia)."
+  },
+  "content": {
+    "logo": "MARK (objeto JS único en la composición; 5 columnas, 8 tramos)",
+    "tagline": null,
+    "url": null,
+    "mark": "5 columnas de cápsulas w=112 gap=50 (0,45 w) en viewBox 760x900. c0 asta 0-900; c1..c3 partidas (tramo sup / tramo inf) con hueco de la P; c4 = cápsula corta amarilla que cierra el lado derecho.",
+    "timeline": [
+      { "t": [0, 1.5], "what": "onda de voz viva centrada en vertical, alturas deterministas (mulberry32 con semilla), keyframes por tween fromTo" },
+      { "t": [1.5, 2.45], "what": "asentado a la P con back.out de overshoot distinto por columna, stagger 0,05 s; las columnas partidas se abren en dos tramos" },
+      { "t": [2.1, 2.55], "what": "amarilla se enciende la última: fundido del tramo amarillo + pop de escala" },
+      { "t": [2.4, 2.9], "what": "marca sube 70 px, entra wordmark Pronto (fade + blur + 24 px)" },
+      { "t": [2.9, 3.5], "what": "hold quieto 0,6 s" }
+    ]
+  }
+}

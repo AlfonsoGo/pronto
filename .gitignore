@@ -1,54 +1,21 @@
-# Flutter / Dart
-.dart_tool/
-.packages
-.pub-cache/
-.pub/
-build/
-.flutter-plugins
-.flutter-plugins-dependencies
-*.iml
-.idea/
-.vscode/
+target/
+src-tauri/target/
+src-tauri/gen/
+.logs/
+
+# Material local, no se publica
+docs/wispr-ui-spec.md
+docs/capturas/real-*
+docs/logo/preview/_*
+docs/promo/
+*.mp4
 *.log
-
-# Flutter ephemeral: contiene rutas absolutas de la máquina del desarrollador
-**/flutter/ephemeral/
-
-# Generated platform folders (se generan con `flutter create .`)
-# Descomenta si NO quieres versionar las carpetas de plataforma generadas:
-# /windows/
-# /macos/
-# /linux/
-# /android/
-# /ios/
-
-# Clon de whisper.cpp: lo descarga build_whisper.ps1, NO se versiona
-/native/whisper/whisper.cpp/
-
-# Instaladores generados (se publican como Release assets, no en el repo)
-/dist/
-
-# Artefacto basura de Windows (nombre de dispositivo reservado)
-/nul
-
-# Modelos y binarios nativos pesados (no versionar)
-/native/whisper/bin/
-/native/whisper/models/
-/native/whisper/build/
-# Modelo Parakeet (sherpa-onnx, ~640 MB): se copia a native/parakeet/ aparte.
-/native/parakeet/
-*.dll
-*.so
-*.dylib
-*.bin
-*.gguf
-*.ggml
-*.onnx
-
-# Misc
-.DS_Store
-Thumbs.db
-
-# Informe de auditoria interno - NO publicar en repo publico
-AUDITORIA-SEGURIDAD.md
-
+docs/logo/preview/
+docs/logo/conceptos-ia.png
+docs/logo/animado/.hyperframes/
+docs/logo/animado/.thumbnails/
+docs/logo/animado/snapshots/
+docs/logo/animado/AGENTS.md
+docs/logo/animado/CLAUDE.md
+docs/logo/animado/node_modules/
+docs/logo/iconos/_*

@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-4 -4 884.25 248" width="884" height="248" role="img" aria-label="Pronto">
+  <defs>
+    <linearGradient id="pronto-grad" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="900">
+      <stop offset="0" stop-color="#A78BFA"/>
+      <stop offset="0.5" stop-color="#8B5CF6"/>
+      <stop offset="1" stop-color="#6D28D9"/>
+    </linearGradient>
+    <radialGradient id="pronto-orb" gradientUnits="userSpaceOnUse" cx="100.8" cy="110.2" r="131.3">
+      <stop offset="0" stop-color="#8B5CF6" stop-opacity="0.34"/>
+      <stop offset="0.62" stop-color="#8B5CF6" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="pronto-sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#fff" stop-opacity="0.26"/>
+      <stop offset="0.35" stop-color="#fff" stop-opacity="0"/>
+    </linearGradient>
+    <clipPath id="pronto-clip"><rect width="240" height="240" rx="52.8"/></clipPath>
+  </defs>
+  <!-- icono: cuadrado redondeado #0E0B14, radio 22 %, hilo blanco 14 % de 2 px, orbe violeta, brillo interno de 1 px -->
+  <rect x="1" y="1" width="238" height="238" rx="51.8" fill="#0E0B14" stroke="#FFFFFF" stroke-opacity="0.14" stroke-width="2"/>
+  <rect width="240" height="240" fill="url(#pronto-orb)" clip-path="url(#pronto-clip)"/>
+  <rect x="2.5" y="2.5" width="235" height="235" rx="50.3" fill="none" stroke="url(#pronto-sheen)" stroke-width="1"/>
+  <!-- la P (misma geometría que pronto-mark.svg) al 62 % del lado, centrada -->
+  <g transform="translate(50.23 45.60) scale(0.16533)">
+    <g fill="url(#pronto-grad)">
+      <rect x="0" y="0" width="124" height="900" rx="62"/>
+      <rect x="180" y="25" width="124" height="235" rx="62"/>
+      <rect x="180" y="360" width="124" height="180" rx="62"/>
+      <rect x="360" y="0" width="124" height="250" rx="62"/>
+      <rect x="360" y="350" width="124" height="210" rx="62"/>
+      <rect x="540" y="35" width="124" height="205" rx="62"/>
+      <rect x="540" y="340" width="124" height="180" rx="62"/>
+    </g>
+    <rect x="720" y="110" width="124" height="360" rx="62" fill="#FDE047"/>
+  </g>
+  <!-- «Pronto»: Plus Jakarta Sans ExtraBold a trazados; altura de mayúscula = 0,58 del lado; separación 0,18 del lado -->
+  <g fill="#F5F3FF">
+    <path transform="translate(283.20 189.60)" d="M12.33 0L12.33 -139.2L65.77 -139.2Q80.16 -139.2 91.27 -134.16Q102.39 -129.11 108.74 -119.21Q115.1 -109.3 115.1 -94.73Q115.1 -80.53 108.65 -70.63Q102.2 -60.72 91.09 -55.59Q79.97 -50.45 65.77 -50.45L41.29 -50.45L41.29 0L12.33 0ZM41.29 -75.67L65.96 -75.67Q75.11 -75.67 80.62 -80.9Q86.14 -86.14 86.14 -94.73Q86.14 -103.51 80.62 -108.74Q75.11 -113.98 65.96 -113.98L41.29 -113.98L41.29 -75.67Z"/>
+    <path transform="translate(398.86 189.60)" d="M10.28 0L10.28 -102.02L36.43 -102.02L36.43 -86.7Q40.36 -96.23 47.55 -99.68Q54.75 -103.14 64.09 -103.14L70.07 -103.14L70.07 -78.85L61.29 -78.85Q51.01 -78.85 44.66 -72.59Q38.3 -66.33 38.3 -54.93L38.3 0L10.28 0Z"/>
+    <path transform="translate(465.37 189.60)" d="M60.91 2.24Q45.78 2.24 33.35 -4.67Q20.93 -11.58 13.55 -23.64Q6.17 -35.69 6.17 -51.01Q6.17 -66.52 13.55 -78.48Q20.93 -90.43 33.35 -97.35Q45.78 -104.26 60.91 -104.26Q76.05 -104.26 88.38 -97.35Q100.71 -90.43 108.09 -78.48Q115.47 -66.52 115.47 -51.01Q115.47 -35.69 108.09 -23.64Q100.71 -11.58 88.38 -4.67Q76.05 2.24 60.91 2.24ZM60.91 -22.98Q72.31 -22.98 79.41 -30.83Q86.51 -38.68 86.51 -51.01Q86.51 -63.15 79.41 -71.09Q72.31 -79.04 60.91 -79.04Q49.51 -79.04 42.32 -71.09Q35.13 -63.15 35.13 -51.01Q35.13 -38.68 42.32 -30.83Q49.51 -22.98 60.91 -22.98Z"/>
+    <path transform="translate(581.41 189.60)" d="M10.28 0L10.28 -102.02L36.43 -102.02L36.43 -89.5Q40.36 -96.97 47.83 -100.62Q55.31 -104.26 65.02 -104.26Q76.61 -104.26 85.3 -99.4Q93.98 -94.54 98.84 -85.86Q103.7 -77.17 103.7 -65.58L103.7 0L75.67 0L75.67 -59.6Q75.67 -68.39 70.44 -73.71Q65.21 -79.04 56.99 -79.04Q48.77 -79.04 43.54 -73.71Q38.3 -68.39 38.3 -59.6L38.3 0L10.28 0Z"/>
+    <path transform="translate(687.72 189.60)" d="M59.42 1.12Q40.92 1.12 30.74 -8.88Q20.55 -18.87 20.55 -36.81L20.55 -77.73L3.36 -77.73L3.36 -102.02L4.3 -102.02Q20.55 -102.02 20.55 -117.71L20.55 -125.19L48.58 -125.19L48.58 -102.02L72.5 -102.02L72.5 -77.73L48.58 -77.73L48.58 -38.68Q48.58 -23.17 65.96 -23.17Q68.57 -23.17 72.5 -23.73L72.5 0Q69.69 0.37 66.14 0.75Q62.59 1.12 59.42 1.12Z"/>
+    <path transform="translate(760.78 189.60)" d="M60.91 2.24Q45.78 2.24 33.35 -4.67Q20.93 -11.58 13.55 -23.64Q6.17 -35.69 6.17 -51.01Q6.17 -66.52 13.55 -78.48Q20.93 -90.43 33.35 -97.35Q45.78 -104.26 60.91 -104.26Q76.05 -104.26 88.38 -97.35Q100.71 -90.43 108.09 -78.48Q115.47 -66.52 115.47 -51.01Q115.47 -35.69 108.09 -23.64Q100.71 -11.58 88.38 -4.67Q76.05 2.24 60.91 2.24ZM60.91 -22.98Q72.31 -22.98 79.41 -30.83Q86.51 -38.68 86.51 -51.01Q86.51 -63.15 79.41 -71.09Q72.31 -79.04 60.91 -79.04Q49.51 -79.04 42.32 -71.09Q35.13 -63.15 35.13 -51.01Q35.13 -38.68 42.32 -30.83Q49.51 -22.98 60.91 -22.98Z"/>
+  </g>
+</svg>

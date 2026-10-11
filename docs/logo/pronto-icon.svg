@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024" role="img" aria-label="Pronto">
+  <defs>
+    <linearGradient id="pronto-grad" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="900">
+      <stop offset="0" stop-color="#A78BFA"/>
+      <stop offset="0.5" stop-color="#8B5CF6"/>
+      <stop offset="1" stop-color="#6D28D9"/>
+    </linearGradient>
+    <radialGradient id="pronto-orb" gradientUnits="userSpaceOnUse" cx="430" cy="470" r="560">
+      <stop offset="0" stop-color="#8B5CF6" stop-opacity="0.34"/>
+      <stop offset="0.62" stop-color="#8B5CF6" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="pronto-clip"><rect width="1024" height="1024" rx="225"/></clipPath>
+  </defs>
+  <rect width="1024" height="1024" rx="225" fill="#050505"/>
+  <rect width="1024" height="1024" fill="url(#pronto-orb)" clip-path="url(#pronto-clip)"/>
+  <!-- marca: 700 px de alto (escala 0,7778), centrada: x=(1024-656,4)/2, y=(1024-700)/2 -->
+  <g transform="translate(183.8 162) scale(0.7778)">
+    <g fill="url(#pronto-grad)">
+      <rect x="0"   y="0"   width="124" height="900" rx="62"/>
+      <rect x="180" y="25"  width="124" height="235" rx="62"/>
+      <rect x="180" y="360" width="124" height="180" rx="62"/>
+      <rect x="360" y="0"   width="124" height="250" rx="62"/>
+      <rect x="360" y="350" width="124" height="210" rx="62"/>
+      <rect x="540" y="35"  width="124" height="205" rx="62"/>
+      <rect x="540" y="340" width="124" height="180" rx="62"/>
+    </g>
+    <rect x="720" y="110" width="124" height="360" rx="62" fill="#FDE047"/>
+  </g>
+</svg>

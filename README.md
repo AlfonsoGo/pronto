@@ -1,229 +1,135 @@
-# Pronto
+<p align="center">
+  <img src="ui/assets/brand/pronto-lockup.svg" alt="Pronto" width="360">
+</p>
 
-**Dictado de voz por IA, open source, para escribir mucho más rápido.**
-_Hecho por **Beltran Labs**._
+<h3 align="center">Habla. Pronto escribe.</h3>
 
-Pronto convierte tu voz en texto y lo escribe **directamente en cualquier
-aplicación** que tengas abierta (el navegador, el editor de código, el chat, el
-correo…). Todo el reconocimiento ocurre **en tu propio equipo**: tu voz no sale
-de tu ordenador. Y cuanto más lo usas, **mejor te entiende**, porque aprende de
-tus propias correcciones.
+<p align="center">
+  Dictado por voz y notas de reunión automáticas para Windows.<br>
+  100 % local, escrito en Rust, sin nube, sin cuentas y sin suscripción.
+</p>
 
-> Estado actual: **MVP scaffold para Windows** (escritorio primero). El esqueleto
-> de la app, las interfaces de plataforma y el motor de automejora ya están en
-> su sitio. Ver [estado actual](#estado-actual) y [ROADMAP.md](ROADMAP.md).
-
----
-
-## ¿Qué hace especial a Pronto?
-
-- **🗣️ Dictado GLOBAL.** Mantén pulsado un atajo de teclado (por defecto
-  `Ctrl + Alt + Espacio`), habla y suéltalo: el texto aparece donde tengas el
-  cursor, **en la app que sea**. No hace falta tener Pronto en primer plano.
-- **🔒 100 % on-device y privado.** La transcripción usa
-  [whisper.cpp](https://github.com/ggml-org/whisper.cpp) ejecutándose en tu CPU.
-  Sin servidores, sin cuotas, sin enviar tu audio a la nube. Funciona sin
-  conexión.
-- **🇪🇸 Español primero.** Pensado y afinado para el español desde el primer día;
-  el soporte multilingüe (empezando por inglés) llega después y reutiliza el
-  mismo motor (ver [ROADMAP.md](ROADMAP.md)).
-- **🧠 Automejora: aprende de tus correcciones.** Cuando corriges una
-  transcripción, Pronto detecta *qué* palabra falló y *cómo* la querías, y la
-  arregla automáticamente la próxima vez. Construye tu **diccionario personal**
-  (nombres propios, jerga técnica, marcas…) y lo usa también para **sesgar** al
-  reconocedor (*biasing* vía `initial_prompt`).
-- **⚡ Rápido y ligero.** Push-to-talk con baja latencia, medidor de nivel de
-  audio en vivo y modelos que equilibran precisión y velocidad en CPU.
-- **🆓 Open source (licencia MIT propuesta).** Inspecciónalo, modifícalo,
-  contribúyelo.
+<p align="center">
+  <a href="https://github.com/AlfonsoGo/pronto/releases/download/v2.0.0/Pronto-Setup-2.0.0.exe"><b>⬇ Descargar Pronto 2 para Windows</b></a>
+  · <a href="https://github.com/AlfonsoGo/pronto/releases/tag/v2.0.0">Notas de la versión</a>
+</p>
 
 ---
 
-## Capturas conceptuales
+Mantén `Win + Alt`, habla, suelta: el texto aparece donde tengas el cursor, en la app que sea.
+Pronto 2 es la nueva versión de Pronto, reescrita desde cero en Rust (la versión anterior, en
+Flutter, sigue en la rama [`v1-flutter`](https://github.com/AlfonsoGo/pronto/tree/v1-flutter)).
 
-Mientras pulimos las capturas reales, así se siente usar Pronto:
+- **Dictado en cualquier app.** Navegador, correo, chat, editor de código.
+- **Notas de reunión automáticas.** Detecta Teams, Zoom, Meet, Webex o Slack, toma notas solo y
+  entrega título, resumen, tareas con responsable, decisiones y temas.
+- **Polish.** Selecciona un texto, pulsa `Alt + Shift + P` y la IA local lo deja pulido.
+- **Privado de verdad.** La voz y el texto no salen del equipo. Funciona sin conexión.
+- **Rápido.** Motor NVIDIA Parakeet TDT 0.6B v3 (español e inglés con puntuación) en CPU: unos
+  0,5 s por frase de 8 s. Ejecutable nativo de 33 MB.
+- **Interfaz propia.** «Cristal etéreo»: violeta sobre negro OLED, modo oscuro y claro.
 
-```
-┌──────────────────────────────┐
-│            Pronto          ●│  ← ventana compacta + icono de bandeja
-├──────────────────────────────┤
-│                              │
-│        ◖  Listo para        │   Estado: idle / grabando /
-│           dictar  ◗         │   transcribiendo / insertando
-│                              │
-│   ▁▂▅▇▆▃▁  (nivel de audio)  │   medidor en vivo mientras hablas
-│                              │
-│   Atajo:  Ctrl + Alt + Esp.  │
-│                              │
-│   Último dictado:            │
-│   "Reunión con García a las  │   ← editable: si lo corriges,
-│    cinco en la sala azul"    │      Pronto APRENDE del cambio
-│                              │
-└──────────────────────────────┘
-```
+![Hub de Pronto](docs/capturas/hub-dictado.jpg)
 
-**Flujo de uso (push-to-talk):**
+## Instalar
 
-```
-  Mantienes        Sueltas el        whisper.cpp        diccionario      el texto
-  el atajo   ──▶   atajo y se   ──▶  transcribe   ──▶   aprendido    ──▶ se inserta
-  y hablas         para de grabar    en isolate         corrige           en la app
-                                                        (+ LLM opc.)      con foco
-```
+1. Descarga [`Pronto-Setup-2.0.0.exe`](https://github.com/AlfonsoGo/pronto/releases/download/v2.0.0/Pronto-Setup-2.0.0.exe)
+   y ejecútalo. El instalador no está firmado: si Windows muestra SmartScreen, pulsa
+   «Más información › Ejecutar de todas formas».
+2. En el primer arranque Pronto descarga el modelo de voz (≈ 670 MB, una sola vez). Después no
+   necesita Internet.
+3. Opcional, IA local con [Ollama](https://ollama.com): instálalo y ejecuta
+   `ollama pull qwen2.5:7b`. Sirve para pulir textos (Polish y «Pulir cada dictado»), resumir
+   reuniones y responder preguntas sobre ellas. Sin Ollama, el dictado y la transcripción de
+   reuniones funcionan igual; solo falta la parte de IA. Puede ir más lento según tu PC: el modelo
+   usa CPU, RAM y GPU a la vez que la transcripción.
 
-**Bucle de automejora:**
+Si usas otra app de dictado que también use `Win + Alt`, ciérrala: chocan en el atajo y en la barra
+de abajo al centro.
 
-```
-  Dictas  ──▶  Pronto escribe  ──▶  TÚ corriges  ──▶  aprende el par
-    ▲                                                    "raw → corregido"
-    │                                                          │
-    └──────────  la próxima vez ya lo escribe bien  ◀──────────┘
-```
+## Guía rápida: cómo se controla
 
----
+### Dictar
 
-## El stack elegido
+| Quiero… | Hago… |
+|---|---|
+| Dictar | mantener `Win + Alt`, hablar, soltar → el texto se pega en la app con foco |
+| Dictar sin mantener | doble toque de `Win + Alt`, o `Win + Alt + Espacio`; otra vez para terminar |
+| Cancelar | `Esc` |
+| Pegar la última transcripción | `Alt + Shift + Z` |
+| Copiar la última transcripción | `Alt + Shift + X` |
+| Pulir un texto seleccionado | `Alt + Shift + P` (necesita Ollama) |
+| Empezar notas de reunión a mano | `Win + Alt + M` |
 
-Todo en **Flutter (Dart, null-safe sound)**, **sin generación de código**
-(nada de `build_runner`, `freezed`, `drift` ni `@riverpod`). El estado se maneja
-con **Riverpod usando providers manuales**.
+Un toque suelto no dicta: la barra avisa «No lo toques. Mantén pulsado Win + Alt.».
 
-| Pieza | Tecnología | Para qué |
-|---|---|---|
-| Reconocimiento de voz | **whisper.cpp vía `dart:ffi`** | Transcripción on-device en CPU, modelos GGML (ver [BUILD_WHISPER.md](BUILD_WHISPER.md)) |
-| Captura de audio | **`record`** | Micrófono → PCM mono 16 kHz (normalizado a float32 para Whisper) |
-| Atajo global + inyección de texto | **`win32` + `ffi`** | Atajo a nivel de sistema (low-level keyboard hook) e inserción de texto en la app con foco (portapapeles/`SendInput` Unicode) |
-| Estado | **Riverpod (`flutter_riverpod ^2.5`)** | Providers/Notifiers manuales, sin codegen |
-| Persistencia | **`sqlite3` + `sqlite3_flutter_libs`** | Diccionario aprendido, vocabulario y log de dictados |
-| Ventana / overlay / bandeja / autostart | **`window_manager` + `tray_manager` + `launch_at_startup`** | Ventana compacta, icono de bandeja y arranque con el sistema |
-| Post-corrección LLM (opcional) | **`http`** (Ollama local o nube) | Limpieza opcional del texto, *gateada* por confianza para evitar parafraseo |
+### La barra flotante
 
-> Las versiones exactas de los paquetes están en [`pubspec.yaml`](pubspec.yaml).
+Es la píldora de abajo al centro. No roba el foco y deja pasar los clics fuera de ella. Muestra
+qué está haciendo Pronto: escuchando (con la onda de tu voz), procesando, pulido, hecho, avisos de
+error y el estado de la reunión («Tomando notas de Teams · Detener»).
 
----
+### Notas de reunión
 
-## Estado actual
+- **Automático** (por defecto): cuando Teams, Zoom, Meet (en el navegador), Webex o Slack empiezan
+  a usar el micro, Pronto empieza a tomar notas y para solo 20 s después de colgar.
+- Graba tu micro («Tú») y el audio del ordenador («Ellos») por separado y transcribe en directo.
+- Al terminar genera título, resumen, tareas con responsable, decisiones y temas. Cada reunión se
+  puede copiar y se puede preguntar sobre ella o sobre todas («Pregunta sobre tus reuniones»).
+- Las reuniones de menos de 1 minuto sin conversación se descartan solas.
+- **Configuración › Notas de reunión**: Automático · Preguntar antes · Desactivado.
+- Pide siempre consentimiento antes de transcribir a otras personas.
 
-**MVP scaffold (Windows).** Lo que ya existe en este repositorio:
+### Cómo suena lo que escribes
 
-- ✅ **Arranque de la app** y ventana compacta con `window_manager`
-  (`lib/main.dart`, `lib/src/core/app.dart`, `theme.dart`).
-- ✅ **Interfaces (contratos) de la capa de plataforma**, agnósticas del SO, para
-  poder portar luego sin tocar el resto de la app:
-  `WhisperEngine`, `AudioCapture`, `GlobalHotkeyService`, `TextInjector`
-  (en `lib/src/platform/`).
-- ✅ **Orquestador del pipeline de dictado** completo en Riverpod
-  (`DictationController` + `DictationState`): hotkey → grabar → transcribir →
-  diccionario → (LLM opcional) → insertar → registrar.
-- ✅ **Motor de automejora** funcional y testeado: alineamiento de palabras
-  (Needleman-Wunsch), similitud (Levenshtein, Jaro-Winkler), extracción de
-  pares de corrección con filtros anti-falsos-positivos, diccionario
-  determinista y construcción del `initial_prompt` de *biasing*
-  (`lib/src/features/learning/`, con tests en `test/learning/`).
-- ✅ **Utilidades de audio** (PCM16 → float32) y **configuración** central
-  (`lib/src/core/`).
+- **Estilo**: tono por tipo de app (personal, trabajo, correo, otros): formal, casual, muy casual
+  o entusiasta, y cuatro niveles de limpieza de muletillas.
+- **Diccionario**: palabras y nombres que Pronto debe escribir siempre bien.
+- **Fragmentos**: dices «mi correo» y se pega la dirección completa.
+- **Transforms**: instrucciones de IA (Polish y las tuyas) sobre el texto seleccionado.
+- **Pulir cada dictado con IA** (Estilo › Limpieza automática, apagado de fábrica): Ollama corrige
+  puntuación y tildes antes de pegar. Añade una espera que depende de tu PC; si Ollama no responde
+  en 6 s, se pega sin pulir.
+- **Estadísticas**, **historial** y **Bloc de notas** en el hub.
 
-**Pendiente (siguiente fase, ver [ROADMAP.md](ROADMAP.md)):** las
-implementaciones concretas que el `factory` por plataforma ya espera —
-`WhisperEngineFfi` (FFI a whisper.cpp), `AudioCaptureRecord`,
-`WindowsHotkeyService`, `WindowsTextInjector`, `SqliteLearningRepository` y la
-pantalla principal (`HomeScreen`)— para cerrar el pipeline de punta a punta.
+## Privacidad
 
----
+- La voz y el texto se procesan en tu equipo. No hay servidores de Pronto ni telemetría.
+- Datos en `%APPDATA%\Pronto2\pronto2.db` (SQLite) y el audio de cada dictado en `audio\`, que se
+  borra a los 14 días.
+- La única conexión es la descarga única del modelo (Hugging Face) y, si lo usas, Ollama en
+  `localhost`.
 
-## Arranque rápido
+## Compilar desde el código
 
-1. **Requisitos.** Flutter (canal estable) con soporte de escritorio Windows
-   activado, y las herramientas de compilación nativa. Detalles paso a paso en
-   **[SETUP.md](SETUP.md)**.
-2. **whisper.cpp y el modelo.** Compila la librería nativa y descarga un modelo
-   GGML (por defecto `ggml-small.bin`; para máxima calidad,
-   `ggml-large-v3-turbo.bin`). Guía completa en **[BUILD_WHISPER.md](BUILD_WHISPER.md)**.
-3. **Dependencias y ejecución:**
-   ```bash
-   flutter pub get
-   flutter run -d windows
-   ```
-4. **Dicta.** Mantén pulsado `Ctrl + Alt + Espacio`, habla, suelta. El texto
-   aparecerá donde tengas el cursor.
+Requisitos: Rust estable, Windows 10/11 con WebView2.
 
-> ¿Algún paquete no resuelve? `flutter pub upgrade --major-versions` y revisa
-> las notas de [SETUP.md](SETUP.md).
-
----
-
-## Estructura de carpetas
-
-El código vive bajo `lib/src/`, organizado por **capas** y por **features**.
-Dentro de `lib/` los imports son **relativos**; para paquetes de pub se usa
-`package:`.
-
-```
-lib/
-├─ main.dart                     # Punto de entrada: ventana + ProviderScope
-└─ src/
-   ├─ core/                      # Núcleo transversal (sin dependencias de UI ni SO)
-   │  ├─ app.dart                #   Widget raíz (MaterialApp)
-   │  ├─ config.dart             #   Constantes y umbrales (modelo, idioma, automejora)
-   │  ├─ theme.dart              #   Tema Material 3
-   │  └─ audio_utils.dart        #   Conversión PCM16 → float32
-   │
-   ├─ common/                    # Widgets y utilidades de UI reutilizables
-   │
-   ├─ platform/                  # Capa de plataforma: INTERFACES + factory
-   │  ├─ whisper_engine.dart     #   Contrato del reconocedor (+ TranscriptResult)
-   │  ├─ audio_capture.dart      #   Contrato de captura de micrófono
-   │  ├─ global_hotkey_service.dart  # Contrato del atajo global (HotkeyCombo/Event)
-   │  ├─ text_injector.dart      #   Contrato de inserción de texto
-   │  └─ platform_services.dart  #   Providers Riverpod que eligen la impl. por SO
-   │
-   ├─ features/                  # Funcionalidades, cada una en su carpeta
-   │  ├─ dictation/              #   Orquestación del pipeline (Controller + State)
-   │  ├─ learning/               #   Automejora: diff, similitud, diccionario, biasing
-   │  ├─ transcription/          #   Implementación FFI de whisper.cpp
-   │  ├─ audio_capture/          #   Implementación con `record`
-   │  └─ home/                   #   Pantalla principal
-   │
-   └─ data/                      # Persistencia (SQLite): repositorios concretos
+```bash
+cd src-tauri
+cargo run --release          # arrancar
+cargo test                   # tests
+cargo install tauri-cli --version "^2" --locked
+cargo tauri build            # instalador NSIS en src-tauri/target/release/bundle/nsis
 ```
 
-**La idea clave:** todo lo dependiente del sistema operativo está detrás de las
-interfaces de `platform/`. Al añadir macOS, Linux, Android o iOS **solo cambia
-la capa `platform/`** (y sus implementaciones); el resto de la app se reutiliza
-tal cual. Ver [ROADMAP.md](ROADMAP.md).
+- Backend: Rust + Tauri 2 (`src-tauri/`), captura `cpal`, motor `sherpa-onnx`, hook de teclado y
+  `SendInput` con el crate `windows`, SQLite con `rusqlite`.
+- Interfaz: HTML/CSS/JS sin bundler (`ui/`).
+- Contrato entre backend e interfaz y decisiones: [`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md).
+- Logo y animación de marca: [`docs/logo/`](docs/logo/).
 
----
+## Estado
 
-## Cómo funciona la automejora (en breve)
-
-1. **Aprende del diff.** Al corregir un dictado, se alinean la transcripción
-   cruda y tu versión final (Needleman-Wunsch) y se extraen pares
-   `raw → corregido`. Filtros estrictos descartan stopwords, números,
-   reescrituras semánticas y meros ajustes de mayúsculas/acentos, para que el
-   diccionario no aprenda basura.
-2. **Corrige de forma determinista.** Los pares que superan una frecuencia
-   mínima se aplican palabra por palabra (respetando mayúsculas) — instantáneo y
-   con **cero alucinación**.
-3. **Sesga al reconocedor.** Tu vocabulario más frecuente alimenta el
-   `initial_prompt` de Whisper para que acierte nombres propios y jerga desde el
-   principio.
-4. **(Opcional) Pulido con LLM.** Una post-corrección con un LLM local (Ollama)
-   o en la nube, **gateada por la confianza** del reconocedor y con protección
-   anti-parafraseo. Desactivada por defecto.
-
----
+Probado de verdad en Windows 11: dictado completo, manos libres, cancelar, Polish, notas de reunión
+automáticas con una videollamada simulada, resumen y preguntas con `qwen2.5:7b`. Todavía sin probar
+con una reunión real de Teams o Zoom. Sin hacer: cuentas y equipos, ventana aparte de Scratchpad,
+«Command Mode».
 
 ## Licencia
 
-**MIT © 2026 Beltran Labs.** Pronto es libre y comunitario: puedes usar,
-modificar y distribuir el proyecto bajo los términos de la licencia
-[MIT](LICENSE).
+Código bajo [MIT](LICENSE). Plus Jakarta Sans (OFL 1.1), Lucide (ISC), sherpa-onnx (Apache-2.0) y el
+modelo Parakeet TDT 0.6B v3 (CC-BY-4.0, NVIDIA) conservan sus licencias; detalle en
+[`ui/assets/LICENSES.md`](ui/assets/LICENSES.md). «Pronto» y su logo son de Beltran Labs. Proyecto
+independiente, sin afiliación con otras aplicaciones de dictado.
 
----
-
-## Contribuir
-
-¡Bienvenidas las contribuciones! La hoja de ruta y los puntos donde más ayuda
-hace falta están en [ROADMAP.md](ROADMAP.md). Mantén el estilo del proyecto:
-Dart null-safe sound, comentarios y UI **en español**, imports relativos dentro
-de `lib/`, **sin codegen** y Riverpod con providers manuales.
+Hecho por **Beltran Labs**.

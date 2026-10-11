@@ -1,0 +1,533 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1080, height=1080" />
+    <title>Pronto logo animado</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      :root {
+        --oled: #050505;
+        --tinta: #f5f3ff;
+      }
+      * {
+        margin: 0;
+        padding: 0;
+        box-sizing: border-box;
+      }
+      html,
+      body {
+        width: 1080px;
+        height: 1080px;
+        overflow: hidden;
+        background: var(--oled);
+      }
+      #root {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        background: var(--oled);
+      }
+      /* fondo: orbes desenfocados (Cristal etéreo; amarillo al 5 %) */
+      #bg {
+        position: absolute;
+        inset: 0;
+      }
+      .orb {
+        position: absolute;
+        border-radius: 50%;
+        filter: blur(90px);
+      }
+      #orb-violeta {
+        width: 760px;
+        height: 700px;
+        left: 20px;
+        top: 130px;
+        background: rgba(139, 92, 246, 0.2);
+      }
+      #orb-hondo {
+        width: 560px;
+        height: 520px;
+        left: 520px;
+        top: 560px;
+        background: rgba(109, 40, 217, 0.17);
+      }
+      #orb-amarillo {
+        width: 380px;
+        height: 340px;
+        left: 640px;
+        top: 40px;
+        background: rgba(253, 224, 71, 0.05);
+      }
+      #stage {
+        position: absolute;
+        inset: 0;
+        display: block;
+        width: 1080px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      .ylw {
+        filter: drop-shadow(0 0 45px rgba(253, 224, 71, 0.55));
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-composition-id="pronto-logo"
+      data-start="0"
+      data-duration="4.8"
+      data-fps="30"
+      data-width="1080"
+      data-height="1080"
+    >
+      <div id="bg">
+        <div id="orb-violeta" class="orb"></div>
+        <div id="orb-hondo" class="orb"></div>
+        <div id="orb-amarillo" class="orb"></div>
+      </div>
+      <svg id="stage" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 1080"></svg>
+    </div>
+    <script>
+      /* ───────────────────────────────────────────────────────────────
+         GEOMETRÍA FINAL DE LA P: la única fuente de verdad.
+         viewBox 844 x 900. Cápsulas de ancho w=124, extremos rx=w/2,
+         separación gap=56 (0,45 w). 5 columnas; c1..c3 partidas en
+         tramo superior e inferior (el hueco de la P va entre medias);
+         c4 es la cápsula corta amarilla que cierra la panza.
+         pronto-mark.svg, pronto-icon.svg y pronto-lockup.svg se escriben
+         con estos mismos números.
+         ─────────────────────────────────────────────────────────────── */
+      const MARK = {
+        viewBox: [0, 0, 844, 900],
+        w: 124,
+        gap: 56,
+        r: 62,
+        gradient: [
+          [0, "#A78BFA"],
+          [0.5, "#8B5CF6"],
+          [1, "#6D28D9"],
+        ],
+        yellow: "#FDE047",
+        caps: [
+          { id: "c0", col: 0, x: 0, y: 0, h: 900, fill: "grad" },
+          { id: "c1t", col: 1, x: 180, y: 25, h: 235, fill: "grad" },
+          { id: "c1b", col: 1, x: 180, y: 360, h: 180, fill: "grad" },
+          { id: "c2t", col: 2, x: 360, y: 0, h: 250, fill: "grad" },
+          { id: "c2b", col: 2, x: 360, y: 350, h: 210, fill: "grad" },
+          { id: "c3t", col: 3, x: 540, y: 35, h: 205, fill: "grad" },
+          { id: "c3b", col: 3, x: 540, y: 340, h: 180, fill: "grad" },
+          { id: "c4", col: 4, x: 720, y: 110, h: 360, fill: "yellow" },
+        ],
+      };
+
+      /* «Pronto»: Plus Jakarta Sans ExtraBold (assets/PlusJakartaSans-ExtraBold.ttf) a trazados.
+         Lockup final (fila C de variantes): icono de lado S, altura de mayúscula = 0,58 S,
+         separación icono-texto = 0,18 S, texto centrado en vertical con el icono.
+         tracking -0,03 em, sin kerning entre pares (medido en Chromium).
+         left = origen de cada letra respecto al origen del texto; inkR = borde derecho de su tinta. */
+      const FONT = {"S":240,"capH":139.2,"F":186.85,"tx":283.2,"base":189.6,"W":876.25,"mh":148.8,"letters":[{"ch":"P","left":0,"inkL":12.33,"inkR":115.1,"d":"M12.33 0L12.33 -139.2L65.77 -139.2Q80.16 -139.2 91.27 -134.16Q102.39 -129.11 108.74 -119.21Q115.1 -109.3 115.1 -94.73Q115.1 -80.53 108.65 -70.63Q102.2 -60.72 91.09 -55.59Q79.97 -50.45 65.77 -50.45L41.29 -50.45L41.29 0L12.33 0ZM41.29 -75.67L65.96 -75.67Q75.11 -75.67 80.62 -80.9Q86.14 -86.14 86.14 -94.73Q86.14 -103.51 80.62 -108.74Q75.11 -113.98 65.96 -113.98L41.29 -113.98L41.29 -75.67Z"},{"ch":"r","left":115.66,"inkL":10.28,"inkR":70.07,"d":"M10.28 0L10.28 -102.02L36.43 -102.02L36.43 -86.7Q40.36 -96.23 47.55 -99.68Q54.75 -103.14 64.09 -103.14L70.07 -103.14L70.07 -78.85L61.29 -78.85Q51.01 -78.85 44.66 -72.59Q38.3 -66.33 38.3 -54.93L38.3 0L10.28 0Z"},{"ch":"o","left":182.17,"inkL":6.17,"inkR":115.47,"d":"M60.91 2.24Q45.78 2.24 33.35 -4.67Q20.93 -11.58 13.55 -23.64Q6.17 -35.69 6.17 -51.01Q6.17 -66.52 13.55 -78.48Q20.93 -90.43 33.35 -97.35Q45.78 -104.26 60.91 -104.26Q76.05 -104.26 88.38 -97.35Q100.71 -90.43 108.09 -78.48Q115.47 -66.52 115.47 -51.01Q115.47 -35.69 108.09 -23.64Q100.71 -11.58 88.38 -4.67Q76.05 2.24 60.91 2.24ZM60.91 -22.98Q72.31 -22.98 79.41 -30.83Q86.51 -38.68 86.51 -51.01Q86.51 -63.15 79.41 -71.09Q72.31 -79.04 60.91 -79.04Q49.51 -79.04 42.32 -71.09Q35.13 -63.15 35.13 -51.01Q35.13 -38.68 42.32 -30.83Q49.51 -22.98 60.91 -22.98Z"},{"ch":"n","left":298.21,"inkL":10.28,"inkR":103.7,"d":"M10.28 0L10.28 -102.02L36.43 -102.02L36.43 -89.5Q40.36 -96.97 47.83 -100.62Q55.31 -104.26 65.02 -104.26Q76.61 -104.26 85.3 -99.4Q93.98 -94.54 98.84 -85.86Q103.7 -77.17 103.7 -65.58L103.7 0L75.67 0L75.67 -59.6Q75.67 -68.39 70.44 -73.71Q65.21 -79.04 56.99 -79.04Q48.77 -79.04 43.54 -73.71Q38.3 -68.39 38.3 -59.6L38.3 0L10.28 0Z"},{"ch":"t","left":404.52,"inkL":3.36,"inkR":72.5,"d":"M59.42 1.12Q40.92 1.12 30.74 -8.88Q20.55 -18.87 20.55 -36.81L20.55 -77.73L3.36 -77.73L3.36 -102.02L4.3 -102.02Q20.55 -102.02 20.55 -117.71L20.55 -125.19L48.58 -125.19L48.58 -102.02L72.5 -102.02L72.5 -77.73L48.58 -77.73L48.58 -38.68Q48.58 -23.17 65.96 -23.17Q68.57 -23.17 72.5 -23.73L72.5 0Q69.69 0.37 66.14 0.75Q62.59 1.12 59.42 1.12Z"},{"ch":"o","left":477.58,"inkL":6.17,"inkR":115.47,"d":"M60.91 2.24Q45.78 2.24 33.35 -4.67Q20.93 -11.58 13.55 -23.64Q6.17 -35.69 6.17 -51.01Q6.17 -66.52 13.55 -78.48Q20.93 -90.43 33.35 -97.35Q45.78 -104.26 60.91 -104.26Q76.05 -104.26 88.38 -97.35Q100.71 -90.43 108.09 -78.48Q115.47 -66.52 115.47 -51.01Q115.47 -35.69 108.09 -23.64Q100.71 -11.58 88.38 -4.67Q76.05 2.24 60.91 2.24ZM60.91 -22.98Q72.31 -22.98 79.41 -30.83Q86.51 -38.68 86.51 -51.01Q86.51 -63.15 79.41 -71.09Q72.31 -79.04 60.91 -79.04Q49.51 -79.04 42.32 -71.09Q35.13 -63.15 35.13 -51.01Q35.13 -38.68 42.32 -30.83Q49.51 -22.98 60.91 -22.98Z"}]};
+
+      /* ── lockup: todo en px del cuadro 1080, a tamaño FINAL; la fase grande es un escalado ── */
+      const FW = 1080;
+      const S = FONT.S; // lado del icono
+      const MH = FONT.mh; // alto de la P dentro del icono (62 % del lado)
+      const SC = MH / MARK.viewBox[3]; // escala de la marca
+      const MW = MARK.viewBox[2] * SC;
+      const LEFT = (FW - FONT.W) / 2; // lockup centrado ópticamente en el cuadro
+      const CY0 = FW / 2; // centro vertical del icono y del texto
+      const IY = CY0 - S / 2; // y del borde superior del icono
+      const BASE = IY + FONT.base; // línea base del texto
+      const TX = FONT.tx; // origen del texto
+      const HERO = 560; // alto de la P grande, px
+      const K0 = HERO / MH; // factor del icono+P grandes (1 = tamaño final)
+      const LOCK0 = FW / 2 - LEFT - (S * K0) / 2; // icono grande centrado en x
+      // matriz con pivote (px, py): escalado seek-safe como atributo (sin transformOrigin ambiguo)
+      const mat = (k, px, py) =>
+        "matrix(" + k + " 0 0 " + k + " " + px * (1 - k) + " " + py * (1 - k) + ")";
+
+      /* ── construir el SVG (síncrono, determinista) ── */
+      const NS = "http://www.w3.org/2000/svg";
+      const svg = document.getElementById("stage");
+      const el = (name, attrs, parent) => {
+        const n = document.createElementNS(NS, name);
+        for (const k in attrs) n.setAttribute(k, attrs[k]);
+        (parent || svg).appendChild(n);
+        return n;
+      };
+      const VH = MARK.viewBox[3];
+      const defs = el("defs", {});
+      const gv = el(
+        "linearGradient",
+        { id: "gv", gradientUnits: "userSpaceOnUse", x1: 0, y1: 0, x2: 0, y2: VH },
+        defs,
+      );
+      MARK.gradient.forEach(([o, c]) => el("stop", { offset: o, "stop-color": c }, gv));
+      /* brillo interno de 1 px (blanco arriba, se apaga pronto): en la P y en el icono */
+      const sh = el(
+        "linearGradient",
+        { id: "sheen", gradientUnits: "objectBoundingBox", x1: 0, y1: 0, x2: 0, y2: 1 },
+        defs,
+      );
+      el("stop", { offset: 0, "stop-color": "#fff", "stop-opacity": 0.3 }, sh);
+      el("stop", { offset: 0.35, "stop-color": "#fff", "stop-opacity": 0 }, sh);
+      const sh2 = el(
+        "linearGradient",
+        { id: "sheenI", gradientUnits: "objectBoundingBox", x1: 0, y1: 0, x2: 0, y2: 1 },
+        defs,
+      );
+      el("stop", { offset: 0, "stop-color": "#fff", "stop-opacity": 0.26 }, sh2);
+      el("stop", { offset: 0.35, "stop-color": "#fff", "stop-opacity": 0 }, sh2);
+      /* orbe violeta suave del icono (como pronto-icon.svg) */
+      const orb = el(
+        "radialGradient",
+        {
+          id: "orbI",
+          gradientUnits: "userSpaceOnUse",
+          cx: 0.42 * S,
+          cy: IY + 0.459 * S,
+          r: 0.547 * S,
+        },
+        defs,
+      );
+      el("stop", { offset: 0, "stop-color": "#8B5CF6", "stop-opacity": 0.34 }, orb);
+      el("stop", { offset: 0.62, "stop-color": "#8B5CF6", "stop-opacity": 0 }, orb);
+      const ICLIP = S * 0.22; // radio del icono: 22 % del lado
+      const ic = el("clipPath", { id: "iclip" }, defs);
+      el("rect", { x: 0, y: IY, width: S, height: S, rx: ICLIP }, ic);
+      /* halo violeta de la marca (solo la P) */
+      const pg = el(
+        "filter",
+        { id: "pglow", x: "-60%", y: "-40%", width: "220%", height: "180%" },
+        defs,
+      );
+      el(
+        "feDropShadow",
+        { dx: 0, dy: 0, stdDeviation: 40, "flood-color": "#8B5CF6", "flood-opacity": 0.42 },
+        pg,
+      );
+      /* motion blur horizontal de cada letra (se anima stdDeviation) */
+      FONT.letters.forEach((l, i) => {
+        const f = el(
+          "filter",
+          { id: "mb" + i, x: "-70%", y: "-20%", width: "240%", height: "140%" },
+          defs,
+        );
+        el("feGaussianBlur", { id: "mbs" + i, stdDeviation: "0 0" }, f);
+      });
+      /* máscara de revelado: su borde izquierdo es el borde derecho del icono (que encoge).
+         Vive en las coordenadas del grupo #lock: viaja con él. Su x se anima con el mismo tween. */
+      const rv = el("clipPath", { id: "reveal", clipPathUnits: "userSpaceOnUse" }, defs);
+      el("rect", { id: "revealRect", x: S * K0, y: 0, width: FW * 4, height: FW }, rv);
+
+      // las letras esperan fuera de cuadro, ocultas por la máscara: desbordamiento intencionado
+      const place = el("g", {
+        id: "place",
+        transform: "translate(" + LEFT + " 0)",
+        "data-layout-allow-overflow": "true",
+      });
+      const lock = el("g", { id: "lock" }, place);
+
+      // las letras de «Pronto», detrás del icono y recortadas por la máscara
+      const word = el("g", { id: "word", "clip-path": "url(#reveal)" }, lock);
+      const START_PAD = 56; // margen para que ni el borrón asome al empezar
+      // cada letra sale desde justo detrás del borde derecho del icono final: oculta del todo
+      const letterShift = FONT.letters.map((l) => TX + l.left + l.inkR - S + START_PAD);
+      FONT.letters.forEach((l, i) => {
+        const g = el("g", { id: "L" + i, filter: "url(#mb" + i + ")" }, word);
+        el(
+          "path",
+          {
+            d: l.d,
+            fill: "#F5F3FF",
+            transform: "translate(" + (TX + l.left) + " " + BASE + ")",
+          },
+          g,
+        );
+      });
+
+      // icono + P: un solo grupo que encoge (matriz con pivote en la esquina izq. a media altura)
+      const iscale = el("g", { id: "iscale", transform: mat(K0, 0, CY0) }, lock);
+
+      // el icono: cuadrado redondeado #0E0B14, hilo blanco 14 %, orbe violeta, brillo interno de 1 px
+      const icon = el("g", { id: "icon", transform: mat(1, S / 2, CY0) }, iscale);
+      el(
+        "rect",
+        {
+          x: 0.8,
+          y: IY + 0.8,
+          width: S - 1.6,
+          height: S - 1.6,
+          rx: ICLIP - 0.8,
+          fill: "#0E0B14",
+          stroke: "#FFFFFF",
+          "stroke-opacity": 0.14,
+          "stroke-width": 1.6,
+        },
+        icon,
+      );
+      el(
+        "rect",
+        { x: 0, y: IY, width: S, height: S, fill: "url(#orbI)", "clip-path": "url(#iclip)" },
+        icon,
+      );
+      el(
+        "rect",
+        {
+          x: 2,
+          y: IY + 2,
+          width: S - 4,
+          height: S - 4,
+          rx: ICLIP - 2,
+          fill: "none",
+          stroke: "url(#sheenI)",
+          "stroke-width": 1.2,
+        },
+        icon,
+      );
+
+      // la P (marca) al 62 % del lado, centrada en el icono
+      const pgrp = el(
+        "g",
+        {
+          id: "pg",
+          filter: "url(#pglow)",
+          transform:
+            "translate(" + (S - MW) / 2 + " " + (IY + (S - MH) / 2) + ") scale(" + SC + ")",
+        },
+        iscale,
+      );
+      const capNodes = {}; // id -> [nodos]
+      let yellowCap = null;
+      const baseAttrs = (c) => ({
+        x: c.x,
+        y: c.y,
+        width: MARK.w,
+        height: c.h,
+        rx: MARK.r,
+        ry: MARK.r,
+      });
+      MARK.caps.forEach((c) => {
+        const base = el(
+          "rect",
+          {
+            ...baseAttrs(c),
+            fill: "url(#gv)",
+            stroke: "url(#sheen)",
+            "stroke-width": 6,
+            "data-cap": c.id,
+          },
+          pgrp,
+        );
+        capNodes[c.id] = [base];
+        if (c.fill === "yellow") {
+          capNodes[c.id].push(
+            el(
+              "rect",
+              {
+                ...baseAttrs(c),
+                fill: MARK.yellow,
+                stroke: "url(#sheen)",
+                "stroke-width": 6,
+                class: "ylw",
+                id: "ylw",
+              },
+              pgrp,
+            ),
+          );
+          yellowCap = c;
+        }
+      });
+      // anillos de pulso de la amarilla (solo atributos: sin transformaciones)
+      ["ypop1", "ypop2"].forEach((id) =>
+        el(
+          "rect",
+          {
+            ...baseAttrs(yellowCap),
+            id,
+            fill: "none",
+            stroke: MARK.yellow,
+            "stroke-width": 10,
+            opacity: 0,
+          },
+          pgrp,
+        ),
+      );
+
+      /* ── onda de voz: PRNG con semilla, función pura del tiempo ── */
+      function mulberry32(a) {
+        return function () {
+          a |= 0;
+          a = (a + 0x6d2b79f5) | 0;
+          let t = Math.imul(a ^ (a >>> 15), 1 | a);
+          t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+          return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+        };
+      }
+      const rnd = mulberry32(0x50524f4e); // "PRON"
+      const NCOL = 5;
+      const BIAS = [0.82, 0.96, 1.0, 0.9, 0.76];
+      const WAVE = [];
+      for (let i = 0; i < NCOL; i++) {
+        WAVE.push({
+          f1: 0.9 + rnd() * 1.3,
+          p1: rnd() * Math.PI * 2,
+          f2: 2.2 + rnd() * 2.6,
+          p2: rnd() * Math.PI * 2,
+          gain: 0.85 + rnd() * 0.15,
+        });
+      }
+      const WMIN = 130;
+      const WMAX = 820;
+      const CY = VH / 2; // la onda vive centrada en vertical
+      function waveH(i, t) {
+        const p = WAVE[i];
+        const a = 0.5 + 0.5 * Math.sin(2 * Math.PI * p.f1 * t + p.p1);
+        const b = 0.5 + 0.5 * Math.sin(2 * Math.PI * p.f2 * t + p.p2);
+        const g = 0.72 + 0.28 * Math.sin(2 * Math.PI * 0.7 * t + 0.9);
+        const v = Math.min(1, Math.max(0, (0.62 * a + 0.38 * b) * g * p.gain * 1.12));
+        return WMIN + (WMAX * BIAS[i] - WMIN) * v;
+      }
+      const waveAttr = (i, t) => {
+        const h = waveH(i, t);
+        return { y: +(CY - h / 2).toFixed(2), height: +h.toFixed(2) };
+      };
+      const colNodes = (i) =>
+        MARK.caps.filter((c) => c.col === i).flatMap((c) => capNodes[c.id]);
+
+      /* ── timeline: UNA, pausada, determinista ── */
+      const T_WAVE = 1.5; // fin de la onda / inicio del asentado
+      const STEP = 0.05;
+      const tl = gsap.timeline({ paused: true });
+
+      // fondo: aparece suave
+      tl.fromTo("#bg", { opacity: 0 }, { opacity: 1, duration: 0.7, ease: "power1.out" }, 0.05);
+
+      // icono grande y P grande, centrados, hasta que arranca el desplazamiento
+      tl.set("#lock", { x: LOCK0 }, 0);
+
+      // 0–1,5 s: onda viva (keyframes lineales muestreados, un tween por tramo)
+      const nSteps = Math.round(T_WAVE / STEP);
+      for (let k = 0; k < nSteps; k++) {
+        const t0 = +(k * STEP).toFixed(4);
+        const t1 = +((k + 1) * STEP).toFixed(4);
+        for (let i = 0; i < NCOL; i++) {
+          tl.fromTo(
+            colNodes(i),
+            { attr: waveAttr(i, t0) },
+            { attr: waveAttr(i, t1), duration: STEP, ease: "none" },
+            t0,
+          );
+        }
+      }
+
+      // 1,5–2,45 s: asentado a la P, muelle con rebote leve (overshoot distinto por columna)
+      const OVER = [1.3, 1.7, 2.0, 1.7, 1.5];
+      MARK.caps.forEach((c) => {
+        tl.fromTo(
+          capNodes[c.id],
+          { attr: waveAttr(c.col, T_WAVE) },
+          {
+            attr: { y: c.y, height: c.h },
+            duration: 0.75,
+            ease: "back.out(" + OVER[c.col] + ")",
+          },
+          T_WAVE + c.col * 0.05,
+        );
+      });
+
+      // la amarilla se enciende la última: fundido + anillo de pulso
+      const ring = (id, t, d, peak, dur) => {
+        tl.fromTo(
+          id,
+          {
+            attr: {
+              x: yellowCap.x,
+              y: yellowCap.y,
+              width: MARK.w,
+              height: yellowCap.h,
+              rx: MARK.r,
+              ry: MARK.r,
+            },
+          },
+          {
+            attr: {
+              x: yellowCap.x - d,
+              y: yellowCap.y - d,
+              width: MARK.w + 2 * d,
+              height: yellowCap.h + 2 * d,
+              rx: MARK.r + d,
+              ry: MARK.r + d,
+            },
+            duration: dur,
+            ease: "power2.out",
+            immediateRender: false,
+          },
+          t,
+        );
+        tl.fromTo(
+          id,
+          { opacity: 0 },
+          { opacity: peak, duration: 0.06, ease: "power1.out", immediateRender: false },
+          t,
+        );
+        tl.to(id, { opacity: 0, duration: dur - 0.06, ease: "power1.in" }, t + 0.06);
+      };
+      tl.fromTo("#ylw", { opacity: 0 }, { opacity: 1, duration: 0.16, ease: "power2.out" }, 2.1);
+      ring("#ypop1", 2.1, 70, 0.95, 0.55);
+
+      // 2,4–3,0 s: el icono se materializa alrededor de la P (escala + fundido desde su centro)
+      tl.fromTo(
+        "#icon",
+        { opacity: 0, attr: { transform: mat(0.55, S / 2, CY0) } },
+        {
+          opacity: 1,
+          attr: { transform: mat(1, S / 2, CY0) },
+          duration: 0.6,
+          ease: "power3.out",
+        },
+        2.4,
+      );
+
+      // 2,8–3,8 s: icono+P encogen y se desplazan a la izquierda; «Pronto» sale de detrás del icono.
+      // UN mismo easing y duración para desplazamiento (x), encogido (matriz) y borde de la máscara,
+      // así el recorte sigue pegado al borde derecho del icono mientras encoge.
+      const T_MOVE = 2.8;
+      const MOVE = { duration: 1.0, ease: "power3.out" };
+      tl.fromTo("#lock", { x: LOCK0 }, { x: 0, ...MOVE }, T_MOVE);
+      tl.fromTo(
+        "#iscale",
+        { attr: { transform: mat(K0, 0, CY0) } },
+        { attr: { transform: mat(1, 0, CY0) }, ...MOVE },
+        T_MOVE,
+      );
+      tl.fromTo("#revealRect", { attr: { x: S * K0 } }, { attr: { x: S }, ...MOVE }, T_MOVE);
+      const L0 = T_MOVE; // primera letra
+      const LSTEP = 0.055; // escalonado
+      const NL = FONT.letters.length;
+      FONT.letters.forEach((l, i) => {
+        // de derecha a izquierda: la «o» final sale primero y cada letra solo cruza espacio libre
+        const t = L0 + (NL - 1 - i) * LSTEP;
+        tl.fromTo(
+          "#L" + i,
+          { x: -letterShift[i], skewX: -10 },
+          { x: 0, skewX: 0, duration: 0.8, ease: "power4.out" },
+          t,
+        );
+        tl.fromTo(
+          "#mbs" + i,
+          { attr: { stdDeviation: "12 0" } },
+          { attr: { stdDeviation: "0 0" }, duration: 0.55, ease: "power2.out" },
+          t,
+        );
+      });
+      // pulso suave de la amarilla cuando sale la última letra
+      ring("#ypop2", L0 + (NL - 1) * LSTEP + 0.1, 50, 0.6, 0.6);
+
+      window.__timelines["pronto-logo"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>
