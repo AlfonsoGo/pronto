@@ -10,8 +10,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AlfonsoGo/pronto/releases/download/v2.0.1/Pronto-Setup-2.0.1.exe"><b>⬇ Descargar Pronto 2 para Windows</b></a>
-  · <a href="https://github.com/AlfonsoGo/pronto/releases/tag/v2.0.1">Notas de la versión</a>
+  <a href="https://github.com/AlfonsoGo/pronto/releases/download/v2.0.2/Pronto-Setup-2.0.2.exe"><b>⬇ Descargar Pronto 2 para Windows</b></a>
+  · <a href="https://github.com/AlfonsoGo/pronto/releases/latest">Novedades</a>
 </p>
 
 ---
@@ -28,12 +28,13 @@ Flutter, sigue en la rama [`v1-flutter`](https://github.com/AlfonsoGo/pronto/tre
 - **Rápido.** Motor NVIDIA Parakeet TDT 0.6B v3 (español e inglés con puntuación) en CPU: unos
   0,5 s por frase de 8 s. Ejecutable nativo de 33 MB.
 - **Interfaz propia.** «Cristal etéreo»: violeta sobre negro OLED, modo oscuro y claro.
+- **Se actualiza solo.** Busca versiones nuevas al abrirse y cada 4 horas; un botón y se instala.
 
 ![Hub de Pronto](docs/capturas/hub-dictado.jpg)
 
 ## Instalar
 
-1. Descarga [`Pronto-Setup-2.0.1.exe`](https://github.com/AlfonsoGo/pronto/releases/download/v2.0.1/Pronto-Setup-2.0.1.exe)
+1. Descarga [`Pronto-Setup-2.0.2.exe`](https://github.com/AlfonsoGo/pronto/releases/download/v2.0.2/Pronto-Setup-2.0.2.exe)
    y ejecútalo. El instalador no está firmado: si Windows muestra SmartScreen, pulsa
    «Más información › Ejecutar de todas formas».
 2. En el primer arranque Pronto descarga el modelo de voz (≈ 670 MB, una sola vez). Después no
@@ -44,6 +45,10 @@ Flutter, sigue en la rama [`v1-flutter`](https://github.com/AlfonsoGo/pronto/tre
    reuniones y responder preguntas sobre ellas. Sin Ollama, el dictado y la transcripción de
    reuniones funcionan igual; solo falta la parte de IA. Puede ir más lento según tu PC: el modelo
    usa CPU, RAM y GPU a la vez que la transcripción.
+4. Actualizaciones: Pronto mira en GitHub si hay versión nueva al abrirse y cada 4 horas. Si la hay,
+   sale un aviso con las novedades y «Actualizar ahora» la descarga, la instala y vuelve a abrir
+   Pronto. Se puede apagar en Configuración › Sistema › Actualizaciones. Si vienes de Pronto 1, su
+   propio aviso de actualización te trae a Pronto 2 y reutiliza el modelo de voz que ya tenías.
 
 Si usas otra app de dictado que también use `Win + Alt`, ciérrala: chocan en el atajo y en la barra
 de abajo al centro.
@@ -98,7 +103,8 @@ error y el estado de la reunión («Tomando notas de Teams · Detener»).
 - La voz y el texto se procesan en tu equipo. No hay servidores de Pronto ni telemetría.
 - Datos en `%APPDATA%\Pronto2\pronto2.db` (SQLite) y el audio de cada dictado en `audio\`, que se
   borra a los 14 días.
-- La única conexión es la descarga única del modelo (Hugging Face) y, si lo usas, Ollama en
+- Conexiones: la descarga única del modelo (Hugging Face), la consulta de versiones a GitHub
+  (se puede apagar) y, si activas la IA local, la descarga de Ollama y su modelo. Ollama corre en
   `localhost`.
 
 ## Compilar desde el código
@@ -109,8 +115,12 @@ Requisitos: Rust estable, Windows 10/11 con WebView2.
 cd src-tauri
 cargo run --release          # arrancar
 cargo test                   # tests
-cargo install tauri-cli --version "^2" --locked
-cargo tauri build            # instalador NSIS en src-tauri/target/release/bundle/nsis
+```
+
+Instalador (Inno Setup 6), sale en `installer/dist/`:
+
+```bash
+powershell -ExecutionPolicy Bypass -File installer\build_installer.ps1
 ```
 
 - Backend: Rust + Tauri 2 (`src-tauri/`), captura `cpal`, motor `sherpa-onnx`, hook de teclado y
@@ -122,7 +132,8 @@ cargo tauri build            # instalador NSIS en src-tauri/target/release/bundl
 ## Estado
 
 Probado de verdad en Windows 11: dictado completo, manos libres, cancelar, Polish, notas de reunión
-automáticas con una videollamada simulada, resumen y preguntas con `qwen2.5:7b`. Todavía sin probar
+automáticas con una videollamada simulada, resumen y preguntas (probados con `qwen2.5:7b`; desde la 2.0.2 el modelo de
+fábrica es `qwen3:1.7b`, más ligero). Todavía sin probar
 con una reunión real de Teams o Zoom. Sin hacer: cuentas y equipos, ventana aparte de Scratchpad,
 «Command Mode».
 
