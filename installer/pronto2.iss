@@ -16,7 +16,7 @@
 #define AppName "Pronto"
 ; build_installer.ps1 inyecta /DAppVersion=x.y.z leido de src-tauri\tauri.conf.json.
 #ifndef AppVersion
-  #define AppVersion "2.0.0"
+  #define AppVersion "2.0.1"
 #endif
 #define AppPublisher "Pronto"
 #define AppExe "pronto.exe"
@@ -37,8 +37,12 @@
   #endif
   #define MyDefaultDir TestDir + "\default-dir"
 #else
-  ; MISMO AppId y nombre que Pronto 1 (ver pronto.iss de Pronto 1).
-  #define MyAppId "{{B7E5B2A0-9C4D-4E1A-9F3B-7A2D6E8C1F40}"
+  ; MISMO AppId y nombre que Pronto 1 (ver pronto.iss de Pronto 1). Ojo: alli es
+  ; "{{...F40}}", con DOS llaves de cierre, y el registro guarda "{...F40}}_is1". Hay que
+  ; copiarlo tal cual; con una sola llave Inno lo toma por otra app (fallo de la 2.0.0).
+  #define MyAppId "{{B7E5B2A0-9C4D-4E1A-9F3B-7A2D6E8C1F40}}"
+  ; AppId que uso por error la 2.0.0: su entrada de desinstalacion se borra al instalar.
+  #define StaleAppId "{B7E5B2A0-9C4D-4E1A-9F3B-7A2D6E8C1F40}"
   #define MyAppName AppName
   #define MyOutName "Pronto-Setup-" + AppVersion
   #define MyDefaultDir "{autopf}\Pronto"
@@ -251,3 +255,27 @@ begin
     Result := False;
   end;
 end;
+
+#ifdef StaleAppId
+{ La 2.0.0 se instalo con otro AppId: Windows mostraria dos "Pronto". Se quita esa entrada
+  y su desinstalador (si no es el nuestro). }
+procedure CurStepChanged(CurStep: TSetupStep);
+var
+  Key, Unins: String;
+begin
+  if CurStep <> ssPostInstall then Exit;
+  Key := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#StaleAppId}_is1';
+  if not RegKeyExists(HKCU, Key) then Exit;
+  if RegQueryStringValue(HKCU, Key, 'UninstallString', Unins) then
+  begin
+    Unins := RemoveQuotes(Unins);
+    if CompareText(Unins, ExpandConstant('{uninstallexe}')) <> 0 then
+    begin
+      DeleteFile(Unins);
+      DeleteFile(ChangeFileExt(Unins, '.dat'));
+    end;
+  end;
+  if RegDeleteKeyIncludingSubkeys(HKCU, Key) then
+    Log('Entrada de desinstalacion de la 2.0.0 eliminada: ' + Key);
+end;
+#endif

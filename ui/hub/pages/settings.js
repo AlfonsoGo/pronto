@@ -6,7 +6,7 @@ import {
 } from '../util.js';
 import { switchHtml, selectHtml } from '../ui.js';
 
-export const VERSION = 'Pronto v2.0.0';
+export const VERSION = 'Pronto v2.0.1';
 const TABS = () => [
   { group: t('Configuración'), items: [
     { id: 'general', icon: 'sliders-horizontal', label: t('General') },
