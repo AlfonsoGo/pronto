@@ -10,8 +10,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AlfonsoGo/pronto/releases/download/v2.0.0/Pronto-Setup-2.0.0.exe"><b>⬇ Descargar Pronto 2 para Windows</b></a>
-  · <a href="https://github.com/AlfonsoGo/pronto/releases/tag/v2.0.0">Notas de la versión</a>
+  <a href="https://github.com/AlfonsoGo/pronto/releases/download/v2.0.1/Pronto-Setup-2.0.1.exe"><b>⬇ Descargar Pronto 2 para Windows</b></a>
+  · <a href="https://github.com/AlfonsoGo/pronto/releases/tag/v2.0.1">Notas de la versión</a>
 </p>
 
 ---
@@ -33,7 +33,7 @@ Flutter, sigue en la rama [`v1-flutter`](https://github.com/AlfonsoGo/pronto/tre
 
 ## Instalar
 
-1. Descarga [`Pronto-Setup-2.0.0.exe`](https://github.com/AlfonsoGo/pronto/releases/download/v2.0.0/Pronto-Setup-2.0.0.exe)
+1. Descarga [`Pronto-Setup-2.0.1.exe`](https://github.com/AlfonsoGo/pronto/releases/download/v2.0.1/Pronto-Setup-2.0.1.exe)
    y ejecútalo. El instalador no está firmado: si Windows muestra SmartScreen, pulsa
    «Más información › Ejecutar de todas formas».
 2. En el primer arranque Pronto descarga el modelo de voz (≈ 670 MB, una sola vez). Después no
