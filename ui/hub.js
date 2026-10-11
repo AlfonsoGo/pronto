@@ -143,9 +143,11 @@ function navigate(id, { force = false } = {}) {
   if (current.cleanup) { try { current.cleanup(); } catch (e) { console.error(e); } }
   current = { id, cleanup: null };
   highlightNav();
-  const page = $('#page');
-  page.innerHTML = '';
-  page.scrollTop = 0;
+  // Contenedor nuevo en cada visita: las páginas cuelgan sus listeners de `root` y, si se
+  // reutilizara, se acumularían (el último clic lo atendería una página ya desmontada).
+  const prevPage = $('#page');
+  const page = prevPage.cloneNode(false);
+  prevPage.replaceWith(page);
   try { current.cleanup = PAGES[id].mount(page, ctx) || null; }
   catch (e) { console.error(e); page.innerHTML = `<div class="page-inner"><div class="aviso rojo"><div class="in"><span class="ic-l">${icon('triangle-alert', 20)}</span><div class="tx"><b>${esc(t('Algo salió mal.'))}</b><span>${esc(errText(e))}</span></div></div></div></div>`; }
 }
