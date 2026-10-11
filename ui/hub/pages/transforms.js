@@ -3,6 +3,7 @@ import { icon } from '../../shared/icons.js';
 import { invoke, state } from '../api.js';
 import { t, esc, $, toast, errText, keysHtml, hotkeyText, confirmDialog } from '../util.js';
 import { pageHeader, selectHtml } from '../ui.js';
+import { aiSlot, aiMount } from '../ai.js';
 
 const DEFAULTS = {
   Polish: 'Reescribe el texto para que sea más claro y conciso. Mantén el mismo idioma, el tono y el significado. Corrige gramática y puntuación. Devuelve solo el texto resultante, sin explicaciones.',
@@ -35,15 +36,14 @@ export default {
       if (!ollama.reachable) {
         return `<div class="aviso amar"><div class="in"><span class="ic-l">${icon('triangle-alert', 20)}</span>
           <div class="tx"><b>${esc(t('Ollama no responde'))}</b>
-            <span>${t('Los Transforms usan un modelo local con Ollama. Ábrelo desde el menú Inicio o ejecuta {a} en una terminal; después descarga el modelo con {b}.', {
-              a: '<code>ollama serve</code>', b: `<code>ollama pull ${esc(model)}</code>` })}</span></div>
+            <span>${esc(t('Los Transforms usan un modelo local con Ollama. Pronto puede instalarlo, arrancarlo y descargar el modelo por ti.'))}</span>${aiSlot('cta')}</div>
           <button class="btn btn-secondary btn-sm" data-act="ollama-retry">${icon('refresh-cw', 14)}${esc(t('Reintentar'))}</button></div></div>`;
       }
       const has = ollama.models.some((m) => m === model || m.split(':')[0] === model.split(':')[0] && !model.includes(':'));
       if (!has) {
         return `<div class="aviso amar"><div class="in"><span class="ic-l">${icon('triangle-alert', 20)}</span>
           <div class="tx"><b>${esc(t('Falta el modelo {m}', { m: model }))}</b>
-            <span>${t('Descárgalo con {a} o elige otro en Configuración › Experimental.', { a: `<code>ollama pull ${esc(model)}</code>` })}</span></div>
+            <span>${esc(t('Pronto puede descargarlo por ti, o elige otro en Configuración › Experimental.'))}</span>${aiSlot('cta')}</div>
           <button class="btn btn-secondary btn-sm" data-act="ollama-retry">${icon('refresh-cw', 14)}${esc(t('Reintentar'))}</button></div></div>`;
       }
       return `<div class="ollama-ok"><span class="badge ok"><i class="dot"></i>${esc(t('Ollama listo'))} · ${esc(model)}</span></div>`;
@@ -148,6 +148,7 @@ export default {
     renderList();
     load();
     checkOllama();
-    return () => { alive = false; };
+    const offAi = aiMount(root, (kind) => { if (kind === 'ready') checkOllama(); });
+    return () => { alive = false; offAi(); };
   },
 };

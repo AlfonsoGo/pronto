@@ -3,6 +3,7 @@
 import { icon } from './shared/icons.js';
 import {
   invoke, listen, win, state, loadSettings, refreshEngine, refreshModel, applyModelProgress, refreshStats, notify, applySettingsEffects, IS_MOCK, subscribe,
+  refreshUpdate, applyUpdateAvailable, applyUpdateProgress,
 } from './hub/api.js';
 import { t, esc, $, $$, toast, openMenu, closeMenu, hasModal, errText } from './hub/util.js';
 import home from './hub/pages/home.js';
@@ -15,6 +16,7 @@ import notes from './hub/pages/notes.js';
 import meetings from './hub/pages/meetings.js';
 import { initMeetingState, live as liveMeeting } from './hub/meeting.js';
 import { openSettings } from './hub/pages/settings.js';
+import { mountUpdateBanner } from './hub/update.js';
 
 const PAGES = { home, meetings, insights, dictionary, snippets, style, transforms, notes };
 const NAV = () => [
@@ -86,7 +88,7 @@ function shellHtml() {
       <button class="nav" data-act="settings">${icon('settings', 20)}<span class="lbl">${esc(t('Configuración'))}</span></button>
       <button class="nav" data-act="help" aria-haspopup="menu">${icon('circle-help', 20)}<span class="lbl">${esc(t('Ayuda'))}</span></button>
     </aside>
-    <main class="main"><div class="page-shell carcasa"><div class="nucleo page-core"><div class="page-scroll" id="page" tabindex="-1"></div></div></div></main>
+    <main class="main"><div class="upd-slot" id="upd-slot" hidden></div><div class="page-shell carcasa"><div class="nucleo page-core"><div class="page-scroll" id="page" tabindex="-1"></div></div></div></main>
   </div>`;
 }
 
@@ -120,6 +122,7 @@ function buildShell() {
   updateEngineCard();
   updateRecDot();
   highlightNav();
+  mountUpdateBanner($('#upd-slot'));
 }
 
 function highlightNav() {
@@ -238,7 +241,7 @@ async function boot() {
     $('#retry').addEventListener('click', () => location.reload());
     return;
   }
-  await Promise.all([refreshEngine(), refreshModel(), refreshStats(), initMeetingState()]);
+  await Promise.all([refreshEngine(), refreshModel(), refreshStats(), initMeetingState(), refreshUpdate()]);
   buildShell();
   subscribe((what) => { if (what === 'meeting') updateRecDot(); });
 
@@ -251,6 +254,8 @@ async function boot() {
   listen('hub://settings', (p) => openSettingsFrom(p && p.tab));
   listen('engine://status', (e) => { state.engine = e; updateEngineCard(); notify('engine'); });
   listen('model://progress', applyModelProgress);
+  listen('update://available', applyUpdateAvailable);
+  listen('update://progress', applyUpdateProgress);
   listen('settings://changed', (s) => {
     if (!s) return;
     const langChanged = state.settings && s.appLanguage !== state.settings.appLanguage;
@@ -265,4 +270,4 @@ async function boot() {
 
 boot();
 
-if (IS_MOCK) console.info('[Pronto hub] backend simulado (mock). Parámetros: ?page=insights ?settings=system ?theme=light ?ollama=off ?empty=1 ?engine=error ?model=missing ?model=error');
+if (IS_MOCK) console.info('[Pronto hub] backend simulado (mock). Parámetros: ?page=insights ?settings=system ?theme=light ?ollama=off ?empty=1 ?engine=error ?model=missing ?model=error ?update=available ?update=error ?update=none');

@@ -25,6 +25,8 @@ export const state = {
   model: { complete: true, downloading: false, state: 'idle', doneBytes: 0, totalBytes: 0, overallPercent: 0, error: null },
   dictation: { state: 'idle' },
   stats: null,
+  // Actualizaciones (Contrato v7). `dismissed` = versión a la que se dijo «Más tarde» (solo hasta el próximo arranque).
+  update: { currentVersion: '', state: 'idle', checking: false, checkedAt: null, info: null, doneBytes: 0, totalBytes: 0, percent: 0, error: null, dismissed: null },
 };
 const subs = new Set();
 export const subscribe = (fn) => { subs.add(fn); return () => subs.delete(fn); };
@@ -94,4 +96,67 @@ export async function refreshStats() {
   try { state.stats = await invoke('get_stats'); } catch (_) { /* */ }
   notify('stats');
   return state.stats;
+}
+
+// ------------------------------------------------------------------ actualizaciones (Contrato v7)
+const UPDATE_BUSY = ['downloading', 'verifying', 'installing'];
+export const updateBusy = () => UPDATE_BUSY.includes(state.update.state);
+
+/** Estado completo (`update_status` / `update_check`) -> estado compartido. */
+export function applyUpdateStatus(s) {
+  if (!s) return;
+  state.update = { ...state.update, ...s };
+  notify('update');
+}
+
+/** `update://available` -> hay versión nueva (no pisa una descarga en curso). */
+export function applyUpdateAvailable(info) {
+  if (!info) return;
+  state.update = { ...state.update, info, state: updateBusy() ? state.update.state : 'available' };
+  notify('update');
+}
+
+/** `update://progress` -> avance de la descarga / instalación o error. */
+export function applyUpdateProgress(p) {
+  if (!p) return;
+  state.update = {
+    ...state.update, state: p.state, doneBytes: p.doneBytes, totalBytes: p.totalBytes, percent: p.percent, error: p.error || null,
+  };
+  notify('update');
+}
+
+export async function refreshUpdate() {
+  try { applyUpdateStatus(await invoke('update_status')); } catch (_) { /* */ }
+}
+
+/** «Buscar ahora». Devuelve el estado o lanza el error (sin conexión...) para que quien llama lo muestre. */
+export async function checkUpdate() {
+  state.update = { ...state.update, checking: true, dismissed: null }; // buscar a mano vuelve a mostrar el aviso
+  notify('update');
+  try {
+    const s = await invoke('update_check');
+    applyUpdateStatus(s);
+    return s;
+  } finally {
+    state.update = { ...state.update, checking: false };
+    notify('update');
+  }
+}
+
+/** «Actualizar ahora»: el avance llega por `update://progress`; si la app se cierra, ya está instalando. */
+export async function installUpdate() {
+  state.update = { ...state.update, state: 'downloading', doneBytes: 0, percent: 0, error: null };
+  notify('update');
+  try { await invoke('update_install'); }
+  catch (e) {
+    state.update = { ...state.update, state: 'error', error: errText(e) };
+    notify('update');
+  }
+}
+
+/** «Más tarde»: no volver a mostrar esta versión hasta el próximo arranque. */
+export function dismissUpdate() {
+  const v = state.update.info && state.update.info.version;
+  state.update = { ...state.update, dismissed: v || null };
+  notify('update');
 }

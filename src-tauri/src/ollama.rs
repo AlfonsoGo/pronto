@@ -69,12 +69,30 @@ pub fn generate_with(url: &str, model: &str, prompt: &str, opts: &GenOpts) -> Re
         },
     })?;
     let v: Value = resp.into_json().map_err(|e| format!("Respuesta de Ollama ilegible: {e}"))?;
-    let out = v["response"].as_str().unwrap_or("").trim().to_string();
+    let out = strip_think(v["response"].as_str().unwrap_or(""));
     if out.is_empty() {
         Err("Ollama devolvió una respuesta vacía".into())
     } else {
         Ok(out)
     }
+}
+
+/// Quita los bloques `<think>…</think>` con que los modelos «razonadores» (qwen3…) anteponen su
+/// razonamiento, aunque se pida `think:false`. Un `<think>` sin cerrar (respuesta cortada) descarta
+/// todo lo que sigue. Devuelve el texto recortado.
+pub fn strip_think(response: &str) -> String {
+    let mut r = response.to_string();
+    while let Some(a) = r.find("<think>") {
+        match r[a..].find("</think>") {
+            Some(b) => r.replace_range(a..a + b + "</think>".len(), ""),
+            None => r.truncate(a),
+        }
+    }
+    // Cierre suelto: algunos modelos omiten la apertura y solo emiten `…</think>`.
+    if let Some(i) = r.rfind("</think>") {
+        r.replace_range(..i + "</think>".len(), "");
+    }
+    r.trim().to_string()
 }
 
 /// ¿Responde Ollama y qué modelos tiene?
@@ -138,6 +156,23 @@ mod tests {
         assert!(req.starts_with("POST /api/generate"), "{req}");
         assert!(req.contains(r#""stream":false"#) && req.contains("qwen2.5:7b"));
         assert!(req.contains("Mejora esto") && req.contains("hola mundo"));
+    }
+
+    #[test]
+    fn quita_el_razonamiento_de_qwen3() {
+        assert_eq!(strip_think("<think>\npienso…\n</think>\n\nHola."), "Hola.");
+        assert_eq!(strip_think("a <think>x</think>b<think>y</think> c"), "a b c");
+        assert_eq!(strip_think("razono sin abrir</think>\nResultado"), "Resultado");
+        assert_eq!(strip_think("Texto <think>cortado sin cerrar"), "Texto");
+        assert_eq!(strip_think("  normal  "), "normal");
+    }
+
+    #[test]
+    fn la_respuesta_con_think_se_limpia() {
+        let (url, h) = one_shot("200 OK", r#"{"response":"<think>\nhmm\n</think>\n\nListo."}"#);
+        assert_eq!(generate(&url, "qwen3:1.7b", "p", "t").unwrap(), "Listo.");
+        let req = h.join().unwrap();
+        assert!(req.contains(r#""think":false"#), "{req}");
     }
 
     #[test]

@@ -153,7 +153,14 @@ pub struct Settings {
     pub flow_bar_hidden_until: Option<String>,
     pub styles: Styles,
     pub history_retention_days: u32,
+    /// Buscar actualizaciones en GitHub al abrir y cada 4 horas (`updater.rs`).
+    pub auto_update: bool,
 }
+
+/// Modelo de IA local de fábrica (Ollama): pequeño, para que valga en cualquier PC.
+pub const DEFAULT_AI_MODEL: &str = "qwen3:1.7b";
+/// Modelo de fábrica anterior a Pronto 2.1; un ajuste guardado que valga exactamente esto se migra.
+pub const LEGACY_AI_MODEL: &str = "qwen2.5:7b";
 
 impl Default for Settings {
     fn default() -> Self {
@@ -182,15 +189,16 @@ impl Default for Settings {
             cleanup_level: CleanupLevel::Medium,
             press_enter_command: false,
             ollama_url: "http://localhost:11434".into(),
-            ollama_model: "qwen2.5:7b".into(),
+            ollama_model: DEFAULT_AI_MODEL.into(),
             ai_polish: false,
-            ai_polish_model: "qwen2.5:7b".into(),
+            ai_polish_model: DEFAULT_AI_MODEL.into(),
             ai_polish_timeout_ms: 6000,
             keep_audio_days: 14,
             theme: "dark".into(),
             flow_bar_hidden_until: None,
             styles: Styles::default(),
             history_retention_days: 0,
+            auto_update: true,
         }
     }
 }

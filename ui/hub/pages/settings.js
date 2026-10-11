@@ -1,12 +1,15 @@
 // Configuración: modal 960x640 con sidebar interna. [spec §2.4]
 import { icon } from '../../shared/icons.js';
-import { invoke, state, saveSettings, subscribe, notify, applySettingsEffects, IS_MOCK } from '../api.js';
+import { invoke, state, saveSettings, subscribe, notify, applySettingsEffects, IS_MOCK, checkUpdate, installUpdate, updateBusy } from '../api.js';
 import {
   t, esc, $, $$, toast, errText, openModal, confirmDialog, keysHtml, hotkeyText, sameHotkey, getLang,
 } from '../util.js';
 import { switchHtml, selectHtml } from '../ui.js';
+import { aiSlot, aiMount } from '../ai.js';
 
-export const VERSION = 'Pronto v2.0.1';
+export const VERSION = 'Pronto v2.0.2';
+/** Versión real del ejecutable (la da `update_status`); `VERSION` solo es el respaldo. */
+const versionLabel = () => (state.update.currentVersion ? `Pronto v${state.update.currentVersion}` : VERSION);
 const TABS = () => [
   { group: t('Configuración'), items: [
     { id: 'general', icon: 'sliders-horizontal', label: t('General') },
@@ -32,8 +35,33 @@ function engineChip() {
 }
 const ollamaNote = () => `<div class="aviso vio"><div class="in"><span class="ic-l">${icon('info', 18)}</span><div class="tx"><b>${esc(t('IA local opcional (Ollama)'))}</b>
   <span>${esc(t('Se usa para pulir textos (Polish y «Pulir cada dictado»), resumir reuniones y responder preguntas sobre ellas. Si no la instalas, el dictado y la transcripción funcionan igual. Puede ir más lento según tu PC.'))}
-  ${t('Instálalo desde ollama.com y ejecuta {a}.', { a: '<code>ollama pull qwen2.5:7b</code>' })}</span></div></div></div>`;
+  ${esc(t('Con el botón de abajo, Pronto la instala y la deja lista por ti.'))}</span></div></div></div>${aiSlot('card')}`;
 const langName = (l) => ({ auto: t('Detección automática'), es: t('Español'), en: t('Inglés') }[l] || l);
+
+// ------------------------------------------------------------------ actualizaciones (Contrato v7)
+function updateLine() {
+  const u = state.update, v = u.info ? u.info.version : '';
+  if (u.checking) return esc(t('Buscando…'));
+  if (updateBusy()) return esc(t('Actualizando a {v}…', { v }));
+  if (v && (u.state === 'available' || u.state === 'error')) return esc(t('Hay una versión nueva: {v}', { v }));
+  if (u.state === 'upToDate') {
+    const at = u.checkedAt ? new Date(u.checkedAt) : null;
+    const hhmm = at && !isNaN(at) ? at.toLocaleTimeString(getLang() === 'en' ? 'en-US' : 'es-ES', { hour: '2-digit', minute: '2-digit' }) : '';
+    return esc(hhmm ? t('Estás al día · comprobado a las {h}', { h: hhmm }) : t('Estás al día.'));
+  }
+  return esc(t('Todavía no se ha buscado en esta sesión.'));
+}
+
+function updateGroupHtml() {
+  const u = state.update, s = state.settings;
+  const newer = u.info && (u.state === 'available' || u.state === 'error');
+  const btns = `${newer ? `<button class="btn btn-primary btn-sm" data-act="update-install" ${updateBusy() ? 'disabled' : ''}>${icon('download', 14)}${esc(t('Actualizar ahora'))}</button>` : ''}
+    <button class="btn btn-secondary btn-sm" data-act="update-check" ${u.checking || updateBusy() ? 'disabled' : ''} style="margin-left:8px">${icon('refresh-cw', 14)}${esc(t('Buscar ahora'))}</button>`;
+  return group(t('Actualizaciones'), [
+    row(esc(t('Buscar actualizaciones automáticamente')), esc(t('Al abrir Pronto y cada 4 horas. Solo se instala cuando tú lo pides.')), switchHtml('autoUpdate', s.autoUpdate !== false, t('Buscar actualizaciones automáticamente'))),
+    row(esc(t('Versión instalada: {v}', { v: u.currentVersion || VERSION.replace('Pronto v', '') })), updateLine(), btns),
+  ].join('')).replace('<section class="sgroup">', '<section class="sgroup" id="upd-group">');
+}
 
 const VIEWS = {
   general(s) {
@@ -59,7 +87,7 @@ const VIEWS = {
     ].join('')) + group(t('Apariencia'), [
       row(t('Tema'), t('Oscuro por defecto; el claro usa el mismo cristal violeta.'),
         selectHtml('theme', [{ value: 'dark', label: t('Oscuro') }, { value: 'light', label: t('Claro') }], s.theme, { label: t('Tema') })),
-    ].join(''));
+    ].join('')) + updateGroupHtml();
   },
   meetings(s) {
     const cur = s.meetingAuto || (s.meetingDetect === false ? 'off' : 'auto');
@@ -123,7 +151,7 @@ export function openSettings(tab = 'general', opts = {}) {
     width: 'min(960px, calc(100vw - 48px))', height: 'min(640px, calc(100vh - 48px))', cls: 'settings',
     raw: `<div class="set">
       <nav class="set-nav" role="tablist" aria-orientation="vertical" aria-label="${esc(t('Configuración'))}">${nav}
-        <div class="set-foot"><span>${esc(VERSION)}</span><span class="set-eng" title="${esc(t('Estado del motor'))}">${engineChip()}</span></div></nav>
+        <div class="set-foot"><span>${esc(versionLabel())}</span><span class="set-eng" title="${esc(t('Estado del motor'))}">${engineChip()}</span></div></nav>
       <section class="set-main">
         <header class="set-hd"><h2 id="set-title"></h2><button class="icon-btn" data-close aria-label="${esc(t('Cerrar'))}">${icon('x', 18)}</button></header>
         <div class="set-scroll" id="set-body"></div></section></div>`,
@@ -131,7 +159,7 @@ export function openSettings(tab = 'general', opts = {}) {
   });
   const body = $('#set-body', ctl.el), title = $('#set-title', ctl.el);
   ctl.modal.setAttribute('aria-labelledby', 'set-title');
-  let active = tab;
+  let active = tab, offAi = null;
 
   function renderTab() {
     const info = flat().find((x) => x.id === active);
@@ -140,6 +168,8 @@ export function openSettings(tab = 'general', opts = {}) {
     body.innerHTML = VIEWS[active](state.settings);
     body.scrollTop = 0;
     if (active === 'experimental' || active === 'meetings') ollamaCheck(false);
+    if (offAi) offAi();
+    offAi = aiMount(body, (kind) => { if (kind === 'ready') ollamaCheck(false); });
   }
   function go(id) { active = id; renderTab(); }
   current = { ctl, go, get tab() { return active; }, rerender: renderTab };
@@ -190,6 +220,14 @@ export function openSettings(tab = 'general', opts = {}) {
     const act = b.dataset.act;
     if (act === 'shortcuts' || act === 'mic' || act === 'langs') openDialog(act, current);
     else if (act === 'ollama-check') ollamaCheck(true);
+    else if (act === 'update-check') {
+      try {
+        const r = await checkUpdate();
+        const newer = r.info && (r.state === 'available' || r.state === 'error');
+        toast(newer ? t('Hay una versión nueva: {v}', { v: r.info.version }) : t('Estás al día.'), { kind: 'info' });
+      } catch (er) { toast(errText(er), { kind: 'err' }); }
+    }
+    else if (act === 'update-install') installUpdate();
     else if (act === 'capture-meeting') {
       b.disabled = true; b.textContent = t('Pulsa una combinación…');
       try {
@@ -243,6 +281,7 @@ export function openSettings(tab = 'general', opts = {}) {
 
   const unsub = subscribe((what) => {
     if (what === 'settings-ext') renderTab();
+    else if (what === 'update') { const g = $('#upd-group', body); if (g) g.outerHTML = updateGroupHtml(); }
     else if (what === 'engine') {
       const c = $('.set-eng', ctl.el); if (c) c.innerHTML = engineChip();
       const d = $('#eng-chip', body); if (d) d.innerHTML = engineChip();

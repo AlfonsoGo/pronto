@@ -16,7 +16,7 @@
 #define AppName "Pronto"
 ; build_installer.ps1 inyecta /DAppVersion=x.y.z leido de src-tauri\tauri.conf.json.
 #ifndef AppVersion
-  #define AppVersion "2.0.1"
+  #define AppVersion "2.0.2"
 #endif
 #define AppPublisher "Pronto"
 #define AppExe "pronto.exe"

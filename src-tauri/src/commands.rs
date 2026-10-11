@@ -4,9 +4,11 @@
 //! Lo que puede tardar (reintentar una transcripción, esperar una captura de atajo, hablar con
 //! Ollama, leer audio) es `async` y trabaja en `spawn_blocking`.
 
+use crate::aisetup::AiSetupStatus;
 use crate::models::*;
+use crate::updater::{self, UpdateStatus};
 use crate::state::{self, AppState, Cmd};
-use crate::{audio, autostart, db, flowbar, hotkey, inject, meeting, modeldl, ollama, summary, tray};
+use crate::{aisetup, audio, autostart, db, flowbar, hotkey, inject, meeting, modeldl, ollama, summary, tray};
 use base64::Engine as _;
 use std::sync::Arc;
 use std::time::Duration;
@@ -333,6 +335,46 @@ pub fn model_status(st: St) -> Result<ModelStatus, String> {
 #[tauri::command]
 pub fn model_download_start(app: AppHandle, st: St) -> Result<(), String> {
     modeldl::start(&app, st.inner())
+}
+
+/// «Activar IA local»: instala Ollama si falta, lo arranca y baja `qwen3:1.7b` en segundo plano
+/// (`ai://progress`). Si ya hay un proceso en marcha no hace nada.
+#[tauri::command]
+pub fn ai_setup_start(app: AppHandle, st: St) -> Result<(), String> {
+    aisetup::start(&app, st.inner())
+}
+
+/// Pide parar la activación de la IA local (surte efecto en la descarga; un instalador en marcha termina).
+#[tauri::command]
+pub fn ai_setup_cancel() -> Result<(), String> {
+    aisetup::cancel();
+    Ok(())
+}
+
+/// Qué hay de IA local en este PC (Ollama, modelo) y cómo va la activación, si hay una.
+#[tauri::command]
+pub async fn ai_setup_status(st: St<'_>) -> Result<AiSetupStatus, String> {
+    let settings = st.settings.read().clone();
+    blocking(move || Ok(aisetup::status(&settings))).await
+}
+
+/// Estado del actualizador (sin red): versión actual, versión nueva si la hay, progreso y último error.
+#[tauri::command]
+pub fn update_status() -> Result<UpdateStatus, String> {
+    Ok(updater::status())
+}
+
+/// «Buscar ahora»: consulta GitHub y devuelve el estado. Falla con un mensaje si no hay conexión.
+#[tauri::command]
+pub async fn update_check(app: AppHandle) -> Result<UpdateStatus, String> {
+    blocking(move || updater::check(&app).map_err(|e| e.msg)).await
+}
+
+/// «Actualizar ahora»: descarga y verifica el instalador (`update://progress`), cierra Pronto y deja que un
+/// ayudante lo instale en silencio y lo vuelva a abrir. Vuelve enseguida.
+#[tauri::command]
+pub fn update_install(app: AppHandle, st: St) -> Result<(), String> {
+    updater::install(&app, st.inner())
 }
 
 /// Zona pulsable de la Flow bar (px CSS relativos a la ventana); `null` = nada pulsable.

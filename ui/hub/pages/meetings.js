@@ -6,6 +6,7 @@ import {
   t, esc, $, $$, toast, errText, debounce, formatTime, dayLabel, dayKey, openMenu, confirmDialog, getLang, formatInt,
 } from '../util.js';
 import { pageHeader, emptyState, tabsHtml, tabsKeys, searchBtn, highlight } from '../ui.js';
+import { aiSlot, aiMount } from '../ai.js';
 import { live, elapsedMs, formatClock, formatDuration, markStarted, markStopped, expectManual } from '../meeting.js';
 
 const GEN_STEPS = () => [t('Leyendo la transcripción…'), t('Resumiendo la reunión…'), t('Extrayendo tareas y decisiones…')];
@@ -158,7 +159,7 @@ export default {
       applyLevels();
     }
     function ollamaNoteHtml() {
-      return ollamaDown ? `<p class="consent oll-note">${icon('info', 14)}${esc(t('Sin Ollama las reuniones se transcriben, pero no se resumen. Puedes instalarlo cuando quieras; puede ir más lento según tu PC.'))}</p>` : '';
+      return ollamaDown ? `<p class="consent oll-note">${icon('info', 14)}${esc(t('Sin Ollama las reuniones se transcriben, pero no se resumen. Puedes instalarlo cuando quieras; puede ir más lento según tu PC.'))}</p><div class="oll-cta">${aiSlot('cta')}</div>` : '';
     }
     async function checkOllama() {
       try { ollamaDown = !(await invoke('ollama_status')).reachable; } catch (_) { ollamaDown = true; }
@@ -477,9 +478,10 @@ export default {
     renderList();
     loadList();
     checkOllama();
+    const offAi = aiMount(root, (kind) => { if (kind === 'ready') checkOllama(); });
     if (ctx.openMeeting) { const id = ctx.openMeeting; ctx.openMeeting = null; openDetail(id); }
     return () => {
-      alive = false; unsub(); clearInterval(timer); stopGen(); searchDeb.cancel(); refreshLive.cancel();
+      alive = false; unsub(); offAi(); clearInterval(timer); stopGen(); searchDeb.cancel(); refreshLive.cancel();
     };
   },
 };

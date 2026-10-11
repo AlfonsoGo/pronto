@@ -9,6 +9,16 @@ use rusqlite::{params, Connection, OptionalExtension, Row};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+/// El modelo de IA de fábrica pasó de `qwen2.5:7b` a `qwen3:1.7b`. Solo se migra lo guardado que
+/// valga exactamente el antiguo de fábrica; un modelo elegido a mano se respeta.
+fn migrate_ai_models(s: &mut Settings) {
+    for model in [&mut s.ollama_model, &mut s.ai_polish_model] {
+        if model == LEGACY_AI_MODEL {
+            *model = DEFAULT_AI_MODEL.into();
+        }
+    }
+}
+
 pub struct Db {
     pub(crate) conn: Mutex<Connection>,
 }
@@ -291,6 +301,7 @@ impl Db {
             settings.hotkey_transform = default_transform_hotkey();
         }
         settings.model_dir = crate::modeldl::resolve_dir(&settings.model_dir);
+        migrate_ai_models(&mut settings);
         settings
     }
 
@@ -866,6 +877,25 @@ mod tests {
         // Y el nuevo ya guardado no se toca.
         assert_eq!(load(r#"{"hotkeyTransform":{"ctrl":false,"alt":true,"shift":true,"win":false,"key":"P"}}"#), nuevo);
         assert_eq!(legacy_transform_hotkey().key.as_deref(), Some("1"));
+    }
+
+    #[test]
+    fn el_modelo_de_ia_antiguo_de_fabrica_se_migra() {
+        let load = |json: &str| {
+            let db = Db::open_memory().unwrap();
+            db.conn.lock().execute("INSERT INTO settings (id, json) VALUES (1, ?1)", params![json]).unwrap();
+            let s = db.load_settings();
+            (s.ollama_model, s.ai_polish_model)
+        };
+        let nuevo = (DEFAULT_AI_MODEL.to_string(), DEFAULT_AI_MODEL.to_string());
+        assert_eq!(DEFAULT_AI_MODEL, "qwen3:1.7b");
+        assert_eq!(Db::open_memory().unwrap().load_settings().ollama_model, DEFAULT_AI_MODEL);
+        // Exactamente el antiguo de fábrica -> el nuevo (cada campo por separado).
+        assert_eq!(load(r#"{"ollamaModel":"qwen2.5:7b","aiPolishModel":"qwen2.5:7b"}"#), nuevo);
+        assert_eq!(load(r#"{"ollamaModel":"qwen2.5:7b","aiPolishModel":"llama3.2:3b"}"#), (DEFAULT_AI_MODEL.into(), "llama3.2:3b".into()));
+        // Elegidos a mano: se respetan, también uno parecido.
+        assert_eq!(load(r#"{"ollamaModel":"gemma2:2b","aiPolishModel":"qwen2.5:7b-instruct"}"#), ("gemma2:2b".into(), "qwen2.5:7b-instruct".into()));
+        assert_eq!(load(r#"{"sounds":false}"#), nuevo);
     }
 
     #[test]

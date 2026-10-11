@@ -3,6 +3,7 @@ import { icon } from '../../shared/icons.js';
 import { state, saveSettings, invoke } from '../api.js';
 import { t, esc, $, $$, toast, errText } from '../util.js';
 import { pageHeader, tabsHtml, tabsKeys, switchHtml, selectHtml } from '../ui.js';
+import { aiSlot, aiMount } from '../ai.js';
 
 const CTX = ['personal', 'work', 'email', 'other'];
 const TONES = ['formal', 'casual', 'veryCasual', 'excited'];
@@ -82,11 +83,11 @@ export default {
       let warn = '';
       if (oll && !oll.reachable) {
         warn = `<div class="aviso amar"><div class="in"><span class="ic-l">${icon('triangle-alert', 18)}</span><div class="tx"><b>${esc(t('Ollama no responde'))}</b>
-          <span>${t('Arráncalo con {a} (o abre la app de Ollama). Mientras tanto, los dictados se pegan sin pulir.', { a: '<code>ollama serve</code>' })}</span></div>
+          <span>${esc(t('Pronto puede instalarlo y arrancarlo por ti. Mientras tanto, los dictados se pegan sin pulir.'))}</span>${aiSlot('cta')}</div>
           <button class="btn btn-secondary btn-sm" data-act="pol-check">${icon('refresh-cw', 14)}${esc(t('Reintentar'))}</button></div></div>`;
       } else if (oll && !oll.models.includes(cur)) {
         warn = `<div class="aviso amar"><div class="in"><span class="ic-l">${icon('triangle-alert', 18)}</span><div class="tx"><b>${esc(t('Falta el modelo {m}', { m: cur }))}</b>
-          <span>${t('Descárgalo con {a} o elige otro de la lista.', { a: `<code>ollama pull ${esc(cur)}</code>` })}</span></div>
+          <span>${esc(t('Pronto puede descargarlo por ti (usa {m}), o elige otro de la lista.', { m: FAST }))}</span>${aiSlot('cta')}</div>
           <button class="btn btn-secondary btn-sm" data-act="pol-check">${icon('refresh-cw', 14)}${esc(t('Reintentar'))}</button></div></div>`;
       }
       return `<div class="tarj polish ${on ? 'on' : ''}" id="polish-card"><div class="in">
@@ -170,6 +171,7 @@ export default {
     });
     tabsKeys(root, (id) => { tab = id; render(); });
     render();
-    return () => { alive = false; };
+    const offAi = aiMount(root, (kind) => { if (kind === 'ready' && tab === 'cleanup') checkOllama(); });
+    return () => { alive = false; offAi(); };
   },
 };

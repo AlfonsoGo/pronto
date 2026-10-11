@@ -38,8 +38,9 @@ Flutter, sigue en la rama [`v1-flutter`](https://github.com/AlfonsoGo/pronto/tre
    «Más información › Ejecutar de todas formas».
 2. En el primer arranque Pronto descarga el modelo de voz (≈ 670 MB, una sola vez). Después no
    necesita Internet.
-3. Opcional, IA local con [Ollama](https://ollama.com): instálalo y ejecuta
-   `ollama pull qwen2.5:7b`. Sirve para pulir textos (Polish y «Pulir cada dictado»), resumir
+3. Opcional, IA local con [Ollama](https://ollama.com): en Configuración › Experimental pulsa
+   «Activar IA local» y Pronto instala Ollama (≈ 1,5 GB, comprobando su firma) y descarga el modelo
+   `qwen3:1.7b` (≈ 1,4 GB). Sirve para pulir textos (Polish y «Pulir cada dictado»), resumir
    reuniones y responder preguntas sobre ellas. Sin Ollama, el dictado y la transcripción de
    reuniones funcionan igual; solo falta la parte de IA. Puede ir más lento según tu PC: el modelo
    usa CPU, RAM y GPU a la vez que la transcripción.

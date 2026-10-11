@@ -1,6 +1,7 @@
 // Sin consola en release.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod aisetup;
 mod asr;
 mod auto;
 mod audio;
@@ -23,6 +24,7 @@ mod state;
 mod summary;
 mod text;
 mod tray;
+mod updater;
 
 use crate::asr::Engine;
 use crate::db::Db;
@@ -72,6 +74,12 @@ fn main() {
             commands::engine_status,
             commands::model_status,
             commands::model_download_start,
+            commands::update_status,
+            commands::update_check,
+            commands::update_install,
+            commands::ai_setup_start,
+            commands::ai_setup_cancel,
+            commands::ai_setup_status,
             commands::get_insights,
             commands::copy_last,
             commands::retry_history,
@@ -153,6 +161,7 @@ fn main() {
             if let Err(e) = tray::build(&handle, &settings) {
                 eprintln!("[main] no se pudo crear el icono de bandeja: {e}");
             }
+            updater::spawn_background(handle.clone(), st_for_init.clone());
 
             // El hub se muestra al arrancar, salvo si Windows nos lanzó al iniciar sesión.
             if !std::env::args().any(|a| a == autostart::HIDDEN_FLAG) {

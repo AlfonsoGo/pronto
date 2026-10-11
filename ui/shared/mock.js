@@ -2,7 +2,9 @@
 // Simula TODOS los comandos del contrato (docs/ARQUITECTURA.md, «Contrato v2») con datos de ejemplo en
 // español y emite dictation://result cada 20 s. Parámetros útiles en la URL (solo con el mock):
 //   ?page=insights  ?settings=system  ?theme=light  ?ollama=off  ?empty=1  ?engine=error
+//   ?ollama=off (instalado, sin arrancar) ?ollama=none (sin instalar) ?ollama=nomodel (arrancado, sin qwen3:1.7b) ?ai=error (la primera activación falla al 40 %)
 //   ?model=missing (tarjeta «Falta el modelo de voz», descarga simulada)  ?model=error (la primera descarga falla al 40 %)
+//   ?update=available|event|error|offline|none (aviso de actualización, ver «Contrato v7» en docs/ARQUITECTURA.md)
 
 const qs = new URLSearchParams(typeof location !== 'undefined' ? location.search : '');
 const delay = (ms = 25) => new Promise((r) => setTimeout(r, ms));
@@ -128,8 +130,9 @@ let settings = {
   removeFillers: true, backtrack: true,
   styles: { personal: 'casual', work: 'casual', email: 'formal', other: 'casual' },
   historyRetentionDays: 0, firstName: 'Alfonso', cleanupLevel: 'medium', pressEnterCommand: false,
-  ollamaUrl: 'http://localhost:11434', ollamaModel: 'qwen2.5:7b', keepAudioDays: 14,
+  ollamaUrl: 'http://localhost:11434', ollamaModel: 'qwen3:1.7b', keepAudioDays: 14,
   theme: qs.get('theme') === 'light' ? 'light' : 'dark', flowBarHiddenUntil: null,
+  autoUpdate: true,
   hotkeyMeeting: hk({ win: true, alt: true, key: 'M' }), meetingAuto: qs.get('auto') === 'ask' ? 'ask' : 'auto', meetingKeepAudio: false,
   aiPolish: qs.get('polish') === 'on', aiPolishModel: 'qwen3:1.7b', aiPolishTimeoutMs: 6000,
 };
@@ -184,6 +187,112 @@ function fakeModelDownload() {
       setTimeout(() => { engine = { ...engine, ready: true, loading: false }; emit('engine://status', engine); }, 1200);
     }, 900);
   }, 200);
+}
+
+// «Activar IA local» simulada (Contrato v6): ?ollama=none recorre las cinco fases (~25 s), ?ollama=off arranca y ya,
+// ?ollama=nomodel solo baja el modelo. ?ai=error hace que el primer intento falle al 40 % de la descarga de Ollama.
+const OLL_MODE = qs.get('ollama');
+const OLL_MODELS = ['qwen2.5:7b', 'qwen3:1.7b', 'llama3.2:3b', 'gemma2:2b'];
+const aiSim = {
+  installed: OLL_MODE !== 'none', running: !['off', 'none'].includes(OLL_MODE),
+  models: OLL_MODE === 'none' ? [] : OLL_MODE === 'nomodel' ? ['llama3.2:3b'] : OLL_MODELS.slice(),
+  busy: false, cancel: false, last: null, attempts: 0,
+};
+const aiEmit = (phase, received = 0, total = 0, message = '') => { aiSim.last = { phase, received, total, message }; emit('ai://progress', aiSim.last); };
+const aiStatus = () => {
+  const s = settings, modelReady = aiSim.running && [s.ollamaModel, s.aiPolishModel].every((m) => aiSim.models.includes(m));
+  const l = aiSim.last;
+  return {
+    running: aiSim.busy, phase: aiSim.busy || (l && ['error', 'cancelled'].includes(l.phase) && !modelReady) ? l.phase : modelReady ? 'done' : 'idle',
+    received: aiSim.busy && l ? l.received : 0, total: aiSim.busy && l ? l.total : 0, message: l && !modelReady ? l.message : '',
+    ollamaInstalled: aiSim.installed, ollamaRunning: aiSim.running, model: 'qwen3:1.7b', modelReady, ready: modelReady,
+  };
+};
+async function aiSteps(phase, label, totalBytes, ms, failAt = 1) {
+  const n = Math.max(1, Math.round(ms / 150));
+  for (let i = 1; i <= n; i++) {
+    await delay(150);
+    if (aiSim.cancel && phase !== 'install-ollama') throw 'cancel';
+    const f = i / n;
+    if (f > failAt) throw 'No se pudo conectar para descargar Ollama: sin conexión';
+    aiEmit(phase, Math.floor(totalBytes * f), totalBytes, label);
+  }
+}
+async function fakeAiSetup() {
+  if (aiSim.busy) return;
+  aiSim.busy = true; aiSim.cancel = false;
+  const failAt = qs.get('ai') === 'error' && aiSim.attempts++ === 0 ? 0.4 : 1;
+  try {
+    aiEmit('check', 0, 0, 'Comprobando…'); await delay(500);
+    if (!aiSim.running) {
+      if (!aiSim.installed) {
+        await aiSteps('download-ollama', 'Descargando Ollama…', 1578217944, 9000, failAt);
+        aiEmit('install-ollama', 0, 0, 'Comprobando la firma del instalador…'); await delay(1500);
+        aiEmit('install-ollama', 0, 0, 'Instalando Ollama…'); await delay(5000);
+        aiSim.installed = true;
+        if (aiSim.cancel) throw 'cancel';
+      }
+      aiEmit('start-ollama', 0, 0, 'Arrancando Ollama…'); await delay(2500);
+      aiSim.running = true;
+    }
+    if (![settings.ollamaModel, settings.aiPolishModel].every((m) => aiSim.models.includes(m))) {
+      aiEmit('pull-model', 0, 0, 'Preparando la descarga del modelo…'); await delay(700);
+      await aiSteps('pull-model', 'Descargando el modelo…', 1429000000, 8000);
+      aiEmit('pull-model', 1429000000, 1429000000, 'Verificando el modelo…'); await delay(900);
+      if (!aiSim.models.includes('qwen3:1.7b')) aiSim.models.push('qwen3:1.7b');
+      settings = { ...settings, ollamaModel: 'qwen3:1.7b', aiPolishModel: 'qwen3:1.7b' };
+      emit('settings://changed', settings);
+    }
+    aiSim.busy = false;
+    aiEmit('done', 0, 0, 'IA local lista');
+  } catch (e) {
+    aiSim.busy = false;
+    if (e === 'cancel') aiEmit('cancelled', 0, 0, 'Cancelado'); else aiEmit('error', 0, 0, String(e));
+  }
+}
+
+// Actualizaciones (Contrato v7). ?update=available (aviso ya visible) · ?update=event (llega a los 3 s, como un
+// aviso en segundo plano) · ?update=error (la primera instalación falla al 40 %) · ?update=offline («Buscar ahora» falla).
+// Sin parámetro, o con ?update=none, «Buscar ahora» responde «Estás al día».
+const UPD = qs.get('update');
+const UPD_SIZE = 10_905_600;
+const UPD_INFO = {
+  version: '2.0.2', tag: 'v2.0.2', title: 'Pronto 2.0.2', pageUrl: 'https://github.com/AlfonsoGo/pronto/releases/tag/v2.0.2',
+  publishedAt: new Date(NOW.getTime() - 3600e3).toISOString(), assetName: 'Pronto-Setup-2.0.2.exe', size: UPD_SIZE,
+  notes: 'Novedades\n• Actualizaciones automáticas: Pronto avisa cuando hay una versión nueva y se actualiza con un botón.\n• Estilo: el cambio de tono se aplica al pulsar.\n• <b>Arreglo</b>: la bandeja ya no se queda con el aviso <script>alert(1)</script> tras cerrar el hub.\n\nLo demás sigue igual.',
+};
+let upd = {
+  currentVersion: '2.0.1', state: UPD === 'available' || UPD === 'error' ? 'available' : 'idle', checking: false, checkedAt: null,
+  info: UPD === 'available' || UPD === 'error' ? clone(UPD_INFO) : null, doneBytes: 0, totalBytes: UPD_SIZE, percent: 0, error: null,
+};
+if (UPD === 'event') setTimeout(() => { upd = { ...upd, state: 'available', info: clone(UPD_INFO) }; emit('update://available', UPD_INFO); }, 3000);
+let updAttempts = 0;
+function updProgress(state, done, error) {
+  const p = { state, doneBytes: done, totalBytes: UPD_SIZE, percent: Math.floor((done * 100) / UPD_SIZE) };
+  if (error) p.error = error;
+  upd = { ...upd, state, doneBytes: done, percent: p.percent, error: error || null };
+  emit('update://progress', p);
+}
+function fakeUpdateInstall() {
+  if (['downloading', 'verifying', 'installing'].includes(upd.state)) return;
+  const failAt = UPD === 'error' && updAttempts++ === 0 ? 0.4 : 1;
+  let done = 0;
+  updProgress('downloading', 0);
+  const tick = setInterval(() => {
+    done = Math.min(UPD_SIZE, done + UPD_SIZE / 40);
+    if (failAt < 1 && done >= UPD_SIZE * failAt) {
+      clearInterval(tick);
+      updProgress('error', Math.floor(done), 'El instalador descargado está dañado (el SHA-256 no coincide con el de GitHub). Inténtalo de nuevo.');
+      return;
+    }
+    if (done < UPD_SIZE) { updProgress('downloading', Math.floor(done)); return; }
+    clearInterval(tick);
+    updProgress('verifying', UPD_SIZE);
+    setTimeout(() => {
+      updProgress('installing', UPD_SIZE);
+      console.info('[mock] Pronto se cerraría ahora; el ayudante instalaría en silencio y lo volvería a abrir.');
+    }, 900);
+  }, 150);
 }
 
 let streakBase = 6;
@@ -575,6 +684,19 @@ const commands = {
   engine_status: () => clone(engine),
   model_status: () => clone(model),
   model_download_start: () => { fakeModelDownload(); },
+  update_status: () => clone(upd),
+  update_check: async () => {
+    await delay(700);
+    if (UPD === 'offline') throw 'No se pudo conectar con GitHub: sin conexión';
+    const found = UPD === 'available' || UPD === 'event' || UPD === 'error';
+    if (!['downloading', 'verifying', 'installing'].includes(upd.state)) {
+      upd = { ...upd, state: found ? 'available' : 'upToDate', info: found ? clone(UPD_INFO) : null };
+    }
+    upd = { ...upd, checkedAt: new Date().toISOString() };
+    if (found) emit('update://available', UPD_INFO);
+    return clone(upd);
+  },
+  update_install: () => { fakeUpdateInstall(); },
   retry_history: ({ id }) => {
     const h = history.find((x) => x.id === id); if (!h) throw 'No existe';
     if (!h.hasAudio) throw 'El audio ya no está disponible.';
@@ -592,9 +714,10 @@ const commands = {
   },
   delete_transform: ({ id }) => { transforms = transforms.filter((t) => t.id !== id || t.builtin); },
   run_transform: () => {},
-  ollama_status: () => (qs.get('ollama') === 'off'
-    ? { reachable: false, models: [] }
-    : { reachable: true, models: ['qwen2.5:7b', 'qwen3:1.7b', 'llama3.2:3b', 'gemma2:2b'] }),
+  ollama_status: () => (aiSim.running ? { reachable: true, models: aiSim.models.slice() } : { reachable: false, models: [] }),
+  ai_setup_start: () => { fakeAiSetup(); },
+  ai_setup_cancel: () => { aiSim.cancel = true; },
+  ai_setup_status: () => aiStatus(),
   get_insights: () => insights(),
   reset_shortcuts: () => { settings = { ...settings, ...clone(DEFAULT_SHORTCUTS) }; emit('settings://changed', settings); return clone(settings); },
   capture_hotkey: () => captureHotkey(),

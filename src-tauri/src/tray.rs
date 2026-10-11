@@ -4,6 +4,7 @@ use crate::audio;
 use crate::commands::apply_settings;
 use crate::models::Settings;
 use crate::state::{self, AppState};
+use crate::updater;
 use std::sync::Arc;
 use std::time::Duration;
 use tauri::menu::{CheckMenuItem, ContextMenu, Menu, MenuItem, PredefinedMenuItem, Submenu};
@@ -14,6 +15,7 @@ const TRAY_ID: &str = "main";
 const ID_OPEN: &str = "open";
 const ID_PASTE: &str = "paste";
 const ID_QUIT: &str = "quit";
+const ID_UPDATE: &str = "update";
 const ID_MIC_DEFAULT: &str = "mic-default";
 const MIC_PREFIX: &str = "mic:";
 
@@ -34,6 +36,11 @@ fn labels(lang: &str) -> Labels {
     } else {
         Labels { open: "Abrir Pronto", paste: "Pegar última transcripción", mic: "Micrófono", default_mic: "Predeterminado del sistema", quit: "Salir", hide_hour: "Ocultar 1 hora", settings: "Configuración", history: "Historial de transcripciones" }
     }
+}
+
+/// Texto del elemento «Actualizar a X.Y.Z» del menú de la bandeja.
+fn update_label(lang: &str, version: &str) -> String {
+    if lang == "en" { format!("Update to {version}") } else { format!("Actualizar a {version}") }
 }
 
 pub fn show_hub(app: &AppHandle) {
@@ -148,6 +155,11 @@ fn build_menu(app: &AppHandle, s: &Settings) -> tauri::Result<Menu<Wry>> {
     }
 
     let quit = MenuItem::with_id(app, ID_QUIT, l.quit, true, None::<&str>)?;
+    // Con una versión nueva pendiente, «Actualizar a X.Y.Z» va arriba del todo.
+    if let Some(v) = updater::pending_version() {
+        let upd = MenuItem::with_id(app, ID_UPDATE, update_label(&s.app_language, &v), true, None::<&str>)?;
+        return Menu::with_items(app, &[&upd, &PredefinedMenuItem::separator(app)?, &open, &paste, &mic_menu, &PredefinedMenuItem::separator(app)?, &quit]);
+    }
     Menu::with_items(app, &[&open, &paste, &mic_menu, &PredefinedMenuItem::separator(app)?, &quit])
 }
 
@@ -177,6 +189,11 @@ pub fn rebuild(app: &AppHandle, s: &Settings) {
             if let Err(e) = tray.set_menu(Some(menu)) {
                 eprintln!("[tray] no se pudo actualizar el menú: {e}");
             }
+            let tip = match updater::pending_version() {
+                Some(v) => format!("Pronto · {}", update_label(&s.app_language, &v).to_lowercase()),
+                None => "Pronto".to_string(),
+            };
+            let _ = tray.set_tooltip(Some(tip));
         }
         (_, Err(e)) => eprintln!("[tray] no se pudo construir el menú: {e}"),
         _ => {}
@@ -195,6 +212,13 @@ fn on_menu(app: &AppHandle, id: &str) {
             }
         }
         ID_QUIT => app.exit(0),
+        // Abre el hub para que se vea el avance; los errores también llegan por `update://progress`.
+        ID_UPDATE => {
+            show_hub(app);
+            if let Err(e) = updater::install(app, &st) {
+                eprintln!("[tray] {e}");
+            }
+        }
         ID_MIC_DEFAULT => set_mic(app, &st, None),
         other => {
             if let Some(name) = other.strip_prefix(MIC_PREFIX) {

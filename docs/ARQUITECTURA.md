@@ -314,7 +314,7 @@ Settings += {
   cleanupLevel: "none"|"light"|"medium"|"high",   // [spec §2.3 Auto cleanup], defecto "medium"
   pressEnterCommand: boolean,        // Experimental: «pulsa enter» al final → Enter
   ollamaUrl: string,                 // http://localhost:11434
-  ollamaModel: string,               // qwen2.5:7b
+  ollamaModel: string,               // qwen3:1.7b (antes qwen2.5:7b; ver Contrato v6)
   keepAudioDays: number,             // 14
   theme: "dark"|"light",             // defecto "dark" (Pronto)
   flowBarHiddenUntil: string|null,
@@ -768,7 +768,7 @@ ModelStatus = {
 
 ## IA local opcional (solo interfaz, sin cambios de contrato)
 
-Ollama + `qwen2.5:7b` es opcional y puede ir más lento según el PC. Aviso «IA local opcional (Ollama)» en
+Ollama + `qwen3:1.7b` (desde el Contrato v6; antes `qwen2.5:7b`) es opcional y puede ir más lento según el PC. Aviso «IA local opcional (Ollama)» en
 Configuración › Notas de reunión y › Experimental; nota bajo «Pulir cada dictado con IA» al activarlo; aviso
 discreto «Sin Ollama las reuniones se transcriben, pero no se resumen…» en la página y en los ajustes de Notas
 de reunión cuando `ollama_status` dice `reachable: false` (en el mock, `?ollama=off`).
@@ -780,3 +780,261 @@ tipos y la descarga completa contra un servidor HTTP local (verificación, renom
 descargado, hash erróneo, 404 y descarga corta). `#[ignore]` real:
 `PRONTO_DL_DIR=<carpeta> PRONTO_WAV="a.wav;b.wav" cargo test descarga_real -- --ignored --nocapture`
 descarga de verdad, vuelve a calcular los hashes, carga el modelo y transcribe los WAV.
+
+
+---
+
+# Contrato v6 · IA local
+
+Pedido por Txonso el 11-oct-2026: Ollama (pulido, Transforms, resúmenes y «Pregunta sobre tus reuniones») deja de
+pedir `ollama serve` / `ollama pull` a mano. Un botón, **«Activar IA local»**, lo instala todo. Módulo nuevo
+`aisetup.rs`; la interfaz está en `ui/hub/ai.js` y se usa desde Configuración, Estilo, Transforms y Notas de reunión.
+
+## Qué hace
+
+1. **Siempre el modelo pequeño `qwen3:1.7b`** (`models::DEFAULT_AI_MODEL`) para `ollamaModel` y `aiPolishModel`.
+   Migración en `Db::load_settings`: un valor guardado que sea **exactamente** `qwen2.5:7b` (el antiguo de fábrica,
+   `LEGACY_AI_MODEL`) pasa a `qwen3:1.7b`; cualquier otro, elegido a mano, se respeta. Qwen3 «razona»: todas las
+   llamadas a Ollama (`ollama::generate_with`: Polish, Transforms, resúmenes y Ask) envían `"think": false` y además
+   `ollama::strip_think` quita cualquier `<think>…</think>` de la respuesta (también un `<think>` sin cerrar o un
+   `</think>` suelto).
+2. **`ai_setup_start`** lanza un único hilo (`pronto-aisetup`), cancelable, que hace solo lo que falte:
+   - **Detección**: Ollama «está» si responde en `ollamaUrl`, o existe `%LOCALAPPDATA%\Programs\Ollama\ollama.exe`
+     (o `%ProgramFiles%\Ollama`), o hay `ollama.exe` en el `PATH`.
+   - **Ollama no instalado** → `download-ollama`: `https://ollama.com/download/OllamaSetup.exe` (redirige a GitHub,
+     ≈ 1,5 GB) a `%TEMP%\Pronto-IA-<pid>-<ms>\OllamaSetup.exe` con progreso en bytes → `install-ollama`:
+     **verifica la firma Authenticode** (`WinVerifyTrust`, sin interfaz ni comprobación de revocación para no colgarse sin
+     red) y que el firmante empiece por «Ollama» (el oficial es «Ollama Inc.»); si no, aborta con
+     «No se instaló Ollama: la firma del instalador descargado no es válida (…)» y no lo ejecuta. Después lo ejecuta
+     con `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-` (Inno Setup; `PrivilegesRequired=lowest`, instala en
+     `%LOCALAPPDATA%\Programs\Ollama`, **sin administrador**), espera a que termine (máx. 20 min, código de salida 0) y
+     borra la carpeta temporal. Un tamaño < 50 MB o una descarga corta (Content-Length) se rechazan.
+   - **Ollama instalado pero sin responder** (o recién instalado) → `start-ollama`: lanza `ollama app.exe` (la
+     aplicación de bandeja que arranca el servidor, como tras una instalación normal) o, si no existe, `ollama.exe
+     serve`, oculto (`CREATE_NO_WINDOW`), y espera hasta 90 s a `GET /api/tags`. Recién instalado el propio instalador
+     lo lanza (su `[Run]` no lleva `skipifsilent`), así que se le dan 8 s antes de abrirlo nosotros. Si `ollamaUrl` no
+     es local (`localhost`, `127.0.0.1`, `::1`) y no responde, **no** instala ni arranca nada: error claro.
+   - **Falta el modelo** (alguno de `ollamaModel` / `aiPolishModel` no está en Ollama y tampoco `qwen3:1.7b`) →
+     `pull-model`: `POST {ollamaUrl}/api/pull {"model":"qwen3:1.7b","stream":true}` leyendo el NDJSON; el progreso es la
+     suma de `completed`/`total` de todas las capas (cada `digest`).
+   - **Al terminar** (`done`): los ajustes de modelo que **no** estén en Ollama pasan a `qwen3:1.7b` (uno elegido a mano
+     y descargado se respeta); `aiPolish` («Pulir cada dictado») **no se toca**.
+3. **`ai_setup_cancel`** levanta una bandera: corta la descarga y el `pull` (Ollama conserva lo bajado y reanuda), y la
+   espera del arranque. Un instalador ya en marcha **no se mata** (a medias dejaría Ollama roto): termina y el proceso
+   se detiene justo después (`cancelled`). La interfaz desactiva «Cancelar» durante `install-ollama`.
+4. Una sola activación a la vez (si ya hay una, `ai_setup_start` no hace nada).
+
+## Comandos
+
+| comando | args | devuelve |
+|---|---|---|
+| `ai_setup_start` | — | `()` (vuelve enseguida; el avance llega por `ai://progress`) |
+| `ai_setup_cancel` | — | `()` |
+| `ai_setup_status` | — | `AiSetupStatus` (asíncrono: consulta a Ollama, hasta 3 s si no responde) |
+
+## Eventos
+
+| evento | payload |
+|---|---|
+| `ai://progress` | `AiProgress` (~7 por segundo mientras baja; uno por cambio de fase; uno final) |
+| `settings://changed` | (existente) al final, si hubo que dejar `qwen3:1.7b` en los ajustes |
+
+## Tipos
+
+```ts
+AiProgress = {
+  phase: "check" | "download-ollama" | "install-ollama" | "start-ollama" | "pull-model" | "done" | "error" | "cancelled",
+  received: number, total: number,   // bytes de la fase (descarga de Ollama o del modelo); 0 = no aplica / no se sabe
+  message: string                    // texto en español; en "error", el motivo
+}
+AiSetupStatus = {
+  running: boolean,
+  phase: string, received: number, total: number, message: string,   // la en curso, o la última si fue error/cancelled
+  ollamaInstalled: boolean, ollamaRunning: boolean,
+  model: "qwen3:1.7b", modelReady: boolean,   // los modelos de los ajustes están en Ollama
+  ready: boolean                              // Ollama responde y modelReady
+}
+```
+
+`check` y `cancelled` son añadidos respecto al pedido original (`check` = comprobando antes de saber qué falta).
+
+## Interfaz
+
+- `ui/hub/ai.js`: estado compartido (`ai`), `aiSlot('card' | 'cta')` para las plantillas, `aiMount(root, onKind)` para
+  conectar la página (clics, progreso en vivo sin repintar la barra, `onKind` al pasar entre `idle · running · error ·
+  ready`) y `aiActivate()`.
+- **Aviso previo** (diálogo del hub): instalará Ollama (≈ 1,5 GB) y `qwen3:1.7b` (≈ 1,4 GB), usa CPU/RAM y en equipos
+  modestos puede ir más lento, sirve para pulir, corregir y resumir, y el dictado normal no lo necesita. «Instalar» /
+  «Ahora no». Si Ollama ya está, el texto solo habla del modelo.
+- **Tarjeta** (`card`): Configuración › Experimental y › Notas de reunión (bajo el aviso «IA local opcional»). Estados:
+  activar · pasos y barra con «X de Y MB · N %» (indeterminada al instalar/arrancar) · «IA local lista» · error con
+  «Reintentar».
+- **En línea** (`cta`): dentro de los avisos «Ollama no responde» / «Falta el modelo» de Estilo › Limpieza (tarjeta de
+  pulido) y de Transforms, y bajo la nota «Sin Ollama…» de Notas de reunión. Al llegar a `ready` la página vuelve a
+  comprobar `ollama_status` y el aviso desaparece.
+- Mock (`ui/shared/mock.js`): `?ollama=none` recorre las cinco fases (~25 s), `?ollama=off` arranca y ya,
+  `?ollama=nomodel` solo baja el modelo, `?ai=error` hace fallar el primer intento al 40 % de la descarga de Ollama.
+
+## Pruebas
+
+Unitarias sin red (`cargo test aisetup`): nombres de modelo y modelos faltantes, direcciones locales, banderas del
+instalador, JSON del evento, suma de capas del `pull`, `pull` y descarga contra un servidor HTTP local (NDJSON,
+error, corte, cancelación, 404), firma (fichero sin firmar y binario de Microsoft rechazados; el `ollama.exe`
+instalado, si existe, aceptado), espera de la API. `#[ignore]` reales:
+`cargo test firma_real -- --ignored --nocapture` (descarga el instalador a `%TEMP%`, valida la firma de «Ollama
+Inc.» y comprueba que un byte añadido la invalida; **no lo ejecuta**), `cargo test arranque_real -- --ignored`
+(`ollama serve` oculto en otro puerto, `OLLAMA_HOST=127.0.0.1:11999`) y `PRONTO_PULL_MODEL=all-minilm cargo test
+pull_real -- --ignored --nocapture` (baja un modelo diminuto al Ollama local y lo borra con `DELETE /api/delete`).
+
+---
+
+# Contrato v7 · actualizaciones
+
+Pedido por Txonso el 11-oct-2026: Pronto 2 busca solo las versiones nuevas en GitHub y se actualiza con un
+botón. Módulo nuevo `updater.rs` (+ `update_helper.ps1`, el ayudante, incrustado con `include_str!`); la UI es
+`ui/hub/update.js` (tarjeta) y un grupo «Actualizaciones» en Configuración › Sistema. **No se toca
+`installer/`**: el instalador ya trae `skipifsilent` en su `[Run]`, `CloseApplications=no` y espera él mismo
+hasta ~20 s a que `pronto.exe` quede libre.
+
+## Qué hace
+
+1. **Buscar** (hilo `pronto-updater`): 20 s después de arrancar y luego cada 4 h, solo si `Settings.autoUpdate`
+   (por defecto `true`; los ajustes viejos cargan con el valor por defecto). `GET
+   https://api.github.com/repos/AlfonsoGo/pronto/releases/latest` con `User-Agent: Pronto/<versión>
+   (actualizador; +https://github.com/AlfonsoGo/pronto)`, `Accept: application/vnd.github+json` y
+   `X-GitHub-Api-Version`. Sin red o error HTTP: se calla y reintenta a los 30 min; con 403/429 (límite de la
+   API, 60/h por IP sin token) a la hora. Nada bloquea el arranque. «Buscar ahora» (`update_check`) sí enseña
+   el error al usuario.
+2. **Comparar**: el tag (`v2.0.2`) y `CARGO_PKG_VERSION` se leen como semver (`v`/`V` opcional, partes que
+   faltan = 0, `+build` ignorado, prerelease menor que la estable). Se ignoran borradores, `prerelease: true`,
+   tags con `-rc.1` y releases sin ningún `.exe` (tratadas como «al día»). Se toma el **primer asset `.exe`**.
+3. **Avisar**: evento `update://available`, tarjeta en el hub y elemento «Actualizar a X.Y.Z» (arriba) más
+   tooltip «Pronto · actualizar a X.Y.Z» en la bandeja. No hay notificación nativa de Windows (haría falta un
+   plugin y su permiso; con el hub cerrado el aviso es el menú y el tooltip de la bandeja). Pulsar el
+   elemento abre el hub e inicia la instalación.
+4. **Instalar** (`update_install`, solo si hay una versión pendiente y nadie dicta ni hay una reunión
+   grabándose): hilo `pronto-update`:
+   - descarga a `%TEMP%\pronto-update\<asset>.part` (solo URLs `https` de `github.com`, `*.github.com` o
+     `*.githubusercontent.com`), emite `update://progress` (~8/s);
+   - **verifica** tamaño == `size` de la API, cabecera `MZ` y SHA-256 == `digest: "sha256:..."` de la API
+     (si la API no lo da, solo tamaño y firma `MZ`); si falla, borra el `.part` y sale un error en español;
+   - escribe `pronto_update.ps1` y lanza **PowerShell oculto** (`CREATE_NO_WINDOW`, sin parpadeo) con
+     `-ProntoPid -Installer -Exe -WorkDir`; espera hasta 10 s a que el ayudante cree `helper-started`; si no
+     llega, **no cierra Pronto** y avisa del error;
+   - tras 0,6 s llama a `app.exit(0)` (cierre limpio).
+5. **El ayudante** (`update_helper.ps1`, log en `%TEMP%\pronto-update\update.log`): espera a que muera el PID de
+   Pronto (máx. 45 s, luego lo fuerza) → ejecuta el instalador con `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+   /NOCANCEL /SP- /LOG=setup.log` y espera → escribe `result.txt` (`ok` / `error <código>`) → **abre
+   `pronto.exe` una sola vez** (la ruta del exe que estaba en marcha; si ya hay un `pronto.exe` en esa ruta, no
+   abre otro; hasta 8 intentos hasta verlo vivo). Se reabre también si el instalador falló (la versión de
+   siempre sigue en su sitio), para no dejar al usuario sin Pronto. Se reabre sin `--hidden`: tras actualizar
+   se ve el hub.
+6. **Sin doble apertura**: el `[Run] ... postinstall skipifsilent` del `.iss` no abre la app en modo silencioso,
+   así que la única reapertura es la del ayudante. Con Pronto 1 → 2 pasa igual: el ayudante de Pronto 1 reabre
+   su `pronto.exe` y el instalador no lo hace.
+7. **Si falla la instalación** silenciosa: el siguiente arranque (el de la versión vieja que reabrió el
+   ayudante) lee y borra `result.txt`; si dice `error N`, el estado lleva `error` («La última actualización no se
+   pudo instalar (código N)… Sigues con tu versión de siempre…») y la tarjeta enseña el aviso rojo con
+   «Reintentar». Diagnóstico: `%TEMP%\pronto-update\update.log` y `setup.log` (el de Inno).
+8. Limpieza: al arrancar se borran los `.exe`/`.part` de `%TEMP%\pronto-update` (el log y el resultado se
+   conservan).
+9. **Compilaciones de desarrollo** (`...\target\debug|release\pronto.exe`): buscan y avisan, pero no se
+   autoinstalan (instalarían la versión de GitHub en la carpeta del instalador y reabrirían un exe que no se ha
+   tocado). `PRONTO_UPDATE_ALLOW_DEV=1` lo permite (solo pruebas).
+
+## Comandos
+
+| comando | args | devuelve |
+|---|---|---|
+| `update_status` | — | `UpdateStatus` (sin red) |
+| `update_check` | — | `UpdateStatus`; `Err(String)` si no hay conexión / GitHub limita / respuesta ilegible |
+| `update_install` | — | `()` (vuelve enseguida; avance por `update://progress`). `Err` en los rechazos previos (dictando, reunión en curso, sin versión pendiente, compilación de desarrollo); el mismo texto sale por `update://progress` con `state: "error"` |
+
+## Eventos
+
+| evento | payload |
+|---|---|
+| `update://available` | `UpdateInfo` (cada consulta que encuentra una versión nueva; la UI lo deduplica por versión) |
+| `update://progress` | `UpdateProgress` (~8/s al descargar; uno al verificar; `installing` justo antes de cerrar; `error`) |
+
+## Tipos
+
+```ts
+Settings.autoUpdate: boolean            // «Buscar actualizaciones automáticamente», por defecto true
+UpdateInfo = {
+  version: string,                      // «2.0.2»
+  tag: string,                          // «v2.0.2»
+  title: string,                        // nombre de la release (o «Pronto 2.0.2»)
+  notes: string,                        // cuerpo markdown -> texto plano (sin HTML ni enlaces, «•» en las listas, sin
+                                        // la línea de descarga ni el título «Pronto X.Y.Z»), ≤ 600 caracteres y 12
+                                        // líneas, con «…» si se recortó. La UI lo escapa igualmente.
+  pageUrl: string, publishedAt: string | null,
+  assetName: string, size: number       // el instalador; su URL y su hash no salen del backend
+}
+UpdateStatus = {
+  currentVersion: string,               // versión efectiva de este ejecutable
+  state: "idle" | "upToDate" | "available" | "downloading" | "verifying" | "installing" | "error",
+  checking: boolean, checkedAt: string | null,   // ISO de la última consulta que funcionó
+  info: UpdateInfo | null,              // la versión pendiente (con state available/downloading/…/error)
+  doneBytes: number, totalBytes: number, percent: number,
+  error: string | null                  // fallo de descarga/verificación/instalación o de la última instalación
+}
+UpdateProgress = {
+  state: "downloading" | "verifying" | "installing" | "error",
+  doneBytes: number, totalBytes: number, percent: number, error?: string
+}
+```
+
+`state: "error"` solo significa «la instalación de `info` falló»; un fallo de una consulta no lo cambia. «Más
+tarde» no existe en el backend: la UI recuerda `dismissed = <versión>` en memoria (`state.update.dismissed`) y no
+vuelve a mostrar la tarjeta de esa versión hasta el próximo arranque (o hasta pulsar «Buscar ahora»); el
+elemento de la bandeja y el botón de Configuración siguen disponibles.
+
+## Interfaz
+
+- **Tarjeta** (`ui/hub/update.js`, hueco `#upd-slot` en `<main>`, encima de la página: visible en todas las
+  páginas; estilo de «Falta el modelo de voz», `.upd` en `hub.css`): «Pronto X.Y.Z disponible» · «Tienes la
+  A.B.C. Se instala sola y Pronto se vuelve a abrir.» · notas (3 líneas, «Ver novedades» las despliega) ·
+  «Actualizar ahora» / «Más tarde». Descargando: barra con «N %» y «X de Y MB»; verificando: «Verificando la
+  descarga…»; instalando: «Instalando… Pronto se cierra un momento y se abre solo.» (sin botones). Con error:
+  aviso rojo y «Reintentar».
+- **Configuración › Sistema › Actualizaciones**: interruptor «Buscar actualizaciones automáticamente», fila
+  «Versión instalada: X» con el estado («Estás al día · comprobado a las 18:04», «Hay una versión nueva: X»…),
+  «Actualizar ahora» (si la hay) y «Buscar ahora». El pie del modal usa la versión real del ejecutable.
+- Estado compartido: `state.update` (`api.js`: `refreshUpdate`, `checkUpdate`, `installUpdate`,
+  `dismissUpdate`, `applyUpdateAvailable`, `applyUpdateProgress`).
+- Mock (`ui/shared/mock.js`): `?update=available` (tarjeta ya visible; «Actualizar ahora» simula descarga,
+  verificación e instalación), `?update=event` (aparece a los 3 s), `?update=error` (la primera instalación falla
+  al 40 % con un error de SHA-256), `?update=offline` («Buscar ahora» falla), sin parámetro o `?update=none`
+  («Buscar ahora» responde «Estás al día»). Las notas de ejemplo llevan `<b>` y `<script>` para comprobar el
+  escapado.
+
+## Variables de entorno (solo pruebas, sin efecto si no se definen)
+
+| variable | efecto |
+|---|---|
+| `PRONTO_FAKE_VERSION=2.0.0` | este ejecutable se comporta como esa versión (para ver el aviso contra la release real) |
+| `PRONTO_UPDATE_API=http://127.0.0.1:PUERTO/latest` | otra URL para `releases/latest`; con ella también se aceptan descargas `http://127.0.0.1` |
+| `PRONTO_UPDATE_ALLOW_DEV=1` | permite autoinstalar desde `target\debug\|release` |
+
+## Pruebas
+
+Unitarias sin red (`cargo test updater`): lectura y comparación de versiones (semver, prereleases, `2.0.10 >
+2.0.9`), JSON de la release real de v2.0.1 (primer `.exe`, digest, tamaño), borradores/prereleases/sin `.exe`,
+JSON roto, nombres de asset peligrosos, URLs permitidas, notas en texto plano y recorte, `digest` (mayúsculas,
+algoritmos ajenos, longitud), verificación de tamaño/`MZ`/SHA-256, descarga y consulta contra un servidor HTTP
+local (verifica, borra el `.part` si el hash o el tamaño fallan, 404, sin conexión, User-Agent propio), JSON de los
+tipos, `result.txt` del ayudante y un solo punto de reapertura en el script. `#[ignore]` reales:
+`cargo test ultima_release_real -- --ignored --nocapture` (consulta a GitHub, solo lectura),
+`PRONTO_DL_DIR=<carpeta> cargo test instalador_real_de_github -- --ignored --nocapture` (baja y verifica el
+`.exe` de la última release) y `ayudante_real` (ejecuta el ayudante con un instalador de prueba:
+`PRONTO_E2E_INSTALLER` = un `ProntoTest-Setup-*.exe` compilado con `/DTestSandbox=1 /DTestDir=<carpeta>`,
+`PRONTO_E2E_EXE` = el `pronto.exe` de esa carpeta (`<TestDir>\default-dir`), `PRONTO_E2E_DIR` = carpeta de
+trabajo, y opcionalmente `PRONTO_E2E_PID` = proceso al que esperar).
+
+Extremo a extremo (hecho a mano el 11-oct-2026, sin tocar la instalación real): una copia de `pronto.exe` en la
+carpeta de una instalación de pruebas (`/DTestSandbox=1`), con `PRONTO_UPDATE_API` apuntando a un servidor local
+que imita `releases/latest` (tag `v9.9.9`, digest y tamaño reales del instalador de pruebas),
+`WEBVIEW2_USER_DATA_FOLDER` propio y `--remote-debugging-port` para llamar a `update_check` y `update_install`
+desde la webview del hub. Resultado: aviso en la tarjeta, descarga verificada, cierre limpio, instalación silenciosa
+sobre la carpeta de pruebas, y un único `pronto.exe` reabierto.
