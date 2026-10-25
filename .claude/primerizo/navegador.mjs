@@ -55,6 +55,13 @@ function soloLocal(url) {
   let u;
   try { u = new URL(url); } catch { salir(`URL no válida: ${url}`); }
   if (!['localhost', '127.0.0.1', '[::1]'].includes(u.hostname)) salir('Solo se permite la app en localhost.');
+  // Solo páginas de la app: ni su código (.js, .css, .json…) ni otros servicios del PC (rompedor 25-oct, BAJA 1).
+  let ruta = u.pathname;
+  try { ruta = decodeURIComponent(ruta); } catch { salir('Ruta no válida.'); }
+  const ext = (ruta.match(/\.([a-z0-9]+)$/i) || [])[1];
+  if (ext && !['html', 'htm'].includes(ext.toLowerCase())) salir('Solo se pueden abrir pantallas de la app, no sus ficheros.');
+  // Solo el puerto de la app (de fábrica el del hub de pruebas, 4173): ni Ollama ni el depurador del navegador (rompedor 25-oct-b, BAJA 3).
+  if (u.port !== (process.env.PRIMERIZO_PUERTO_APP || '4173')) salir('Solo se permite la app en su puerto.');
   return u.href;
 }
 

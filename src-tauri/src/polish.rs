@@ -249,7 +249,7 @@ fn polish_text(url: &str, model: &str, original: &str, timeout: Duration) -> Res
         num_predict: None,
     };
     let raw = ollama::generate_with_ex(url, model, &build_prompt(original), &opts)?;
-    accept(original, &raw).ok_or_else(|| ollama::GenError { message: "respuesta descartada por longitud o vacía".to_string(), unreachable: false })
+    accept(original, &raw).ok_or_else(|| ollama::GenError::alive("respuesta descartada por longitud o vacía"))
 }
 
 /// Carga el modelo del pulido en segundo plano si «Pulir cada dictado» está encendido. Se llama al
@@ -272,8 +272,12 @@ pub fn warm_up(settings: &Settings) {
     }
     let (url, model) = (settings.ollama_url.clone(), model.clone());
     let launched = std::thread::Builder::new().name("pronto-ollama-arranque".into()).spawn(move || {
-        if crate::aisetup::ensure_running(&url, START_TIMEOUT) {
-            ollama::circuit::reset(&url);
+        // El cortacircuitos solo se reinicia si Pronto acaba de lanzar Ollama: si ya respondía y la generación se atasca, su
+        // pausa creciente tiene que seguir protegiendo cada dictado (seguridad 25-oct, M1; rompedor 23-oct, carga MEDIA 2).
+        if let Some(launched) = crate::aisetup::ensure_running_ex(&url, START_TIMEOUT) {
+            if launched {
+                ollama::circuit::reset(&url);
+            }
             ollama::preload_async(&url, &model, KEEP_ALIVE);
         }
         STARTING.store(false, Ordering::SeqCst);
@@ -331,7 +335,9 @@ pub fn apply(settings: &Settings, text: &str, tone: Tone, snippets_expanded: usi
         }
         Err(e) => {
             crate::errlog::error("polish", format!("sin pulir: {}", e.message));
-            if e.unreachable {
+            if e.stalled {
+                ollama::circuit::trip_stalled(&settings.ollama_url, model);
+            } else if e.unreachable {
                 ollama::circuit::trip(&settings.ollama_url);
             }
             Outcome { text: text.to_string(), polished: false, failed: true }

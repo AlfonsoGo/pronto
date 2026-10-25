@@ -878,3 +878,4 @@ mark{background:rgba(139,92,246,.35);color:inherit;border-radius:4px;padding:0 2
 .nv-spot{position:relative;z-index:1;box-shadow:0 0 0 3px var(--violeta),0 0 0 8px rgba(139,92,246,.28)!important;animation:nv-spot 1.4s var(--curva) 3}
 @keyframes nv-spot{50%{box-shadow:0 0 0 3px var(--violeta),0 0 0 14px rgba(139,92,246,0)}}
 @media (prefers-reduced-motion:reduce){.nv-spot{animation:none}}
+.nv-modal-v{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--acento-t);margin:6px 0 -6px}

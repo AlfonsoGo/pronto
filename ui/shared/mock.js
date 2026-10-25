@@ -816,7 +816,7 @@ const commands = {
     settings = { ...settings, ...clone(s) }; emit('settings://changed', settings);
   },
   open_error_log: () => {},
-  app_info: () => ({ version: '2.3.0', test: new URLSearchParams(location.search).has('pruebas') }),
+  app_info: () => ({ version: '2.3.1', test: new URLSearchParams(location.search).has('pruebas') }),
   list_mics: () => ['Micrófono (Realtek High Definition Audio)', 'Auriculares (Jabra Evolve2 65)', 'Entrada de línea (USB Audio Device)'],
   get_stats: () => stats(),
   list_history: ({ query, limit = 50, offset = 0 }) => {

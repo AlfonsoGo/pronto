@@ -45,6 +45,8 @@ Sin Pronto: teclear, o Wispr Flow (de pago, en la nube).
 | FR-14 | Palabras más falladas | `features/fr-14-rd.md` | planificado |
 | FR-15 | Ajuste nocturno y motor recomendado para tu PC | `features/fr-15-rd.md` | planificado |
 | FR-16 | Compromisos por interlocutor | `features/fr-16-rd.md` | planificado |
+| FR-17 | Panel claro para quien no sabe de informática | `features/fr-17-rd.md` | observado |
+| FR-18 | Novedades dentro de la app | `features/fr-18-rd.md` | observado |
 
 ## 5. Datos que se recogen (y ninguno más)
 ### 5.1 En el PC, en `%APPDATA%\Pronto2\` (`observado`, `src-tauri/src/db.rs`)
@@ -65,6 +67,7 @@ Sin Pronto: teclear, o Wispr Flow (de pago, en la nube).
 5. Cambiar de motor: descargar Whisper → el botón pasa a «Usar» sin salir de la pestaña → usarlo.
 6. Abrir una reunión terminada → ver resumen, tareas y quién dijo qué → preguntar sobre ella.
 7. Aviso de actualización disponible → «Actualizar».
+8. Tras actualizar: «Lo nuevo» sale una vez → «Probar» lleva a la función → «Novedades» del menú abre la lista (`e2e/caminos/8-novedades.spec.mjs`).
 
 ## 7. Preguntas abiertas
 - [x] Visto bueno de Txonso a este PRD y a los objetivos G1/G2 (23-oct-2026).

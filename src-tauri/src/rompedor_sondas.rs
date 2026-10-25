@@ -1712,3 +1712,627 @@ fn rompedor_hub_buscar_reunion_por_titulo_con_tildes() {
     println!("ROMPEDOR_HUB titulo:{tabla}");
     assert!(fallan.is_empty(), "el historial encuentra y el buscador de reuniones no: {fallan:?} ({tabla})");
 }
+
+// ------------------------------------------------------------ 25-oct: retención con el teclado y Ollama vivo pero atascado
+
+/// Lo que manda el hub (sonda `e2e/rompedor/novedades.mjs`, Configuración → Privacidad y datos) cuando alguien recorre
+/// «Conservar el historial» con el teclado desde «Siempre» hasta «30 días»: un `save_settings` por flecha (7 y luego 30).
+/// Cada uno pasa por `apply_settings` → `purge_history(new)` (commands.rs:75-79). ¿Se conserva lo que «30 días» guardaría?
+#[test]
+#[ignore = "rompedor 25-oct: el backend purga con el valor que recibe; la protección está en el hub (settings.js confirmRetention, tests/retencion.test.mjs). Se deja como documentación del riesgo"]
+fn rompedor_retencion_flecha_intermedia_borra() {
+    let siembra = |dir: &Tmp, name: &str| {
+        let db = Db::open_at(&dir.join(name)).unwrap();
+        for (i, dias) in [0, 10, 20, 100].iter().enumerate() {
+            let h = add(&db, &format!("dictado {i} de hace {dias} días")).unwrap();
+            db.conn.lock().execute("UPDATE history SET created_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now', ?1) WHERE id = ?2", params![format!("-{dias} days"), h.id]).unwrap();
+        }
+        db
+    };
+    let t = Tmp::new("retencion");
+    let directo = siembra(&t, "directo.db");
+    directo.purge_history(30).unwrap();
+    let flechas = siembra(&t, "flechas.db");
+    flechas.purge_history(7).unwrap(); // 1.ª flecha: «7 días»
+    flechas.purge_history(30).unwrap(); // 2.ª flecha: «30 días» (lo que el usuario quería)
+    let (a, b) = (n_hist(&directo), n_hist(&flechas));
+    println!("ROMPEDOR retención: elegir 30 días con el ratón deja {a} dictados; llegar a 30 con dos flechas deja {b}");
+    assert_eq!(a, b, "las flechas borraron {} dictados que «30 días» conservaba", a - b);
+}
+
+/// Ollama vivo (`/api/tags` contesta al momento) con la generación atascada (modelo colgado, GPU ocupada): el caso que
+/// el arreglo M1 de seguridad 25-oct dice cubrir («la pausa creciente sigue protegiendo cada dictado»). El vigilante del
+/// cortacircuitos (`ollama.rs` `circuit::watch`) pregunta a `/api/tags` a los 5 s y, como contesta, lo cierra.
+#[test]
+fn rompedor_pulido_ollama_vivo_generacion_atascada() {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", l.local_addr().unwrap());
+    let generate = Arc::new(AtomicUsize::new(0));
+    let g = generate.clone();
+    std::thread::spawn(move || {
+        for s in l.incoming().flatten() {
+            let g = g.clone();
+            std::thread::spawn(move || {
+                let mut s = s;
+                let mut buf = [0u8; 4096];
+                let n = s.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                if req.starts_with("GET /api/tags") {
+                    let body = r#"{"models":[{"name":"qwen3:1.7b"}]}"#;
+                    let _ = s.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes());
+                } else {
+                    g.fetch_add(1, Ordering::SeqCst);
+                    std::thread::sleep(Duration::from_secs(30)); // generación atascada: no contesta
+                }
+            });
+        }
+    });
+    let s = Settings { ai_polish: true, ollama_url: url.clone(), ai_polish_timeout_ms: 1000, ..Settings::default() };
+    let texto = "hola que tal estas hoy te escribo para quedar mañana por la tarde";
+    let dictar = || {
+        let t = Instant::now();
+        let o = crate::polish::apply(&s, texto, Tone::Casual, 0);
+        assert!(o.failed && o.text == texto);
+        t.elapsed().as_millis() as u64
+    };
+    let mut v = Vec::new();
+    for ronda in 0..4 {
+        v.push(("seguido", dictar()));
+        v.push(("al momento", dictar()));
+        if ronda < 3 {
+            std::thread::sleep(Duration::from_millis(5600)); // un dictado cada ~6 s
+        }
+    }
+    println!("ROMPEDOR pulido vivo-atascado (plazo 1000 ms): {v:?} · /api/generate recibidas: {}", generate.load(Ordering::SeqCst));
+    let pagan: Vec<_> = v.iter().skip(2).filter(|(_, ms)| *ms >= 900).collect();
+    assert!(pagan.is_empty(), "tras el primer fallo, {} dictados más esperaron el plazo entero: {v:?}", pagan.len());
+}
+
+// ------------------------------------------------------------ 25-oct (b): el cortacircuitos «atascado» tras un dictado largo
+
+/// Arreglo de MEDIA 1 (25-oct): tras un plazo vencido (`GenError::stalled`) el vigilante ya no cierra el circuito porque
+/// `/api/tags` conteste; espera a que venza la ventana (60 s, 2 min, 4 min… 10 min). Pero el plazo del pulido es fijo
+/// (`ai_polish_timeout_ms`, 6 s de fábrica) y no crece con el texto: un dictado LARGO que Ollama tarda más de 6 s en pulir
+/// (Ollama sano) abre el circuito «atascado» y los dictados cortos de después salen sin pulir —y con aviso de fallo— durante
+/// toda la ventana, aunque Ollama los pule al momento. Antes del arreglo el vigilante lo cerraba a los 5 s.
+#[test]
+fn rompedor_pulido_largo_abre_circuito_atascado_para_los_cortos() {
+    let _serie = crate::ollama::circuit::lock_for_tests();
+    crate::ollama::circuit::set_timing_for_tests(Duration::from_secs(60), Duration::from_millis(5000));
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", l.local_addr().unwrap());
+    let cortos = Arc::new(AtomicUsize::new(0));
+    let c = cortos.clone();
+    std::thread::spawn(move || {
+        for s in l.incoming().flatten() {
+            let c = c.clone();
+            std::thread::spawn(move || {
+                let mut s = s;
+                let mut got = Vec::new();
+                let mut buf = [0u8; 65536];
+                loop {
+                    let n = s.read(&mut buf).unwrap_or(0);
+                    got.extend_from_slice(&buf[..n]);
+                    let t = String::from_utf8_lossy(&got).to_string();
+                    if let Some(i) = t.find("\r\n\r\n") {
+                        let len = t.lines().find_map(|x| x.to_ascii_lowercase().strip_prefix("content-length:").and_then(|v| v.trim().parse::<usize>().ok())).unwrap_or(0);
+                        if got.len() >= i + 4 + len { break; }
+                    }
+                    if n == 0 { break; }
+                }
+                let req = String::from_utf8_lossy(&got).to_string();
+                let body = if req.starts_with("GET /api/tags") {
+                    r#"{"models":[{"name":"qwen3:1.7b"}]}"#.to_string()
+                } else if req.contains("dictadolargo") {
+                    std::thread::sleep(Duration::from_millis(2500)); // un texto largo: Ollama sano tarda más que el plazo
+                    serde_json::json!({ "response": "x" }).to_string()
+                } else {
+                    c.fetch_add(1, Ordering::SeqCst);
+                    serde_json::json!({ "response": "Hola, ¿qué tal estás hoy? Te escribo para quedar mañana por la tarde." }).to_string()
+                };
+                let _ = s.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes());
+            });
+        }
+    });
+    let s = Settings { ai_polish: true, ollama_url: url.clone(), ai_polish_timeout_ms: 1000, ..Settings::default() };
+    let corto = "hola que tal estas hoy te escribo para quedar mañana por la tarde";
+    let largo = format!("dictadolargo {}", "y entonces le dije que el proyecto iba bien ".repeat(40));
+    let antes = crate::polish::apply(&s, corto, Tone::Casual, 0);
+    let l1 = crate::polish::apply(&s, &largo, Tone::Casual, 0);
+    std::thread::sleep(Duration::from_millis(6500)); // pasa el primer sondeo del vigilante (5 s): Ollama ya contesta
+    let mut despues = Vec::new();
+    for _ in 0..3 {
+        let o = crate::polish::apply(&s, corto, Tone::Casual, 0);
+        despues.push((o.polished, o.failed));
+        std::thread::sleep(Duration::from_millis(2000));
+    }
+    println!(
+        "ROMPEDOR largo→cortos: corto antes polished={} · largo failed={} · cortos a +6,5/8,5/10,5 s (polished, failed)={despues:?} · /api/generate cortas recibidas={}",
+        antes.polished, l1.failed, cortos.load(Ordering::SeqCst)
+    );
+    assert!(antes.polished && l1.failed);
+    assert!(despues.iter().all(|(p, _)| *p), "Ollama pule los cortos al momento, pero salen sin pulir y con aviso de fallo: {despues:?}");
+}
+
+// ------------------------------------------------------------ 25-oct (c): el vigilante que prueba con una generación mínima
+
+/// Ollama falso «lento pero vivo»: `/api/tags` y la generación mínima del vigilante (`"prompt":"ok"`) contestan al
+/// momento; cualquier otra generación tarda `lenta_ms` (modelo medio en CPU, GPU ocupada por un juego: 1 token sale
+/// rápido, 60 tardan). Devuelve la URL, los instantes de cada sondeo del vigilante y cuántos pulidos llegaron.
+fn ollama_lento(lenta_ms: u64) -> (String, Arc<parking_lot::Mutex<Vec<Instant>>>, Arc<AtomicUsize>) {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", l.local_addr().unwrap());
+    let sondeos = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let pulidos = Arc::new(AtomicUsize::new(0));
+    let (so, pu) = (sondeos.clone(), pulidos.clone());
+    std::thread::spawn(move || {
+        for s in l.incoming().flatten() {
+            let (so, pu) = (so.clone(), pu.clone());
+            std::thread::spawn(move || {
+                let mut s = s;
+                let mut got = Vec::new();
+                let mut buf = [0u8; 65536];
+                loop {
+                    let n = s.read(&mut buf).unwrap_or(0);
+                    got.extend_from_slice(&buf[..n]);
+                    let t = String::from_utf8_lossy(&got).to_string();
+                    if let Some(i) = t.find("\r\n\r\n") {
+                        let len = t.lines().find_map(|x| x.to_ascii_lowercase().strip_prefix("content-length:").and_then(|v| v.trim().parse::<usize>().ok())).unwrap_or(0);
+                        if got.len() >= i + 4 + len { break; }
+                    }
+                    if n == 0 { break; }
+                }
+                let req = String::from_utf8_lossy(&got).to_string();
+                let body = if req.starts_with("GET /api/tags") {
+                    r#"{"models":[{"name":"qwen3:1.7b"}]}"#.to_string()
+                } else if req.contains(r#""prompt":"ok""#) {
+                    so.lock().push(Instant::now());
+                    serde_json::json!({ "response": "o" }).to_string()
+                } else {
+                    pu.fetch_add(1, Ordering::SeqCst);
+                    std::thread::sleep(Duration::from_millis(lenta_ms));
+                    serde_json::json!({ "response": "Hola, ¿qué tal estás hoy? Te escribo para quedar mañana por la tarde." }).to_string()
+                };
+                let _ = s.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes());
+            });
+        }
+    });
+    (url, sondeos, pulidos)
+}
+
+/// MEDIA 1 del 25-oct («Ollama vivo con la generación atascada») otra vez, por el arreglo de BAJA 2 del 25-oct-b: el
+/// sondeo del vigilante es de 1 token, y un Ollama lento-pero-vivo lo contesta al momento → `generate_with_ex` llama a
+/// `circuit::reset`, que BORRA la entrada (también `fails`). La ventana nunca crece y cada dictado que llega más de 5 s
+/// después del anterior vuelve a esperar el plazo entero del pulido (6 s de fábrica) para pegar sin pulir.
+#[test]
+fn rompedor_c_ollama_lento_cada_dictado_paga_el_plazo() {
+    let _serie = crate::ollama::circuit::lock_for_tests();
+    crate::ollama::circuit::set_timing_for_tests(Duration::from_secs(60), Duration::from_millis(5000));
+    let (url, sondeos, pulidos) = ollama_lento(2500);
+    let s = Settings { ai_polish: true, ollama_url: url.clone(), ai_polish_timeout_ms: 1000, ..Settings::default() };
+    let texto = "hola que tal estas hoy te escribo para quedar mañana por la tarde";
+    let mut v = Vec::new();
+    for i in 0..6 {
+        let t = Instant::now();
+        let o = crate::polish::apply(&s, texto, Tone::Casual, 0);
+        v.push((t.elapsed().as_millis() as u64, o.polished, o.failed));
+        if i < 5 {
+            std::thread::sleep(Duration::from_millis(6000)); // un dictado cada ~6-7 s
+        }
+    }
+    crate::ollama::circuit::reset(&url);
+    let pagan = v.iter().skip(1).filter(|(ms, _, _)| *ms >= 900).count();
+    println!(
+        "ROMPEDOR c lento-vivo (plazo 1000 ms, pulido real 2500 ms, sondeo 1 token al momento): (ms, polished, failed)={v:?} · pulidos que llegaron a Ollama={} · sondeos del vigilante={} · dictados tras el 1.º que esperaron el plazo={pagan}/5",
+        pulidos.load(Ordering::SeqCst),
+        sondeos.lock().len()
+    );
+    crate::ollama::circuit::set_timing_for_tests(Duration::from_secs(60), Duration::from_secs(5));
+    assert!(pagan <= 1, "tras el primer plazo vencido, {pagan} de 5 dictados volvieron a esperar el plazo entero: {v:?}");
+}
+
+/// `reset` borra la entrada mientras el vigilante duerme; si un dictado vuelve a abrir el circuito antes de que se
+/// despierte, `trip_with` crea una entrada con `probing: false` y lanza OTRO vigilante, y el viejo sigue (la encuentra y
+/// no ha vencido). Con un plazo de pulido menor que la cadencia del vigilante, los vigilantes se acumulan y cada uno manda
+/// su generación mínima. Escala: cadencia 1,5 s y plazo 500 ms (de fábrica 5 s y 6 s; el plazo se puede bajar hasta 500 ms).
+#[test]
+fn rompedor_c_vigilantes_se_acumulan() {
+    let _serie = crate::ollama::circuit::lock_for_tests();
+    crate::ollama::circuit::set_timing_for_tests(Duration::from_secs(60), Duration::from_millis(1500));
+    let (url, sondeos, pulidos) = ollama_lento(2000);
+    let s = Settings { ai_polish: true, ollama_url: url.clone(), ai_polish_timeout_ms: 500, ..Settings::default() };
+    let texto = "hola que tal estas hoy te escribo para quedar mañana por la tarde";
+    let t0 = Instant::now();
+    let mut dictados = 0;
+    while t0.elapsed() < Duration::from_secs(30) {
+        let _ = crate::polish::apply(&s, texto, Tone::Casual, 0);
+        dictados += 1;
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    // Se deja de dictar: los vigilantes vivos siguen sondeando hasta que vence su ventana o ven la entrada vacía.
+    let corte = Instant::now();
+    std::thread::sleep(Duration::from_secs(6));
+    let so = sondeos.lock().clone();
+    let por_5s: Vec<usize> = (0..6u64).map(|k| so.iter().filter(|t| { let d = t.duration_since(t0).as_secs(); d >= k * 5 && d < (k + 1) * 5 }).count()).collect();
+    let tras_parar = so.iter().filter(|t| **t > corte).count();
+    let max_un_vigilante = 4; // 5 s / 1,5 s
+    println!(
+        "ROMPEDOR c vigilantes: {dictados} dictados en 30 s · pulidos a Ollama={} · sondeos por tramo de 5 s={por_5s:?} (un solo vigilante: ≤{max_un_vigilante}) · sondeos en los 6 s tras dejar de dictar={tras_parar}",
+        pulidos.load(Ordering::SeqCst)
+    );
+    crate::ollama::circuit::reset(&url);
+    crate::ollama::circuit::set_timing_for_tests(Duration::from_secs(60), Duration::from_secs(5));
+    assert!(por_5s.iter().all(|n| *n <= max_un_vigilante), "más sondeos de los que hace un vigilante: {por_5s:?}");
+}
+
+/// Ollama saturado de verdad (también el sondeo de 1 token se queda esperando): ¿cuántas peticiones encadena el vigilante
+/// mientras el circuito está abierto, y las apila? Antes del arreglo, ninguna (esperaba a que venciera la ventana).
+#[test]
+#[ignore = "medida de 23 s que toca los tiempos globales del cortacircuitos: correr con --ignored --test-threads=1"]
+fn rompedor_c_ollama_saturado_sondeos_encadenados() {
+    let _serie = crate::ollama::circuit::lock_for_tests();
+    crate::ollama::circuit::set_timing_for_tests(Duration::from_secs(20), Duration::from_millis(1000));
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}", l.local_addr().unwrap());
+    let llegadas = Arc::new(parking_lot::Mutex::new(Vec::<Instant>::new()));
+    let abiertas = Arc::new(AtomicUsize::new(0));
+    let max_abiertas = Arc::new(AtomicUsize::new(0));
+    let (ll, ab, mx) = (llegadas.clone(), abiertas.clone(), max_abiertas.clone());
+    std::thread::spawn(move || {
+        for s in l.incoming().flatten() {
+            let (ll, ab, mx) = (ll.clone(), ab.clone(), mx.clone());
+            std::thread::spawn(move || {
+                let mut s = s;
+                let mut buf = [0u8; 65536];
+                let n = s.read(&mut buf).unwrap_or(0);
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                if req.starts_with("GET /api/tags") {
+                    let body = r#"{"models":[{"name":"qwen3:1.7b"}]}"#;
+                    let _ = s.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes());
+                    return;
+                }
+                ll.lock().push(Instant::now());
+                let now = ab.fetch_add(1, Ordering::SeqCst) + 1;
+                mx.fetch_max(now, Ordering::SeqCst);
+                // Atascado: espera hasta que el cliente cuelgue (read devuelve 0 o error) o 30 s.
+                let _ = s.set_read_timeout(Some(Duration::from_millis(200)));
+                let t = Instant::now();
+                while t.elapsed() < Duration::from_secs(30) {
+                    match s.read(&mut buf) {
+                        Ok(0) => break,
+                        Ok(_) => {}
+                        Err(e) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => {}
+                        Err(_) => break,
+                    }
+                }
+                ab.fetch_sub(1, Ordering::SeqCst);
+            });
+        }
+    });
+    let s = Settings { ai_polish: true, ollama_url: url.clone(), ai_polish_timeout_ms: 1000, ..Settings::default() };
+    let texto = "hola que tal estas hoy te escribo para quedar mañana por la tarde";
+    let t0 = Instant::now();
+    let o = crate::polish::apply(&s, texto, Tone::Casual, 0);
+    assert!(o.failed);
+    std::thread::sleep(Duration::from_secs(22)); // la ventana de 20 s entera, sin dictar
+    let ll = llegadas.lock().clone();
+    let marcas: Vec<u64> = ll.iter().map(|t| t.duration_since(t0).as_millis() as u64).collect();
+    println!(
+        "ROMPEDOR c saturado (ventana 20 s, cadencia 1 s, sondeo con plazo 3 s): /api/generate recibidas={} en ms={marcas:?} · máx. abiertas a la vez={} · abiertas al final={}",
+        ll.len(),
+        max_abiertas.load(Ordering::SeqCst),
+        abiertas.load(Ordering::SeqCst)
+    );
+    crate::ollama::circuit::reset(&url);
+    crate::ollama::circuit::set_timing_for_tests(Duration::from_secs(60), Duration::from_secs(5));
+    assert!(max_abiertas.load(Ordering::SeqCst) <= 2, "el vigilante apiló peticiones en un Ollama saturado");
+}
+
+/// `ollama_host_env` (seguridad 25-oct-b): solo `[::1]` literal escucha en IPv6; cualquier otra dirección que
+/// `is_loopback_url` acepta (127.0.0.2, `[::ffff:127.0.0.1]`) lanza Ollama en 127.0.0.1. ¿Contesta ahí un servidor que
+/// escucha en 127.0.0.1? (En Windows, 127.0.0.2 no llega a un socket atado a 127.0.0.1.)
+#[test]
+#[ignore = "documenta Windows: 127.0.0.2 no llega a un socket en 127.0.0.1. Desde el 25-oct-c Pronto lanza Ollama en la IPv4 de loopback guardada (aisetup.rs ollama_host_env); [::ffff:…] sigue sin casar"]
+fn rompedor_c_loopback_raro_no_llega_al_ollama_lanzado() {
+    let l = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = l.local_addr().unwrap().port();
+    std::thread::spawn(move || for s in l.incoming().flatten() { drop(s); });
+    let mut r = Vec::new();
+    for host in ["127.0.0.1", "127.0.0.2", "[::ffff:127.0.0.1]", "[::1]"] {
+        let a: std::net::SocketAddr = format!("{host}:{port}").parse().unwrap();
+        let t = Instant::now();
+        let ok = TcpStream::connect_timeout(&a, Duration::from_secs(3)).is_ok();
+        r.push((host, ok, t.elapsed().as_millis() as u64));
+    }
+    println!("ROMPEDOR c loopback raro (servidor en 127.0.0.1:{port}): (host, conecta, ms)={r:?}");
+    assert!(r.iter().all(|(h, ok, _)| *ok || *h == "[::1]"), "una dirección que se guarda como loopback no llega al Ollama que Pronto lanza en 127.0.0.1: {r:?}");
+}
+
+/// La URL de fábrica es `http://localhost:11434` y Pronto lanza Ollama con `OLLAMA_HOST=127.0.0.1:…`. Si Windows
+/// resolviera `localhost` a `::1` primero, cada petición pagaría ~2 s de conexión rechazada en `::1` (medido arriba).
+#[test]
+fn rompedor_c_localhost_contra_ollama_en_127() {
+    use std::net::ToSocketAddrs;
+    let port = servir(|mut s, _req| {
+        let body = r#"{"models":[]}"#;
+        let _ = s.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes());
+    });
+    let orden: Vec<String> = ("localhost", port).to_socket_addrs().map(|a| a.map(|x| x.to_string()).collect()).unwrap_or_default();
+    let mut ms = Vec::new();
+    for _ in 0..3 {
+        let t = Instant::now();
+        let ok = crate::ollama::status(&format!("http://localhost:{port}")).reachable;
+        ms.push((ok, t.elapsed().as_millis() as u64));
+    }
+    println!("ROMPEDOR c localhost→127: orden de resolución={orden:?} · status(localhost) (reachable, ms)={ms:?}");
+    assert!(ms.iter().all(|(ok, m)| *ok && *m < 500));
+}
+
+// ------------------------------------------------------------ 25-oct (d): lo que pueden romper los arreglos de 3597264
+
+/// Ollama falso con lentitud regulable: `/api/tags` y la sonda del vigilante (`"prompt":"ok"`) al momento; un prompt que
+/// empieza por `NOTAS` (una generación de las notas de reunión o un Transform) tarda 200 ms; el resto (pulido) tarda
+/// `lento` ms. Si `port` no es 0 se ata a ese puerto. Devuelve URL, instantes de las sondas y pulidos recibidos.
+fn ollama_regulable(port: u16, lento: Arc<AtomicU64>) -> (String, Arc<parking_lot::Mutex<Vec<Instant>>>, Arc<AtomicUsize>) {
+    let l = TcpListener::bind(("127.0.0.1", port)).unwrap();
+    let url = format!("http://{}", l.local_addr().unwrap());
+    let sondeos = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let pulidos = Arc::new(AtomicUsize::new(0));
+    let (so, pu) = (sondeos.clone(), pulidos.clone());
+    std::thread::spawn(move || {
+        for s in l.incoming().flatten() {
+            let (so, pu, lento) = (so.clone(), pu.clone(), lento.clone());
+            std::thread::spawn(move || {
+                let mut s = s;
+                let mut got = Vec::new();
+                let mut buf = [0u8; 65536];
+                loop {
+                    let n = s.read(&mut buf).unwrap_or(0);
+                    got.extend_from_slice(&buf[..n]);
+                    let t = String::from_utf8_lossy(&got).to_string();
+                    if let Some(i) = t.find("\r\n\r\n") {
+                        let len = t.lines().find_map(|x| x.to_ascii_lowercase().strip_prefix("content-length:").and_then(|v| v.trim().parse::<usize>().ok())).unwrap_or(0);
+                        if got.len() >= i + 4 + len { break; }
+                    }
+                    if n == 0 { break; }
+                }
+                let req = String::from_utf8_lossy(&got).to_string();
+                let body = if req.starts_with("GET /api/tags") {
+                    r#"{"models":[{"name":"qwen3:1.7b"}]}"#.to_string()
+                } else if req.contains(r#""prompt":"ok""#) {
+                    so.lock().push(Instant::now());
+                    serde_json::json!({ "response": "o" }).to_string()
+                } else if req.contains(r#""prompt":"NOTAS"#) {
+                    std::thread::sleep(Duration::from_millis(200));
+                    serde_json::json!({ "response": "{\"ok\":true}" }).to_string()
+                } else {
+                    pu.fetch_add(1, Ordering::SeqCst);
+                    std::thread::sleep(Duration::from_millis(lento.load(Ordering::SeqCst)));
+                    serde_json::json!({ "response": "Hola, ¿qué tal estás hoy? Te escribo para quedar mañana por la tarde." }).to_string()
+                };
+                let _ = s.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).as_bytes());
+            });
+        }
+    });
+    (url, sondeos, pulidos)
+}
+
+const TEXTO_D: &str = "hola que tal estas hoy te escribo para quedar mañana por la tarde";
+
+/// Ollama lento que se recupera DE VERDAD tras dos plazos vencidos (fails = 2): el vigilante ya no sondea, así que el
+/// pulido vuelve cuando vence la ventana entera (2 x base; de fábrica 2 min, luego 4, 8, 10). ¿Vuelve, y borra los fallos?
+/// Escala: base 3 s, cadencia 300 ms, plazo de pulido 500 ms.
+#[test]
+fn rompedor_d_recuperado_tras_dos_plazos() {
+    let _serie = crate::ollama::circuit::lock_for_tests();
+    crate::ollama::circuit::set_timing_for_tests(Duration::from_secs(3), Duration::from_millis(300));
+    let lento = Arc::new(AtomicU64::new(1500));
+    let (url, sondeos, _) = ollama_regulable(0, lento.clone());
+    let s = Settings { ai_polish: true, ollama_url: url.clone(), ai_polish_timeout_ms: 500, ..Settings::default() };
+    assert!(crate::polish::apply(&s, TEXTO_D, Tone::Casual, 0).failed); // fails = 1
+    std::thread::sleep(Duration::from_millis(800));
+    let cerrado_por_sonda = !crate::ollama::circuit::is_open(&url);
+    assert!(crate::polish::apply(&s, TEXTO_D, Tone::Casual, 0).failed); // fails = 2, ventana 6 s
+    let t_fallo2 = Instant::now();
+    lento.store(0, Ordering::SeqCst); // Ollama se recupera
+    let mut primero_pulido = None;
+    while t_fallo2.elapsed() < Duration::from_secs(12) {
+        let o = crate::polish::apply(&s, TEXTO_D, Tone::Casual, 0);
+        if o.polished && !o.failed {
+            primero_pulido = Some(t_fallo2.elapsed().as_millis() as u64);
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    // ¿Borró los fallos? Un plazo vencido ahora debe dar fails = 1 (la sonda lo reabre en ~300 ms).
+    lento.store(1500, Ordering::SeqCst);
+    assert!(crate::polish::apply(&s, TEXTO_D, Tone::Casual, 0).failed);
+    std::thread::sleep(Duration::from_millis(800));
+    let reabre = !crate::ollama::circuit::is_open(&url);
+    println!(
+        "ROMPEDOR d recuperado: cerrado por la sonda tras el 1.er plazo={cerrado_por_sonda} · ms desde el 2.º plazo hasta el primer pulido con Ollama ya rápido={primero_pulido:?} (ventana 6000) · sondas={} · tras el pulido bueno, un plazo vuelve a ser el 1.º (la sonda reabre)={reabre}",
+        sondeos.lock().len()
+    );
+    crate::ollama::circuit::reset(&url);
+    crate::ollama::circuit::set_timing_for_tests(Duration::from_secs(60), Duration::from_secs(5));
+    assert!(cerrado_por_sonda && reabre);
+    assert!(primero_pulido.is_some_and(|ms| (5500..7500).contains(&ms)), "{primero_pulido:?}");
+}
+
+/// Ollama reiniciado por fuera (su actualizador, el usuario): un dictado con Ollama parado abre el circuito por conexión
+/// (fails = 1), el vigilante lo cierra por `/api/tags` y el primer pulido tras el arranque vence su plazo porque el modelo
+/// se está cargando (fails = 2). Es el PRIMER plazo vencido, pero `e.fails >= 2` cuenta también el fallo de conexión: la
+/// sonda de 1 token no se intenta nunca y el pulido queda fuera la ventana entera, aunque el modelo ya esté cargado.
+/// Control: el mismo primer plazo vencido sin el fallo de conexión previo se cierra en una cadencia.
+#[test]
+fn rompedor_d_reinicio_de_ollama_salta_la_sonda() {
+    let _serie = crate::ollama::circuit::lock_for_tests();
+    crate::ollama::circuit::set_timing_for_tests(Duration::from_secs(3), Duration::from_millis(300));
+    // Control: Ollama arriba, el primer plazo vencido: la sonda cierra.
+    let lento_c = Arc::new(AtomicU64::new(1500));
+    let (url_c, sondeos_c, _) = ollama_regulable(0, lento_c.clone());
+    let sc = Settings { ai_polish: true, ollama_url: url_c.clone(), ai_polish_timeout_ms: 500, ..Settings::default() };
+    assert!(crate::polish::apply(&sc, TEXTO_D, Tone::Casual, 0).failed);
+    lento_c.store(0, Ordering::SeqCst);
+    let t = Instant::now();
+    while crate::ollama::circuit::is_open(&url_c) && t.elapsed() < Duration::from_secs(8) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let control_ms = t.elapsed().as_millis() as u64;
+    crate::ollama::circuit::reset(&url_c);
+
+    // Reinicio: puerto reservado y cerrado.
+    let port = { let l = TcpListener::bind("127.0.0.1:0").unwrap(); l.local_addr().unwrap().port() };
+    let url = format!("http://127.0.0.1:{port}");
+    let s = Settings { ai_polish: true, ollama_url: url.clone(), ai_polish_timeout_ms: 500, ..Settings::default() };
+    let o1 = crate::polish::apply(&s, TEXTO_D, Tone::Casual, 0); // conexión rechazada: trip (fails = 1)
+    let lento = Arc::new(AtomicU64::new(1500)); // arranca en frío: el modelo tarda en cargar
+    let (_, sondeos, _) = ollama_regulable(port, lento.clone());
+    let t = Instant::now();
+    while crate::ollama::circuit::is_open(&url) && t.elapsed() < Duration::from_secs(5) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let cerrado_por_tags = !crate::ollama::circuit::is_open(&url);
+    let o2 = crate::polish::apply(&s, TEXTO_D, Tone::Casual, 0); // carga en frío: plazo vencido (fails = 2)
+    lento.store(0, Ordering::SeqCst); // el modelo ya está cargado
+    let t = Instant::now();
+    while crate::ollama::circuit::is_open(&url) && t.elapsed() < Duration::from_secs(10) {
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let reinicio_ms = t.elapsed().as_millis() as u64;
+    println!(
+        "ROMPEDOR d reinicio: control (1.er plazo, Ollama ya arriba) cerrado en {control_ms} ms con {} sondas · reinicio: dictado con Ollama parado failed={} · cerrado por /api/tags={cerrado_por_tags} · 1.er pulido tras arrancar failed={} · cerrado en {reinicio_ms} ms con {} sondas (ventana 6000 ms)",
+        sondeos_c.lock().len(), o1.failed, o2.failed, sondeos.lock().len()
+    );
+    crate::ollama::circuit::reset(&url);
+    crate::ollama::circuit::set_timing_for_tests(Duration::from_secs(60), Duration::from_secs(5));
+    assert!(o1.failed && cerrado_por_tags && o2.failed);
+    assert!(reinicio_ms < 2 * control_ms + 600, "el primer plazo vencido tras un reinicio no se sondea: {reinicio_ms} ms frente a {control_ms} ms");
+}
+
+/// Las demás generaciones (notas de reunión, su precarga de 1 token, Transform) usan `generate_with`, o sea
+/// `generate_core(..., reset = true)`: cada una que sale BORRA el circuito del pulido (los fallos también). Con la fase de
+/// notas en marcha (Ollama ocupado: el pulido vence su plazo) y una generación de notas que sale cada ~2 s, ¿cuántos
+/// dictados vuelven a esperar el plazo entero? Lo que el arreglo de MEDIA 1 quitó a la sonda lo siguen haciendo ellas.
+#[test]
+fn rompedor_d_notas_en_marcha_borran_el_circuito() {
+    let _serie = crate::ollama::circuit::lock_for_tests();
+    crate::ollama::circuit::set_timing_for_tests(Duration::from_secs(60), Duration::from_millis(5000));
+    let lento = Arc::new(AtomicU64::new(2500));
+    let (url, _, pulidos) = ollama_regulable(0, lento);
+    let s = Settings { ai_polish: true, ollama_url: url.clone(), ai_polish_timeout_ms: 1000, ..Settings::default() };
+    let parar = Arc::new(AtomicBool::new(false));
+    let notas_ok = Arc::new(AtomicUsize::new(0));
+    let hilo = {
+        let (url, parar, notas_ok) = (url.clone(), parar.clone(), notas_ok.clone());
+        std::thread::spawn(move || {
+            while !parar.load(Ordering::SeqCst) {
+                let opts = crate::ollama::GenOpts { json: true, num_ctx: None, timeout: Duration::from_secs(30), keep_alive: None, temperature: Some(0.0), num_predict: None };
+                if crate::ollama::generate_with(&url, "notas", "NOTAS: turnos de la reunión", &opts).is_ok() {
+                    notas_ok.fetch_add(1, Ordering::SeqCst);
+                }
+                std::thread::sleep(Duration::from_millis(2000));
+            }
+        })
+    };
+    let mut v = Vec::new();
+    for _ in 0..6 {
+        let t = Instant::now();
+        let o = crate::polish::apply(&s, TEXTO_D, Tone::Casual, 0);
+        v.push((t.elapsed().as_millis() as u64, o.failed));
+        std::thread::sleep(Duration::from_millis(2500));
+    }
+    parar.store(true, Ordering::SeqCst);
+    let _ = hilo.join();
+    let pagan = v.iter().skip(1).filter(|(ms, _)| *ms >= 900).count();
+    println!(
+        "ROMPEDOR d notas en marcha (plazo 1000 ms, pulido 2500 ms, notas que salen cada ~2,2 s): (ms, failed)={v:?} · generaciones de notas que salieron={} · pulidos que llegaron a Ollama={} · dictados tras el 1.º que esperaron el plazo={pagan}/5",
+        notas_ok.load(Ordering::SeqCst), pulidos.load(Ordering::SeqCst)
+    );
+    crate::ollama::circuit::reset(&url);
+    crate::ollama::circuit::set_timing_for_tests(Duration::from_secs(60), Duration::from_secs(5));
+    assert!(pagan <= 1, "con las notas en marcha, {pagan} de 5 dictados volvieron a esperar el plazo entero: {v:?}");
+}
+
+// ------------------------------------------------------------ 25-oct (e): confirmación de 2eafd10 (generate_with ya no resetea; stalls)
+
+/// Reunión larga en marcha (notas que salen cada ~1 s por `generate_with`) y el pulido ya atascado dos veces (stalls = 2,
+/// sin sonda). Ollama se recupera justo tras el 2.º plazo. ¿Vuelve el pulido al acabar ESA ventana (2 x base = 6 s), o las
+/// notas lo dejan fuera más? Y al volver, ¿un pulido bueno borra los fallos (el siguiente plazo vuelve a ser el 1.º)?
+#[test]
+fn rompedor_e_reunion_larga_no_alarga_la_ventana() {
+    let _serie = crate::ollama::circuit::lock_for_tests();
+    crate::ollama::circuit::set_timing_for_tests(Duration::from_secs(3), Duration::from_millis(300));
+    let lento = Arc::new(AtomicU64::new(1500));
+    let (url, sondeos, _) = ollama_regulable(0, lento.clone());
+    let s = Settings { ai_polish: true, ollama_url: url.clone(), ai_polish_timeout_ms: 500, ..Settings::default() };
+    let parar = Arc::new(AtomicBool::new(false));
+    let notas_ok = Arc::new(AtomicUsize::new(0));
+    let hilo = {
+        let (url, parar, notas_ok) = (url.clone(), parar.clone(), notas_ok.clone());
+        std::thread::spawn(move || {
+            while !parar.load(Ordering::SeqCst) {
+                let opts = crate::ollama::GenOpts { json: true, num_ctx: None, timeout: Duration::from_secs(30), keep_alive: None, temperature: Some(0.0), num_predict: None };
+                if crate::ollama::generate_with(&url, "notas", "NOTAS: turnos", &opts).is_ok() {
+                    notas_ok.fetch_add(1, Ordering::SeqCst);
+                }
+                std::thread::sleep(Duration::from_millis(800));
+            }
+        })
+    };
+    assert!(crate::polish::apply(&s, TEXTO_D, Tone::Casual, 0).failed); // stalls = 1
+    std::thread::sleep(Duration::from_millis(800));
+    let cerrado_1 = !crate::ollama::circuit::is_open(&url);
+    assert!(crate::polish::apply(&s, TEXTO_D, Tone::Casual, 0).failed); // stalls = 2, ventana 6 s
+    let t2 = Instant::now();
+    lento.store(0, Ordering::SeqCst);
+    let mut vuelta = None;
+    let mut abiertos_falsos = 0;
+    while t2.elapsed() < Duration::from_secs(14) {
+        let o = crate::polish::apply(&s, TEXTO_D, Tone::Casual, 0);
+        if o.polished && !o.failed { vuelta = Some(t2.elapsed().as_millis() as u64); break; }
+        if !o.failed { abiertos_falsos += 1; }
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    let sondas_tras_2 = sondeos.lock().len();
+    lento.store(1500, Ordering::SeqCst);
+    assert!(crate::polish::apply(&s, TEXTO_D, Tone::Casual, 0).failed);
+    std::thread::sleep(Duration::from_millis(800));
+    let reabre = !crate::ollama::circuit::is_open(&url);
+    parar.store(true, Ordering::SeqCst);
+    let _ = hilo.join();
+    println!("ROMPEDOR e reunión larga: cerrado por sonda tras 1.er plazo={cerrado_1} · ms del 2.º plazo al primer pulido={vuelta:?} (ventana 6000) · notas que salieron={} · sondas={sondas_tras_2} · raros={abiertos_falsos} · tras pulido bueno, la sonda reabre={reabre}", notas_ok.load(Ordering::SeqCst));
+    crate::ollama::circuit::reset(&url);
+    crate::ollama::circuit::set_timing_for_tests(Duration::from_secs(60), Duration::from_secs(5));
+    assert!(cerrado_1 && reabre);
+    assert!(vuelta.is_some_and(|ms| (5500..7500).contains(&ms)), "{vuelta:?}");
+}
+
+/// Ollama sano: un plazo vencido suelto, la sonda cierra y el siguiente pulido bueno cierra el circuito del todo (entrada
+/// borrada: un nuevo plazo vencido abre solo la ventana base). Con un Transform/nota que sale entre medias, igual.
+#[test]
+fn rompedor_e_sano_pulido_bueno_cierra() {
+    let _serie = crate::ollama::circuit::lock_for_tests();
+    crate::ollama::circuit::set_timing_for_tests(Duration::from_secs(3), Duration::from_millis(300));
+    let lento = Arc::new(AtomicU64::new(1500));
+    let (url, _, _) = ollama_regulable(0, lento.clone());
+    let s = Settings { ai_polish: true, ollama_url: url.clone(), ai_polish_timeout_ms: 500, ..Settings::default() };
+    let mut ciclos = Vec::new();
+    for _ in 0..3 {
+        lento.store(1500, Ordering::SeqCst);
+        assert!(crate::polish::apply(&s, TEXTO_D, Tone::Casual, 0).failed);
+        lento.store(0, Ordering::SeqCst);
+        let opts = crate::ollama::GenOpts { json: true, num_ctx: None, timeout: Duration::from_secs(5), keep_alive: None, temperature: Some(0.0), num_predict: None };
+        let _ = crate::ollama::generate_with(&url, "notas", "NOTAS: x", &opts);
+        let t = Instant::now();
+        while crate::ollama::circuit::is_open(&url) && t.elapsed() < Duration::from_secs(8) { std::thread::sleep(Duration::from_millis(20)); }
+        let cierre = t.elapsed().as_millis() as u64;
+        let o = crate::polish::apply(&s, TEXTO_D, Tone::Casual, 0);
+        ciclos.push((cierre, o.polished && !o.failed));
+    }
+    println!("ROMPEDOR e sano: (ms hasta cerrar, pulido bueno) por ciclo={ciclos:?}");
+    crate::ollama::circuit::reset(&url);
+    crate::ollama::circuit::set_timing_for_tests(Duration::from_secs(60), Duration::from_secs(5));
+    // Si un pulido bueno no borrase los fallos, el 2.º/3.er ciclo serían stalls >= 2 y tardarían la ventana entera.
+    assert!(ciclos.iter().all(|(ms, ok)| *ok && *ms < 1500), "{ciclos:?}");
+}

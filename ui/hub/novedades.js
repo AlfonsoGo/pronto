@@ -11,11 +11,32 @@ export const WEB = 'pronto.beltranlabs.com';
 
 export const RELEASES = [
   {
+    version: '2.3.1', month: '2026-10',
+    es: { title: 'Arreglos de la 2.3', intro: 'Una versión pequeña tras revisar la 2.3.0 con usuarios nuevos y pruebas de rotura.' },
+    en: { title: '2.3 fixes', intro: 'A small release after reviewing 2.3.0 with new users and break-it tests.' },
+    highlights: [
+      { icon: 'shield-check',
+        probar: { settings: 'data', hint: { es: 'Si eliges conservar menos días, Pronto te pregunta antes de borrar nada.', en: 'If you choose to keep fewer days, Pronto asks before deleting anything.' } },
+        es: { t: 'Tus dictados, protegidos', d: 'Si acortas cuánto tiempo se guardan el historial o el audio, Pronto te pregunta antes de borrar nada. Antes, una flecha del teclado de más podía borrar dictados.', breve: 'pregunta antes de borrar historial o audio' },
+        en: { t: 'Your dictations, protected', d: 'If you shorten how long history or audio is kept, Pronto asks before deleting anything. Before, one arrow key too many could delete dictations.', breve: 'asks before deleting history or audio' } },
+    ],
+    improved: [
+      { es: 'La IA de tu PC se arranca siempre solo para este PC, nunca abierta a la red.', en: 'The AI on your PC always starts for this PC only, never open to the network.' },
+      { es: 'Los avisos de reuniones dicen «Reunión», como el panel.', en: 'Meeting notices say “Meeting”, like the panel.' },
+      { es: 'Las novedades también se enseñan a quien solo usa reuniones.', en: 'What’s new is also shown to people who only use meetings.' },
+    ],
+    fixed: [
+      { es: 'Con la IA atascada, cada dictado ya no espera de nuevo antes de pegarse.', en: 'With the AI stuck, each dictation no longer waits again before pasting.' },
+      { es: 'Al abrir «Novedades» con el teclado, el foco se queda en su sitio.', en: 'Opening “What’s new” with the keyboard keeps the focus in place.' },
+    ],
+  },
+  {
     version: '2.3.0', month: '2026-10',
     es: { title: 'Más fácil, más rápido y con reuniones de verdad', intro: 'La mayor actualización desde Pronto 2: un panel nuevo, dos motores de voz, un diccionario que aprende cómo hablas y notas de reunión con quién dijo qué.' },
     en: { title: 'Easier, faster, and real meeting notes', intro: 'The biggest update since Pronto 2: a new panel, two speech engines, a dictionary that learns how you speak, and meeting notes with who said what.' },
     highlights: [
       { icon: 'layout-grid',
+        probar: { page: 'home', hint: { es: 'Lo de cada día está en el menú de la izquierda; «Cómo se usa», abajo, explica cómo dictar.', en: 'Everyday things are in the left menu; “How to use it”, at the bottom, explains how to dictate.' } },
         es: { t: 'Un panel nuevo, más fácil', d: 'Menú más corto, nombres en castellano llano y más contraste: encuentras cada cosa a la primera.', breve: 'menú más corto y nombres claros' },
         en: { t: 'A new, easier panel', d: 'A shorter menu, plain names and more contrast: you find everything first time.', breve: 'a shorter menu and clear names' } },
       { icon: 'lock',
@@ -23,13 +44,13 @@ export const RELEASES = [
         es: { t: 'Barra fija con el candado', d: 'Pulsa el candado de la barra y se queda en esa pantalla, aunque dictes en otra.', breve: 'se queda en la pantalla que elijas' },
         en: { t: 'Pin the bar with the lock', d: 'Click the lock on the bar and it stays on that screen, even when you dictate on another one.', breve: 'it stays on the screen you choose' } },
       { icon: 'mic',
-        probar: { page: 'dictionary', click: '#page .ph [data-act=add]', spot: '[data-pron=rec]', hint: { es: 'Escribe la palabra y pulsa «Grabar pronunciación» para decirla en voz alta.', en: 'Type the word and click “Record pronunciation” to say it out loud.' } },
+        probar: { page: 'dictionary', click: '#page .ph [data-act=add]', spot: '.modal [data-pron=rec]', hint: { es: 'Escribe la palabra y pulsa «Grabar pronunciación» para decirla en voz alta.', en: 'Type the word and click “Record pronunciation” to say it out loud.' } },
         es: { t: 'Enséñale cómo dices una palabra', d: 'En «Mis palabras», graba cómo pronuncias un nombre o una marca y Pronto lo reconoce por tu voz.', breve: 'graba cómo dices un nombre y lo escribe bien' },
         en: { t: 'Teach it how you say a word', d: 'In “My words”, record how you pronounce a name or a brand and Pronto recognises it by your voice.', breve: 'record how you say a name and it gets it right' } },
       { icon: 'disc-2', beta: true,
         probar: { page: 'meetings', hint: { es: 'En tu próxima llamada de Teams, Zoom o Meet, Pronto te preguntará si quieres grabarla.', en: 'On your next Teams, Zoom or Meet call, Pronto will ask whether to record it.' } },
-        es: { t: 'Notas de reunión: quién dijo qué', d: 'Al colgar, Pronto separa lo que dijiste tú de lo que dijeron los demás y saca resumen, tareas y decisiones, cada una con la frase exacta y el minuto. La primera vez te pregunta antes de grabar.', breve: 'resumen, tareas y decisiones con su frase exacta' },
-        en: { t: 'Meeting notes: who said what', d: 'When you hang up, Pronto separates what you said from what the others said and writes a summary, tasks and decisions, each with the exact quote and minute. The first time, it asks before recording.', breve: 'summary, tasks and decisions with the exact quote' } },
+        es: { t: 'Notas de reunión: quién dijo qué', d: 'Al colgar, Pronto separa lo que dijiste tú de lo que dijeron los demás y saca resumen, tareas y decisiones, cada una con la frase exacta y el minuto. La primera vez que detecta una llamada, te pregunta antes de grabarla.', breve: 'resumen, tareas y decisiones con su frase exacta' },
+        en: { t: 'Meeting notes: who said what', d: 'When you hang up, Pronto separates what you said from what the others said and writes a summary, tasks and decisions, each with the exact quote and minute. The first time it detects a call, it asks before recording it.', breve: 'summary, tasks and decisions with the exact quote' } },
       { icon: 'cpu',
         probar: { settings: 'engine', hint: { es: 'Elige un motor y pulsa «Usar». Whisper se descarga la primera vez.', en: 'Pick an engine and click “Use”. Whisper downloads the first time.' } },
         es: { t: 'Dos motores de voz', d: 'Además de Parakeet puedes usar Whisper, ahora unas 5 veces más rápido. Cada modelo te dice si es el más rápido o el que menos se equivoca.', breve: 'Parakeet o Whisper, y dictado más rápido' },
@@ -101,6 +122,17 @@ export const RELEASES = [
 // Clave de cada destacado («2.3.0#2»): la usan los botones «Probar».
 for (const r of RELEASES) r.highlights.forEach((h, i) => { h.key = `${r.version}#${i}`; });
 
+/** Primera versión con novedades dentro de la app: quien viene de antes (sin nada guardado) ve desde esta. */
+export const FIRST_IN_APP = '2.3.0';
+const num = (v) => String(v).split('.').map(Number).reduce((a, x) => a * 1000 + (x || 0), 0);
+export const cmpVersion = (a, b) => num(a) - num(b);
+
+/** Versiones con destacados que este usuario no ha visto: de la siguiente a `since` (o desde FIRST_IN_APP) hasta `current`. */
+export function pendingReleases(current, since) {
+  return RELEASES.filter((r) => r.highlights.length && cmpVersion(r.version, current) <= 0
+    && (since && /^\d+\.\d+\.\d+$/.test(since) ? cmpVersion(r.version, since) > 0 : cmpVersion(r.version, FIRST_IN_APP) >= 0));
+}
+
 /** Entrada de una versión («2.3.0»), o null. */
 export const releaseOf = (version) => RELEASES.find((r) => r.version === version) || null;
 
@@ -120,6 +152,9 @@ export function githubBody(version) {
     `**Descarga:** [${exe}](https://github.com/AlfonsoGo/pronto/releases/download/v${r.version}/${exe}) (Windows 10/11, 64 bits)`, '',
     '### Novedades',
     ...r.highlights.map((h) => `- **${h.es.t}${h.beta ? ' (beta)' : ''}:** ${h.es.breve || h.es.d}.`),
+    // Quien actualiza desde una versión anterior a la misma serie recibe también lo de las anteriores (2.3.1 trae la 2.3.0).
+    ...RELEASES.filter((o) => o !== r && cmpVersion(o.version, r.version) < 0 && o.version.split('.').slice(0, 2).join('.') === r.version.split('.').slice(0, 2).join('.') && o.highlights.length)
+      .map((o) => `- **Incluye la ${o.version}:** ${o.highlights.map((h) => h.es.t.charAt(0).toLowerCase() + h.es.t.slice(1)).join(', ')}.`),
     '',
     `Todo lo nuevo, en Pronto › Novedades y en ${WEB}`,
   ];

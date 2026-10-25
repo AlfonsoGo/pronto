@@ -120,9 +120,33 @@ pub fn find_ollama() -> Option<PathBuf> {
         cands.push(PathBuf::from(p).join("Ollama").join("ollama.exe"));
     }
     if let Some(path) = std::env::var_os("PATH") {
-        cands.extend(std::env::split_paths(&path).map(|d| d.join("ollama.exe")));
+        cands.extend(path_dirs(&path).into_iter().map(|d| d.join("ollama.exe")));
     }
     cands.into_iter().find(|p| p.is_file())
+}
+
+/// Carpetas del PATH donde se busca `ollama.exe`: solo las absolutas. Una entrada relativa («.», «bin») se
+/// resuelve contra la carpeta actual, y Pronto lanza Ollama sin preguntar en cada dictado (seguridad 25-oct, B1).
+fn path_dirs(path: &std::ffi::OsStr) -> Vec<PathBuf> {
+    std::env::split_paths(path).filter(|d| d.is_absolute()).collect()
+}
+
+/// `OLLAMA_HOST` con el que se lanza Ollama: siempre 127.0.0.1 y el puerto de la URL guardada. Sin él heredaba el del
+/// usuario, que puede ser `0.0.0.0` (Ollama abierto a la red local) o no casar con el puerto (seguridad 25-oct, B2).
+/// Con `http://[::1]:…` escucha en ::1 (si no, nunca respondería ahí); el puerto por defecto del esquema cuenta
+/// (`http://127.0.0.1` es el 80, no el 11434; seguridad 25-oct-b, B2).
+fn ollama_host_env(url: &str) -> String {
+    let u = tauri::Url::parse(&ollama::normalize_url(url)).ok();
+    let port = u.as_ref().and_then(|u| u.port_or_known_default()).unwrap_or(11434);
+    // Una IPv4 de loopback escrita tal cual (127.0.0.2…) se usa tal cual: atado a 127.0.0.1, no respondería ahí (rompedor 25-oct-c, BAJA 3).
+    let host = u.as_ref().and_then(|u| u.host_str()).unwrap_or("");
+    if host.trim_matches(['[', ']']).parse::<std::net::Ipv6Addr>().is_ok_and(|ip| ip.is_loopback()) {
+        format!("[::1]:{port}")
+    } else if let Some(ip) = host.parse::<std::net::Ipv4Addr>().ok().filter(|ip| ip.is_loopback()) {
+        format!("{ip}:{port}")
+    } else {
+        format!("127.0.0.1:{port}")
+    }
 }
 
 /// Host de `url` tal como lo entiende ureq: el parser WHATWG de `url` (el mismo que usa ureq), donde
@@ -360,34 +384,43 @@ fn run_installer(exe: &Path, timeout: Duration, emit: Emit) -> Result<(), Stop> 
 /// Si Ollama está instalado en este equipo pero no responde (no se arrancó con Windows, o se
 /// cerró), lo arranca oculto y espera hasta `timeout` a que responda. Devuelve si responde.
 pub fn ensure_running(url: &str, timeout: Duration) -> bool {
+    ensure_running_ex(url, timeout).is_some()
+}
+
+/// Como `ensure_running`, pero dice si lo arrancó Pronto: `Some(true)` lo lanzó ahora, `Some(false)` ya respondía,
+/// `None` no responde. El pulido solo reinicia su cortacircuitos con `Some(true)` (seguridad 25-oct, M1).
+pub fn ensure_running_ex(url: &str, timeout: Duration) -> Option<bool> {
+    // Fuera de este PC ni se pregunta (y los tests no salen a la red).
+    if !is_loopback_url(url) {
+        return None;
+    }
     if ollama::status(url).reachable {
-        return true;
+        return Some(false);
     }
-    if !is_local_url(url) {
-        return false;
-    }
-    let Some(exe) = find_ollama() else { return false };
-    if let Err(e) = start_ollama(&exe) {
+    let exe = find_ollama()?;
+    if let Err(e) = start_ollama(&exe, url) {
         crate::errlog::error("aisetup", &e);
-        return false;
+        return None;
     }
     let started = Instant::now();
     while started.elapsed() < timeout {
         std::thread::sleep(Duration::from_millis(500));
         if ollama::status(url).reachable {
             eprintln!("[aisetup] Ollama arrancado en {:.1} s", started.elapsed().as_secs_f32());
-            return true;
+            return Some(true);
         }
     }
-    false
+    None
 }
 
 /// Lanza Ollama oculto y sin esperarlo: su aplicación de bandeja si existe (la que arranca el servidor,
 /// como tras una instalación normal) o `ollama serve`.
-fn start_ollama(exe: &Path) -> Result<(), String> {
+fn start_ollama(exe: &Path, url: &str) -> Result<(), String> {
     let dir = exe.parent().unwrap_or(Path::new("."));
     let app = dir.join("ollama app.exe");
-    if app.is_file() { spawn_hidden(&app, &[], dir, &[]) } else { spawn_hidden(exe, &["serve"], dir, &[]) }.map(|_| ())
+    let host = ollama_host_env(url);
+    let env = [("OLLAMA_HOST", host.as_str())];
+    if app.is_file() { spawn_hidden(&app, &[], dir, &env) } else { spawn_hidden(exe, &["serve"], dir, &env) }.map(|_| ())
 }
 
 fn spawn_hidden(prog: &Path, args: &[&str], dir: &Path, env: &[(&str, &str)]) -> Result<std::process::Child, String> {
@@ -540,7 +573,7 @@ fn setup(settings: &Settings, cancel: &AtomicBool, emit: Emit) -> Result<(), Sto
         emit(prog("start-ollama", 0, 0, "Arrancando Ollama…"));
         // Recién instalado, el propio instalador lo lanza: se le da un margen antes de abrirlo nosotros.
         let launch_after = Duration::from_secs(if fresh { 8 } else { 0 });
-        wait_reachable(&url, Duration::from_secs(90), launch_after, &mut || start_ollama(&exe), cancel, emit)?;
+        wait_reachable(&url, Duration::from_secs(90), launch_after, &mut || start_ollama(&exe, &url), cancel, emit)?;
     }
     check(cancel)?;
     let models = ollama::status(&url).models;
@@ -654,6 +687,23 @@ pub fn cancel() {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn ollama_se_lanza_solo_en_loopback_y_con_el_puerto_guardado() {
+        assert_eq!(super::ollama_host_env("http://127.0.0.1:11434"), "127.0.0.1:11434");
+        assert_eq!(super::ollama_host_env("http://localhost:11500"), "127.0.0.1:11500");
+        assert_eq!(super::ollama_host_env("http://127.0.0.1"), "127.0.0.1:80");
+        assert_eq!(super::ollama_host_env("http://[::1]:11434"), "[::1]:11434");
+        assert_eq!(super::ollama_host_env("http://127.0.0.2:11434"), "127.0.0.2:11434");
+        assert_eq!(super::ensure_running_ex("http://192.0.2.1:11434", std::time::Duration::from_millis(1)), None);
+    }
+
+    #[test]
+    fn ollama_no_se_busca_en_carpetas_relativas_del_path() {
+        let path = std::env::join_paths([r"C:\Programas\Ollama", ".", "bin", r"D:\herramientas"]).unwrap();
+        let dirs = super::path_dirs(&path);
+        assert_eq!(dirs, vec![std::path::PathBuf::from(r"C:\Programas\Ollama"), std::path::PathBuf::from(r"D:\herramientas")]);
+    }
+
     use super::*;
     use std::io::BufRead;
     use std::net::TcpListener;
@@ -1085,6 +1135,22 @@ mod nsn_privacidad {
         assert!(crate::updater::url_allowed("https://github.com/AlfonsoGo/pronto/releases/download/v2.2.0/Pronto-Setup.exe", false));
         for u in ["https://example.com/Pronto-Setup.exe", "https://github.com.evil.com/x.exe", "https://github.com@evil.com/x.exe", "http://github.com/x.exe", "https://huggingface.co/x.exe"] {
             assert!(!crate::updater::url_allowed(u, false), "{u}");
+        }
+    }
+}
+
+/// Rompedor 25-oct-c: `ollama_host_env` frente a lo que `is_loopback_url` acepta al guardar.
+#[cfg(test)]
+mod rompedor_c {
+    #[test]
+    fn rompedor_c_ollama_host_env_casos_raros() {
+        let casos = [
+            "http://127.0.0.1:11434", "http://localhost", "localhost:11500", "https://localhost", "http://[::1]", "http://[0:0:0:0:0:0:0:1]:11434",
+            "http://[::1]:0", "http://127.0.0.2:11434", "http://[::ffff:127.0.0.1]:11434", "http://127.1:11434", "http://LOCALHOST.:11434",
+            "http://localhost:65535", "http://user@[::1]:11434",
+        ];
+        for u in casos {
+            println!("ROMPEDOR c host_env {u:?} → loopback={} · OLLAMA_HOST={:?}", super::is_loopback_url(u), super::ollama_host_env(u));
         }
     }
 }

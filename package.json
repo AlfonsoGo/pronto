@@ -6,7 +6,7 @@
   "scripts": {
     "ui": "node scripts/servir-ui.mjs",
     "e2e": "node e2e/correr.mjs",
-    "test": "node --test --test-concurrency=1 \"tests/no-se-negocia/*.test.mjs\" tests/novedades.test.mjs && cd src-tauri && cargo test --quiet"
+    "test": "node --test --test-concurrency=1 \"tests/no-se-negocia/*.test.mjs\" tests/novedades.test.mjs tests/retencion.test.mjs && cd src-tauri && cargo test --quiet"
   },
   "devDependencies": {
     "axe-core": "^4.14.0",

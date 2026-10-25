@@ -202,7 +202,7 @@ pub fn start_auto(app: &AppHandle, st: &Arc<AppState>, label: &str) -> Result<Me
     let meeting = start_inner(app, st, Some(title), true)?;
     let _ = app.emit(
         "dictation://notice",
-        Notice { title: format!("Meets: grabando {label}"), body: Some("Se para solo al colgar.".into()), action: Some("stop_meeting".into()) },
+        Notice { title: format!("Reunión: grabando {label}"), body: Some("Se para solo al colgar.".into()), action: Some("stop_meeting".into()) },
     );
     Ok(meeting)
 }
@@ -259,7 +259,7 @@ fn start_inner(app: &AppHandle, st: &Arc<AppState>, title: Option<String>, auto:
     }
     // Una pista sola sigue valiendo: se avisa y se graba la otra.
     for f in &failures {
-        state::emit_notice(app, "Meets con una sola pista", Some(f));
+        state::emit_notice(app, "Reunión con una sola pista", Some(f));
     }
 
     let level = spawn_level_emitter(app.clone(), stop.clone(), level_mic, level_sys);
@@ -327,7 +327,7 @@ pub fn toggle(app: &AppHandle, st: &Arc<AppState>) {
         let result = if st.meeting.is_active() { stop(&app, &st).map(|_| ()) } else { start(&app, &st, None).map(|_| ()) };
         if let Err(e) = result {
             errlog::error("meeting", &e);
-            state::emit_notice(&app, "Meets", Some(&e));
+            state::emit_notice(&app, "Reuniones", Some(&e));
         }
     });
 }
@@ -429,7 +429,7 @@ fn run_source(ctx: SourceCtx, ready: Sender<Result<(), String>>) {
                 errlog::error("meeting", format!("error escribiendo el audio: {e}"));
                 writing = false;
                 let at = summary::format_clock(*fed * 1000 / TARGET_RATE as i64);
-                state::emit_notice(&ctx.app, &format!("Meets: se dejó de grabar {} en el {at}", source_name(ctx.kind)), Some("Se sigue con la otra pista."));
+                state::emit_notice(&ctx.app, &format!("Reunión: se dejó de grabar {} en el {at}", source_name(ctx.kind)), Some("Se sigue con la otra pista."));
             }
         }
     };
@@ -902,7 +902,7 @@ pub fn spawn_detector(app: AppHandle, st: Arc<AppState>) {
                 for label in fresh {
                     let _ = app.emit(
                         "dictation://notice",
-                        Notice { title: "¿Grabar esta reunión en Meets?".into(), body: Some(label.clone()), action: Some("start_meeting".into()) },
+                        Notice { title: "¿Grabar esta reunión?".into(), body: Some(label.clone()), action: Some("start_meeting".into()) },
                     );
                     warned.push(label);
                 }
@@ -927,7 +927,7 @@ pub fn spawn_detector(app: AppHandle, st: Arc<AppState>) {
                 Some(auto::AutoAction::Notify(label)) => {
                     let _ = app.emit(
                         "dictation://notice",
-                        Notice { title: "¿Grabar esta reunión en Meets?".into(), body: Some(label), action: Some("start_meeting".into()) },
+                        Notice { title: "¿Grabar esta reunión?".into(), body: Some(label), action: Some("start_meeting".into()) },
                     );
                     // En «Automático» y sin confirmar es la pregunta de la primera vez: si pulsa «Grabar», es el sí.
                     if mode == MeetingAuto::Auto && !confirmed {

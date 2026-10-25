@@ -171,7 +171,7 @@
   const LABELS = { polishing: 'Polish', polished: 'Listo', preview: 'Vista previa', cancelled: 'Cancelado', error: 'Error',
     summarizing: 'Generando notas…', notesdone: 'Notas listas' };
   const ARIA = {
-    rest: 'Pronto: reposo', meeting: 'Meets: grabando la reunión', summarizing: 'Generando notas', notesdone: 'Notas listas', ready: 'Dictar', listening: 'Escuchando', handsfree: 'Dictado en manos libres',
+    rest: 'Pronto: reposo', meeting: 'Grabando la reunión', summarizing: 'Generando notas', notesdone: 'Notas listas', ready: 'Dictar', listening: 'Escuchando', handsfree: 'Dictado en manos libres',
     processing: 'Transcribiendo', polishing: 'Puliendo el texto', polished: 'Listo', done: 'Pegado',
     preview: 'Vista previa del resultado: Enter para pegar, Esc para descartar',
     cancelled: 'Cancelado', error: 'Error',
@@ -389,7 +389,7 @@
     if (t === 'dyn') {
       if (key() === 'ready') return [txt('Dictar'), keysNode(holdKeys())];
       if (ui === 'handsfree') return [txt('Pulsa'), keysNode(holdKeys()), txt('para finalizar y pegar')];
-      if (key() === 'meeting') return [txt('Meets · grabando'), keysNode([fmtElapsed()])];
+      if (key() === 'meeting') return [txt('Reunión · grabando'), keysNode([fmtElapsed()])];
       return null;
     }
     return t ? [txt(t)] : null;
@@ -559,7 +559,7 @@
         meetingActive = true; meetingStart = Date.now(); meetingLevel = 0;
         setTrans('');
         if (cardOn && cardAction && cardAction[1] === 'start_meeting') hideCard(true);
-        announce('Meets: grabando la reunión');
+        announce('Grabando la reunión');
         render();
         syncMeeting();                           // el backend manda el tiempo real transcurrido
         break;
@@ -672,9 +672,9 @@
     mk('d-meet', 'done', () => sendM('done', { message: 'Reunión de equipo · 3 tareas' }));
     mk('d-meet', 'error', () => sendM('error', { message: 'Ollama no responde en localhost:11434.' }));
     mk('d-meet', 'idle', () => sendM('idle'));
-    mk('d-meet', 'Aviso: Tomando notas', () => { sendM('recording'); mockEmit('dictation://notice', { title: 'Meets: grabando Zoom', body: 'Se para solo al colgar.', action: 'stop_meeting' }); });
+    mk('d-meet', 'Aviso: Tomando notas', () => { sendM('recording'); mockEmit('dictation://notice', { title: 'Reunión: grabando Zoom', body: 'Se para solo al colgar.', action: 'stop_meeting' }); });
     mk('d-meet', 'Aviso: Notas listas', () => { sendM('done'); mockEmit('dictation://notice', { title: 'Notas listas', body: 'Reunión de equipo · lunes', action: 'open_meeting:42' }); });
-    mk('d-meet', 'Aviso: ¿Tomar notas?', () => mockEmit('dictation://notice', { title: '¿Grabar esta reunión en Meets?', body: 'Zoom', action: 'start_meeting' }));
+    mk('d-meet', 'Aviso: ¿Tomar notas?', () => mockEmit('dictation://notice', { title: '¿Grabar esta reunión?', body: 'Zoom', action: 'start_meeting' }));
     ['claro', 'oscuro', 'color', 'mixto'].forEach((b) => mk('d-bg', b, () => { document.body.dataset.bg = b; }));
 
     const lvl = $('d-level');

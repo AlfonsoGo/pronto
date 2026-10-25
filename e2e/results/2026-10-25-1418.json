@@ -1,0 +1,254 @@
+{
+  "fecha": "2026-10-25T13:10:50.031Z",
+  "base": "http://127.0.0.1:62839/hub.html",
+  "repeticiones": 5,
+  "caminos": {
+    "primer-uso": {
+      "pasadas": 5,
+      "fallos": 0,
+      "p95_ms": 13200,
+      "pasos": [
+        {
+          "paso": "abrir hub sin modelo",
+          "estado": "ok",
+          "ms": 336
+        },
+        {
+          "paso": "pulsar «Descargar modelo»",
+          "estado": "ok",
+          "ms": 855
+        },
+        {
+          "paso": "descarga completa (la tarjeta desaparece)",
+          "estado": "lento",
+          "ms": 13218
+        },
+        {
+          "paso": "«Motor listo» (listo para dictar)",
+          "estado": "ok",
+          "ms": 1347
+        }
+      ]
+    },
+    "dictado-historial": {
+      "pasadas": 5,
+      "fallos": 0,
+      "p95_ms": 19844,
+      "pasos": [
+        {
+          "paso": "abrir hub con historial",
+          "estado": "ok",
+          "ms": 385
+        },
+        {
+          "paso": "llega un dictado nuevo (evento del mock, cada 20 s)",
+          "estado": "lento",
+          "ms": 19846
+        },
+        {
+          "paso": "aparece arriba, marcado como nuevo",
+          "estado": "ok",
+          "ms": 10
+        },
+        {
+          "paso": "copiar transcripción",
+          "estado": "ok",
+          "ms": 923
+        },
+        {
+          "paso": "reintentar transcripción",
+          "estado": "ok",
+          "ms": 421
+        }
+      ]
+    },
+    "diccionario-fragmentos": {
+      "pasadas": 5,
+      "fallos": 0,
+      "p95_ms": 1154,
+      "pasos": [
+        {
+          "paso": "abrir hub",
+          "estado": "ok",
+          "ms": 314
+        },
+        {
+          "paso": "ir a Mis palabras",
+          "estado": "ok",
+          "ms": 61
+        },
+        {
+          "paso": "abrir «Agregar palabra»",
+          "estado": "ok",
+          "ms": 821
+        },
+        {
+          "paso": "guardar la palabra",
+          "estado": "ok",
+          "ms": 1154
+        },
+        {
+          "paso": "la palabra aparece en la lista",
+          "estado": "ok",
+          "ms": 4
+        },
+        {
+          "paso": "ir a Atajos de texto",
+          "estado": "ok",
+          "ms": 21
+        },
+        {
+          "paso": "abrir «Agregar atajo de texto»",
+          "estado": "ok",
+          "ms": 837
+        },
+        {
+          "paso": "guardar el atajo",
+          "estado": "ok",
+          "ms": 1189
+        },
+        {
+          "paso": "el atajo aparece en la lista",
+          "estado": "ok",
+          "ms": 4
+        }
+      ]
+    },
+    "ia-local": {
+      "pasadas": 5,
+      "fallos": 0,
+      "p95_ms": 28689,
+      "pasos": [
+        {
+          "paso": "abrir Configuración → Limpieza e IA",
+          "estado": "ok",
+          "ms": 1267
+        },
+        {
+          "paso": "pulsar «Activar IA local» → aviso previo",
+          "estado": "ok",
+          "ms": 118
+        },
+        {
+          "paso": "«Instalar» → empieza el progreso",
+          "estado": "ok",
+          "ms": 843
+        },
+        {
+          "paso": "«IA local lista»",
+          "estado": "lento",
+          "ms": 28755
+        },
+        {
+          "paso": "encender «Pulir cada dictado con IA local»",
+          "estado": "ok",
+          "ms": 125
+        }
+      ]
+    },
+    "cambiar-motor": {
+      "pasadas": 5,
+      "fallos": 0,
+      "p95_ms": 2385,
+      "pasos": [
+        {
+          "paso": "abrir Configuración → Motor",
+          "estado": "ok",
+          "ms": 1310
+        },
+        {
+          "paso": "pulsar «Descargar» en Whisper small",
+          "estado": "ok",
+          "ms": 22
+        },
+        {
+          "paso": "el botón pasa a «Usar» sin salir de la pestaña",
+          "estado": "ok",
+          "ms": 2387
+        },
+        {
+          "paso": "pulsar «Usar»",
+          "estado": "ok",
+          "ms": 157
+        }
+      ]
+    },
+    "reunion": {
+      "pasadas": 5,
+      "fallos": 0,
+      "p95_ms": 1878,
+      "pasos": [
+        {
+          "paso": "abrir Reuniones (lista de reuniones)",
+          "estado": "ok",
+          "ms": 426
+        },
+        {
+          "paso": "abrir la reunión terminada",
+          "estado": "ok",
+          "ms": 109
+        },
+        {
+          "paso": "ver resumen, tareas y quién dijo qué",
+          "estado": "ok",
+          "ms": 9
+        },
+        {
+          "paso": "preguntar sobre la reunión",
+          "estado": "ok",
+          "ms": 1882
+        }
+      ]
+    },
+    "actualizacion": {
+      "pasadas": 5,
+      "fallos": 0,
+      "p95_ms": 7025,
+      "pasos": [
+        {
+          "paso": "aviso «Pronto 2.0.2 disponible»",
+          "estado": "ok",
+          "ms": 317
+        },
+        {
+          "paso": "pulsar «Actualizar ahora» → descarga",
+          "estado": "ok",
+          "ms": 28
+        },
+        {
+          "paso": "descarga → verificación → «Instalando…»",
+          "estado": "lento",
+          "ms": 7025
+        }
+      ]
+    },
+    "novedades": {
+      "pasadas": 5,
+      "fallos": 0,
+      "p95_ms": 1718,
+      "pasos": [
+        {
+          "paso": "tras actualizar sale «Lo nuevo en Pronto 2.3.1»",
+          "estado": "ok",
+          "ms": 409
+        },
+        {
+          "paso": "«Probar» abre «Agregar palabra» con «Grabar pronunciación» resaltado",
+          "estado": "ok",
+          "ms": 1727
+        },
+        {
+          "paso": "cerrar «Agregar palabra»; «Lo nuevo» no vuelve (sale una vez)",
+          "estado": "ok",
+          "ms": 951
+        },
+        {
+          "paso": "«Novedades» del menú abre la página con la versión 2.3.1",
+          "estado": "ok",
+          "ms": 45
+        }
+      ]
+    }
+  },
+  "sesiones_sin_error_pct": 100
+}

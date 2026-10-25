@@ -12,12 +12,12 @@ Rama de trabajo: fases/2026-10-22
 | Sistema | Estado | Evidencia | Falta |
 |---|---|---|---|
 | F0 Diagnóstico | ✅ | Tipo desplegado · Perfil crítico |  |
-| S1 Plan y prueba | ✅ | PRD: 5 objetivos · 16 RDs |  |
+| S1 Plan y prueba | ✅ | PRD: 5 objetivos · 18 RDs |  |
 | S4 No se negocia | ✅ | 7 reglas |  |
-| S2 Rumbo | ✅ | specs/rumbo/2026-10-24.md: 🟡 |  |
-| S3 Seguridad y puertas | ✅ | specs/seguridad/2026-10-24.md: críticos 0 · altos 0 |  |
-| S5 Rompedor | ✅ | specs/rompedor/2026-10-24.md: 0 altas |  |
-| S6 Ojos de cliente | 🟨 | sesiones sin error 100 % ≥ 95 % | informe del primerizo |
+| S2 Rumbo | ✅ | specs/rumbo/2026-10-25-f.md: 🟢 |  |
+| S3 Seguridad y puertas | ✅ | specs/seguridad/2026-10-25-f.md: críticos 0 · altos 0 |  |
+| S5 Rompedor | ✅ | specs/rompedor/2026-10-25-f.md: 0 altas |  |
+| S6 Ojos de cliente | ✅ | guardia: tests verdes · specs/primerizo/2026-10-25.md: guardia en vivo ✅ · sesiones sin error 100 % ≥ 95 % |  |
 | S7 Bucle de cliente | ✅ | specs/clientes/registro.md |  |
 <!-- estado:fin -->
 
@@ -127,6 +127,10 @@ Respondidas el 23-oct-2026 por la noche («1A, 2 sí, 3 solo este PC, 4 sí, 5 s
   recomendado con podio, actualizador con RAM/VRAM, macOS como 3.0, polish con intención).
 
 ## Registro (más reciente arriba)
+- 2026-10-25 · rumbo (3597264) · 🟡 DERIVA LEVE: 0 ❌; FR-05 R3b (dirección de loopback de OLLAMA_HOST) y FR-08 R6b (foco al cerrar antes del primer frame) puestos al día; specs/rumbo/2026-10-25-d.md.
+- 2026-10-25 · rumbo (f186b73→e753561) · 🟡 DERIVA LEVE: 0 ❌; FR-05 R3c y FR-08 R6b puestos al día con el vigilante de generación mínima, el foco en «Cancelar» y Alt+flecha; specs/rumbo/2026-10-25-c.md.
+- 2026-10-25 · rumbo (236b251→f186b73, 2.3.1) · 🟡 DERIVA LEVE: 0 ❌; confirmación de retención, cortacircuitos «atascado» y Novedades acumuladas, ya en FR-05 R3c, FR-08 R6b, FR-18 R3/R6 y PRD §6 camino 8; specs/rumbo/2026-10-25-b.md.
+- 2026-10-25 · revisión de la 2.3.0 publicada: puerta de publicar NO (rumbo, seguridad, recorredor y rompedor anteriores al código). Rumbo 🟡, seguridad 0/0 (1 media y 3 bajas arregladas), recorredor 40/40, rompedor 1 alta + 2 medias + 4 bajas arregladas; guardia del primerizo enganchada en .claude/settings.json (bloqueo comprobado). Sale como 2.3.1.
 - 2026-10-24 · seguimiento de velocidad: npm test 18/18 + 570 ✅; rumbo 🟡, seguridad 0/0/1/4, recorredor 35/35, rompedor 0 altas/1 media/4 bajas sobre Whisper rápido; arreglos y v14.1 (Whisper solo es/en) en commits locales. Ver «VELOCIDAD · HECHO EL 24-OCT».
 - 2026-10-23 noche · S5 · tercera tanda de arreglos guardada (9fd526a carga/descargas, e88fa38 dictado, 1ab89ae reuniones, 63c1d8b datos, b029c67 hub, 2658d44). Batería: reglas 17/17, recorrido 35/35, `cargo test` 504 ✅ + 1 intermitente (dos arranques a la vez). Quedan las 10 altas de IA a la espera de la decisión 1.
 - 2026-10-23 tarde · S5 · carga (b4e0d58) y datos (0e5c4d2) arreglados; apagón a media tarde sin pérdidas (rama intacta, datos retomado). Batería en reposo: reglas 16/16 (velocidad p50 757 ms), `cargo test` 436 ✅ 0 ❌, recorrido 35/35. Lanzada la segunda pasada de los 7 rompedores (informes en `specs/rompedor/2026-10-23/`).

@@ -552,6 +552,11 @@ export default {
   'Nombres, apellidos, empresas o palabras de tu trabajo que Pronto escribe mal: pon cómo se escriben y las escribirá bien siempre. Para que una frase corta escriba un texto largo, usa «Atajos de texto».': 'Names, surnames, companies or work words that Pronto gets wrong: type how they are spelled and it will always get them right. To make a short phrase type a long text, use «Text shortcuts».',
   'Tu dirección, tu firma, tu teléfono, un correo que repites: guárdalo una vez y, al dictar, di la frase. Para que escriba bien un nombre, usa «Mis palabras».': 'Your address, your signature, your phone, an email you repeat: save it once and say the phrase when dictating. To get a name spelled right, use «My words».',
   'No hace falta cambiar nada: Pronto ya distingue solo si hablas en español o en inglés.': 'No need to change anything: Pronto already tells on its own whether you speak Spanish or English.',
+  // conservar menos (confirmación)
+  '¿Borrar los dictados de más de {n} días?': 'Delete dictations older than {n} days?', '¿Dejar de guardar el audio?': 'Stop keeping audio?',
+  '¿Borrar el audio de más de {n} días?': 'Delete audio older than {n} days?', '¿Borrar el audio de más de 1 día?': 'Delete audio older than 1 day?', 'Sí, borrar': 'Yes, delete',
+  'Los dictados más antiguos se borran ahora y para siempre, con su audio.': 'Older dictations are deleted now and for good, with their audio.',
+  'El audio más antiguo se borra ahora y para siempre: esos dictados ya no se podrán escuchar ni volver a pasar a texto.': 'Older audio is deleted now and for good: those dictations can no longer be played or transcribed again.',
   // novedades
   'Novedades': 'What’s new', 'Novedades (hay cosas nuevas)': 'What’s new (new things to see)', 'Lo que ha cambiado en cada versión de Pronto.': 'What changed in each version of Pronto.',
   'Versión {v}': 'Version {v}', 'La que tienes': 'Your version', 'Versiones anteriores': 'Earlier versions', 'Mejoras': 'Improvements', 'Arreglos': 'Fixes',

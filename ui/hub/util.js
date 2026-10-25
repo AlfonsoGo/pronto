@@ -193,6 +193,7 @@ export function openModal(opts) {
   // (rompedor 23-oct, hub BAJA 3)
   velo.addEventListener('click', (e) => { const c = e.target.closest('[data-close]'); if (c) { if (c.hasAttribute('data-x')) ctl.dismiss(); else ctl.close(); } });
   requestAnimationFrame(() => {
+    if (closed) return; // cerrado antes de su primer frame: el foco ya volvió a quien lo abrió (rompedor 25-oct-c, BAJA 2)
     const auto = $('[autofocus],[data-autofocus]', modal) || $('input:not([type=hidden]),textarea', modal);
     (auto || $('.modal-ft .btn-primary,.modal-ft .btn', modal) || $('[data-close]', modal) || modal).focus({ preventScroll: true });
   });
@@ -212,7 +213,8 @@ export function confirmDialog({ title, body = '', confirmText, cancelText, dange
     });
     $('.modal-bd', m.el).remove();
     $('[data-ok]', m.el).addEventListener('click', () => { res = true; m.close(); });
-    if (danger) $('[data-ok]', m.el).focus();
+    // Un diálogo de borrar empieza con el foco en «Cancelar»: un Enter con prisa no borra (rompedor 25-oct-b, BAJA 1).
+    $(danger ? '[data-close]:not([data-x])' : '[data-ok]', m.el).focus();
   });
 }
 

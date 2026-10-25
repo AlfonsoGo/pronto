@@ -4,7 +4,7 @@ import { icon } from '../../shared/icons.js';
 import { state } from '../api.js';
 import { t, esc, $, getLang, openModal, toast } from '../util.js';
 import { pageHeader } from '../ui.js';
-import { RELEASES, releaseOf, hasHighlights } from '../novedades.js';
+import { RELEASES, releaseOf, hasHighlights, pendingReleases } from '../novedades.js';
 
 const SEEN_KEY = 'pronto.novedades.vista';
 const L = (o) => (getLang() === 'en' && o.en ? o.en : o.es);
@@ -23,7 +23,9 @@ export function markSeen(version = state.app?.version) {
 /** La versión instalada trae destacados que este usuario aún no ha visto (punto en el menú). */
 export function unseen() {
   const v = state.app?.version;
-  return !!v && hasHighlights(v) && readSeen().v !== v;
+  const seen = readSeen();
+  // Sin almacenamiento no se puede recordar nada: el punto no se quitaría nunca (rompedor 25-oct, BAJA 4).
+  return !!v && hasHighlights(v) && seen.ok && seen.v !== v;
 }
 
 // ------------------------------------------------------------------ marcado
@@ -104,9 +106,12 @@ const byKey = (k) => { const [v, i] = String(k || '').split('#'); return release
 
 // ------------------------------------------------------------------ «Lo nuevo» (una vez por versión)
 /** Tarjeta con los destacados de la versión instalada. `ctx` = { navigate, openSettings } del hub. */
-export function openWhatsNew(ctx, version = state.app?.version) {
+export function openWhatsNew(ctx, version = state.app?.version, since = null) {
   const r = releaseOf(version);
   if (!r || !r.highlights.length) return null;
+  // Lo de cada versión que no ha visto (de 2.0.2 a 2.3.1: lo de la 2.3.1 y lo de la 2.3.0), la más nueva arriba.
+  const list = pendingReleases(version, since);
+  const rels = list.length ? list : [r];
   markSeen(version);
   document.dispatchEvent(new CustomEvent('pronto:novedades-vistas'));
   const m = openModal({
@@ -114,7 +119,7 @@ export function openWhatsNew(ctx, version = state.app?.version) {
     subtitle: esc(L(r).title),
     width: 640,
     cls: 'nv-modal',
-    body: `<ul class="nv-grid nv-grid-1">${r.highlights.map((h) => cardHtml(h, true)).join('')}</ul>`,
+    body: rels.map((x) => `${rels.length > 1 ? `<h3 class="nv-modal-v">${esc(t('Versión {v}', { v: x.version }))}</h3>` : ''}<ul class="nv-grid nv-grid-1">${x.highlights.map((h) => cardHtml(h, true)).join('')}</ul>`).join(''),
     footer: `<button class="btn btn-ghost" data-all>${esc(t('Ver todas las novedades'))}</button><button class="btn btn-primary" data-close>${esc(t('Entendido'))}</button>`,
   });
   m.el.addEventListener('click', (e) => {
@@ -139,7 +144,7 @@ export function maybeShowWhatsNew(ctx, { force = false, veteran = false, blocked
   if (!veteran && !force) { markSeen(v); return false; }
   if (blocked) return false; // otra ventana encima: el punto del menú lo recuerda
   if (!force && !markSeen(v)) return false;
-  return !!openWhatsNew(ctx, v);
+  return !!openWhatsNew(ctx, v, seen.v);
 }
 
 export default {

@@ -106,12 +106,13 @@ function novedadesNavHtml() {
   return `<button class="nav" data-nav="novedades" id="nav-novedades" ${nuevo ? `aria-label="${esc(t('Novedades (hay cosas nuevas)'))}"` : ''}>${icon('sparkles', 20)}<span class="lbl">${esc(t('Novedades'))}</span>${nuevo ? '<i class="nv-dot" aria-hidden="true"></i>' : ''}</button>`;
 }
 
+// Se toca el botón que hay, sin rehacerlo: si tenía el foco (Enter en Novedades), lo conserva (rompedor 25-oct, BAJA 2).
 function updateNovedadesNav() {
   const b = $('#nav-novedades'); if (!b) return;
-  const active = b.classList.contains('active');
-  b.outerHTML = novedadesNavHtml();
-  if (active) highlightNav();
-  applySidebar(app.classList.contains('sb-collapsed'));
+  const nuevo = novedadesSinVer();
+  const dot = $('.nv-dot', b);
+  if (!nuevo) { if (dot) dot.remove(); b.removeAttribute('aria-label'); }
+  else if (!dot) { b.insertAdjacentHTML('beforeend', '<i class="nv-dot" aria-hidden="true"></i>'); b.setAttribute('aria-label', t('Novedades (hay cosas nuevas)')); }
 }
 
 function updateEngineCard() {
@@ -325,8 +326,10 @@ async function boot() {
   if (qs.get('settings')) openSettingsFrom(qs.get('settings'));
   // «Lo nuevo» tras actualizar, una vez por versión. En la maqueta solo con ?novedades (si no, taparía las páginas en los tests).
   if (!IS_MOCK || qs.has('novedades')) {
-    const veteran = (state.stats?.dictations || 0) > 0 || (state.stats?.meetings || 0) > 0;
-    setTimeout(() => maybeShowWhatsNew(ctx, { veteran, force: IS_MOCK, blocked: hasModal() || !!qs.get('meeting') || !!qs.get('settings') || !['home', null].includes(qs.get('page')) }), 500);
+    // Quien solo usa reuniones también viene de una versión anterior (rompedor 25-oct, BAJA 3): `get_stats` no las cuenta.
+    const veteranOf = async () => (state.stats?.dictations || 0) > 0
+      || (await invoke('list_meetings', { query: null, limit: 1, offset: 0 }).then((l) => (l || []).length > 0).catch(() => false));
+    setTimeout(async () => maybeShowWhatsNew(ctx, { veteran: await veteranOf(), force: IS_MOCK, blocked: hasModal() || !!qs.get('meeting') || !!qs.get('settings') || !['home', null].includes(qs.get('page')) }), 150);
   }
   document.addEventListener('pronto:novedades-vistas', updateNovedadesNav);
 

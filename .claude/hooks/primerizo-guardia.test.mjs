@@ -55,6 +55,40 @@ test('registrada en settings.json: solo actúa sobre el agente primerizo', () =>
   assert.equal(decidir({ ...bash('git log'), agent_type: 'recorredor' }), null);
 });
 
+test('--solo-primerizo (settings.json): la sesión principal, sin agent_type, no se bloquea; el primerizo sí', () => {
+  const op = { soloPrimerizo: true };
+  assert.equal(decidir(read('CLAUDE.md'), op), null);
+  assert.equal(decidir(bash('git log'), op), null);
+  assert.equal(decidir({ tool_name: 'Edit', tool_input: {} }, op), null);
+  assert.notEqual(decidir({ ...read('CLAUDE.md'), agent_type: 'primerizo' }, op), null);
+  assert.equal(decidir({ ...read('CLAUDE.md'), agent_type: 'recorredor' }, op), null);
+  const proceso = (entrada) => spawnSync(process.execPath, [GUARDIA, '--solo-primerizo'], { input: JSON.stringify(entrada) }).status;
+  assert.equal(proceso(read('CLAUDE.md')), 0);
+  assert.equal(proceso({ ...read('CLAUDE.md'), agent_type: 'primerizo' }), 2);
+});
+
+test('settings.json del proyecto registra la guardia con --solo-primerizo', () => {
+  const cfg = JSON.parse(readFileSync(fileURLToPath(new URL('../settings.json', import.meta.url)), 'utf8'));
+  const ordenes = (cfg.hooks?.PreToolUse ?? []).flatMap((h) => h.hooks ?? []).map((h) => h.command);
+  assert.ok(ordenes.some((c) => c.includes('primerizo-guardia.mjs') && c.includes('--solo-primerizo')), ordenes.join(' · '));
+});
+
+test('rompedor 25-oct: $VAR bloqueado y entrada rara del primerizo bloquea, la de otras sesiones no', () => {
+  assert.notEqual(decidir(bash('node .claude/primerizo/navegador.mjs escribir "X" "$PATH"')), null);
+  assert.notEqual(decidir({ tool_name: 'Read', tool_input: null, agent_type: 'primerizo' }, { soloPrimerizo: true }), null);
+  const proceso = (entrada) => spawnSync(process.execPath, [GUARDIA, '--solo-primerizo'], { input: entrada }).status;
+  assert.equal(proceso('{"tool_name":"Read","tool_input":null,"agent_type":"primerizo"}'), 2);
+  assert.equal(proceso('{"tool_name":"Read","tool_input":null}'), 0);
+});
+
+test('rompedor 25-oct-b: comodines y ~ sin comillas, bloqueados; entre comillas, permitidos', () => {
+  for (const c of ['node .claude/primerizo/navegador.mjs escribir "Buscar" *', 'node .claude/primerizo/navegador.mjs escribir "X" ~/.ssh/id', 'node .claude/primerizo/navegador.mjs clic {specs,src}/x'])
+    assert.notEqual(decidir(bash(c)), null, c);
+  assert.notEqual(decidir(bash('node .claude/primerizo/navegador.mjs escribir "\\"" ~/.ssh/* "x"')), null, 'comilla escapada');
+  for (const c of ['node .claude/primerizo/navegador.mjs clic "¿Qué es?"', "node .claude/primerizo/navegador.mjs escribir 'Nota' 'precio [aprox]'"])
+    assert.equal(decidir(bash(c)), null, c);
+});
+
 test('la orden del frontmatter falla cerrada: si la guardia no arranca, sale 2 (bloquea), no 1', () => {
   const md = readFileSync(fileURLToPath(new URL('../agents/primerizo.md', import.meta.url)), 'utf8');
   const orden = md.match(/command:\s*'([^']+)'/)[1];

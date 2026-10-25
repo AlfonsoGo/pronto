@@ -17,6 +17,8 @@ const versionLabel = () => {
 };
 // Lo de uso diario arriba; lo que pide saber de motores o de IA, en «Avanzado» (pruebas con primerizos, 24-oct-2026).
 // Los id no cambian: los usan los enlaces (`?settings=`), «Cómo se usa» y los tests.
+import { shortensRetention } from '../retencion.js';
+
 const TABS = () => [
   { group: t('Configuración'), items: [
     { id: 'general', icon: 'sliders-horizontal', label: t('Lo básico') },
@@ -390,6 +392,28 @@ export function openSettings(tab = 'general', opts = {}) {
     if (announce) toast(r.reachable ? t('Ollama responde') : t('Ollama no responde'), { kind: r.reachable ? 'ok' : 'err' });
   }
 
+  // Acortar cuánto se conserva borra al momento y para siempre (rompedor 25-oct, ALTA 1): con el teclado, cada flecha del
+  // desplegable lanzaba `change` y la primera ya purgaba. Se vuelve al valor guardado y solo se aplica tras confirmar.
+  let askingRetention = false;
+  async function confirmRetention(sel, key) {
+    const next = Number(sel.value);
+    sel.value = String(state.settings[key]);
+    if (askingRetention) return;
+    askingRetention = true;
+    const history = key === 'historyRetentionDays';
+    const ok = await confirmDialog({
+      title: history ? t('¿Borrar los dictados de más de {n} días?', { n: next }) : next === 0 ? t('¿Dejar de guardar el audio?')
+        : next === 1 ? t('¿Borrar el audio de más de 1 día?') : t('¿Borrar el audio de más de {n} días?', { n: next }),
+      body: esc(history ? t('Los dictados más antiguos se borran ahora y para siempre, con su audio.')
+        : t('El audio más antiguo se borra ahora y para siempre: esos dictados ya no se podrán escuchar ni volver a pasar a texto.')),
+      confirmText: t('Sí, borrar'),
+    });
+    askingRetention = false;
+    if (!ok) { sel.focus(); return; }
+    sel.value = String(next);
+    changeSetting(key, next);
+  }
+
   async function changeSetting(key, value) {
     // Una dirección de Ollama que no es de este PC no se guarda: error de validación, sin llamar al backend.
     // Configuración guarda el campo al cerrarse (Esc, ×, clic fuera): el error de debajo ya no se vería, así que
@@ -489,6 +513,7 @@ export function openSettings(tab = 'general', opts = {}) {
     if (sel) {
       const k = sel.dataset.select;
       const num = ['historyRetentionDays', 'keepAudioDays'].includes(k);
+      if (num && shortensRetention(k, state.settings[k], Number(sel.value))) { confirmRetention(sel, k); return; }
       if (k === 'flowBarMonitor') changeSetting(k, sel.value || null);   // '' = seguir al cursor
       else changeSetting(k, num ? Number(sel.value) : sel.value);
       return;
@@ -508,7 +533,8 @@ export function openSettings(tab = 'general', opts = {}) {
   });
   ctl.el.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && e.target.matches('[data-text]')) { e.preventDefault(); e.target.blur(); }
-    if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+    // Alt+↑/↓ en un desplegable lo abre (Windows): no cambia de pestaña (rompedor 25-oct-b, BAJA 5).
+    if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown') && !e.target.matches('select, input, textarea')) {
       e.preventDefault();
       const all = flat().map((x) => x.id), i = all.indexOf(active);
       go(all[(i + (e.key === 'ArrowDown' ? 1 : -1) + all.length) % all.length]);

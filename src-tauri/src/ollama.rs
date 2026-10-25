@@ -412,8 +412,10 @@ pub struct GenOpts<'a> {
     pub num_predict: Option<u32>,
 }
 
+/// Notas, preguntas, Transforms y precargas: que salgan no dice que el pulido quepa en su plazo (otro modelo, otro tamaño),
+/// así que no tocan el cortacircuitos del pulido; solo lo cierra un pulido bueno (`generate_with_ex`; rompedor 25-oct-d, MEDIA 1).
 pub fn generate_with(url: &str, model: &str, prompt: &str, opts: &GenOpts) -> Result<String, String> {
-    generate_with_ex(url, model, prompt, opts).map_err(|e| e.message)
+    generate_core(url, model, prompt, opts, false).map_err(|e| e.message)
 }
 
 /// Fallo de una generación. `unreachable` = no se pudo hablar con Ollama (conexión rechazada, red o
@@ -423,18 +425,34 @@ pub fn generate_with(url: &str, model: &str, prompt: &str, opts: &GenOpts) -> Re
 pub struct GenError {
     pub message: String,
     pub unreachable: bool,
+    /// El fallo fue un plazo vencido (Ollama puede estar vivo con el modelo atascado): el cortacircuitos no se cierra
+    /// solo porque `/api/tags` conteste (rompedor 25-oct, MEDIA 1).
+    pub stalled: bool,
 }
 
 impl GenError {
-    fn alive(message: impl Into<String>) -> Self {
-        Self { message: message.into(), unreachable: false }
+    pub fn alive(message: impl Into<String>) -> Self {
+        Self { message: message.into(), unreachable: false, stalled: false }
     }
     fn down(message: impl Into<String>) -> Self {
-        Self { message: message.into(), unreachable: true }
+        Self { message: message.into(), unreachable: true, stalled: false }
+    }
+    fn timed_out() -> Self {
+        Self { message: "Ollama no respondió a tiempo".into(), unreachable: true, stalled: true }
     }
 }
 
 pub fn generate_with_ex(url: &str, model: &str, prompt: &str, opts: &GenOpts) -> Result<String, GenError> {
+    generate_core(url, model, prompt, opts, true)
+}
+
+/// La generación mínima del vigilante: si sale, NO borra los fallos del cortacircuitos (un token rápido no dice que un
+/// pulido de verdad quepa en su plazo; rompedor 25-oct-c, MEDIA 1).
+fn generate_probe(url: &str, model: &str, opts: &GenOpts) -> Result<String, GenError> {
+    generate_core(url, model, "ok", opts, false)
+}
+
+fn generate_core(url: &str, model: &str, prompt: &str, opts: &GenOpts, reset_circuit: bool) -> Result<String, GenError> {
     let mut body = json!({ "model": model, "prompt": prompt, "stream": false, "think": false });
     if opts.json {
         body["format"] = json!("json");
@@ -465,7 +483,7 @@ pub fn generate_with_ex(url: &str, model: &str, prompt: &str, opts: &GenOpts) ->
             })
         }
         ureq::Error::Transport(t) => match t.kind() {
-            ureq::ErrorKind::Io if is_timeout(&t) => GenError::down("Ollama no respondió a tiempo"),
+            ureq::ErrorKind::Io if is_timeout(&t) => GenError::timed_out(),
             _ => GenError::down(format!("No se pudo contactar con Ollama en {}", base(url))),
         },
     })?;
@@ -476,7 +494,7 @@ pub fn generate_with_ex(url: &str, model: &str, prompt: &str, opts: &GenOpts) ->
     // «respuesta ilegible» con el texto del sistema (rompedor 23-oct, carga BAJA 3).
     let v: Value = resp.into_json().map_err(|e| {
         if io_is_timeout(&e) {
-            GenError::down("Ollama no respondió a tiempo")
+            GenError::timed_out()
         } else {
             GenError::alive(format!("Respuesta de Ollama ilegible: {e}"))
         }
@@ -486,7 +504,9 @@ pub fn generate_with_ex(url: &str, model: &str, prompt: &str, opts: &GenOpts) ->
         Err(GenError::alive("Ollama devolvió una respuesta vacía"))
     } else {
         // Ha contestado de verdad: si el cortacircuitos del pulido estaba abierto, se cierra.
-        circuit::reset(url);
+        if reset_circuit {
+            circuit::reset(url);
+        }
         Ok(out)
     }
 }
@@ -603,7 +623,7 @@ pub fn status(url: &str) -> OllamaStatus {
 /// dice que Ollama vuelve, cuando vence la ventana (la siguiente petición real prueba otra vez) o
 /// cuando una generación sale bien. Cada fallo seguido duplica la ventana (60 s, 2 min, 4 min… 10 min).
 pub mod circuit {
-    use super::{base, status};
+    use super::{base, generate_probe, status, GenOpts};
     use parking_lot::Mutex;
     use std::collections::HashMap;
     use std::sync::atomic::{AtomicU64, Ordering};
@@ -622,7 +642,20 @@ pub mod circuit {
         fails: u32,
         /// Hay un vigilante preguntando a `/api/tags`.
         probing: bool,
+        /// El último fallo fue un plazo de generación: `/api/tags` contesta aunque el modelo siga atascado, así que el
+        /// vigilante no cierra por eso; prueba con una generación mínima de `model` y cierra si sale (`reset`).
+        stalled: bool,
+        /// Modelo con el que probar una generación mínima cuando está «atascado».
+        model: Option<String>,
+        /// Plazos de generación vencidos seguidos (los fallos de conexión no cuentan): la sonda de 1 token solo reabre tras
+        /// el primero (rompedor 25-oct-d, BAJA 1: tras un reinicio de Ollama, `fails` ya traía el fallo de conexión).
+        stalls: u32,
+        /// Vigilante dueño de esta entrada: uno de una entrada ya borrada (`reset`) y vuelta a abrir se retira, en vez de
+        /// sondear a la vez que el nuevo (rompedor 25-oct-c, BAJA 1).
+        watcher: u64,
     }
+
+    static NEXT_WATCHER: AtomicU64 = AtomicU64::new(1);
 
     /// Por dirección: cambiar la URL de Ollama en los ajustes empieza con el circuito cerrado.
     static CIRCUITS: Mutex<Option<HashMap<String, Entry>>> = Mutex::new(None);
@@ -640,19 +673,38 @@ pub mod circuit {
 
     /// Abre el circuito de `url` tras un fallo de conexión o de plazo y lanza el vigilante.
     pub fn trip(url: &str) {
+        trip_with(url, None);
+    }
+
+    /// Como `trip`, para un plazo de generación vencido: `/api/tags` no basta para cerrar; el vigilante prueba una
+    /// generación mínima de `model` (un dictado largo que no se pulió a tiempo no deja sin pulir a los cortos que
+    /// siguen; rompedor 25-oct-b, BAJA 2).
+    pub fn trip_stalled(url: &str, model: &str) {
+        trip_with(url, Some(model));
+    }
+
+    fn trip_with(url: &str, stalled: Option<&str>) {
         let key = base(url);
         let spawn = {
             let mut g = CIRCUITS.lock();
             let m = g.get_or_insert_with(HashMap::new);
-            let e = m.entry(key.clone()).or_insert(Entry { open_until: Instant::now(), fails: 0, probing: false });
+            let e = m.entry(key.clone()).or_insert(Entry { open_until: Instant::now(), fails: 0, probing: false, stalled: false, model: None, stalls: 0, watcher: 0 });
             e.fails = e.fails.saturating_add(1);
+            e.stalled = stalled.is_some();
+            e.stalls = if e.stalled { e.stalls.saturating_add(1) } else { 0 };
+            e.model = stalled.map(str::to_string);
             e.open_until = Instant::now() + window(e.fails);
-            !std::mem::replace(&mut e.probing, true)
+            if std::mem::replace(&mut e.probing, true) {
+                None
+            } else {
+                e.watcher = NEXT_WATCHER.fetch_add(1, Ordering::Relaxed);
+                Some(e.watcher)
+            }
         };
         eprintln!("[ollama] circuito abierto para {key}: el pulido se salta mientras no responda");
-        if spawn {
+        if let Some(id) = spawn {
             let k = key.clone();
-            let launched = std::thread::Builder::new().name("pronto-ollama-vigilante".into()).spawn(move || watch(&k));
+            let launched = std::thread::Builder::new().name("pronto-ollama-vigilante".into()).spawn(move || watch(&k, id));
             if launched.is_err() {
                 if let Some(e) = CIRCUITS.lock().as_mut().and_then(|m| m.get_mut(&key)) {
                     e.probing = false;
@@ -669,20 +721,38 @@ pub mod circuit {
     }
 
     /// Vigilante: pregunta a `/api/tags` hasta que Ollama responde o se acaba la ventana.
-    fn watch(key: &str) {
+    fn watch(key: &str, id: u64) {
         loop {
             std::thread::sleep(Duration::from_millis(PROBE_EVERY_MS.load(Ordering::Relaxed)));
-            {
+            let probe_model = {
                 let mut g = CIRCUITS.lock();
                 let Some(e) = g.as_mut().and_then(|m| m.get_mut(key)) else { return };
+                if e.watcher != id {
+                    return; // la entrada es de otro vigilante (se borró y se volvió a abrir)
+                }
                 if Instant::now() >= e.open_until {
                     e.probing = false;
                     return;
                 }
-            }
-            if status(key).reachable {
+                if e.stalled && e.stalls >= 2 {
+                    // Ya se cerró una vez por la sonda y el pulido de verdad volvió a vencer: la sonda de 1 token no dice
+                    // nada útil (Ollama lento pero vivo). Se cumple la ventana entera, que crece (rompedor 25-oct-c, MEDIA 1).
+                    continue;
+                }
+                if e.stalled { e.model.clone() } else { None }
+            };
+            let alive = match probe_model {
+                // Vivo pero quizá atascado: `/api/tags` no dice nada; una generación mínima sí. Si sale, se cierra la
+                // ventana pero se conservan los fallos: si el pulido de verdad vuelve a vencer, la siguiente es el doble.
+                Some(model) => {
+                    let opts = GenOpts { json: false, num_ctx: None, timeout: Duration::from_secs(3), keep_alive: None, temperature: Some(0.0), num_predict: Some(1) };
+                    generate_probe(key, &model, &opts).is_ok()
+                }
+                None => status(key).reachable,
+            };
+            if alive {
                 let mut g = CIRCUITS.lock();
-                if let Some(e) = g.as_mut().and_then(|m| m.get_mut(key)) {
+                if let Some(e) = g.as_mut().and_then(|m| m.get_mut(key)).filter(|e| e.watcher == id) {
                     // Vuelve a responder: se cierra, pero se conservan los fallos por si la generación
                     // sigue sin salir (Ollama vivo con el modelo atascado).
                     e.open_until = Instant::now();
@@ -691,6 +761,13 @@ pub mod circuit {
                 return;
             }
         }
+    }
+
+    /// Solo para pruebas: las que cambian los tiempos globales del cortacircuitos van en fila (en paralelo se pisaban).
+    #[cfg(test)]
+    pub(crate) fn lock_for_tests() -> parking_lot::MutexGuard<'static, ()> {
+        static SERIE: Mutex<()> = Mutex::new(());
+        SERIE.lock()
     }
 
     /// Solo para pruebas: ventana y cadencia del vigilante cortas.
@@ -909,6 +986,7 @@ mod tests {
 
     #[test]
     fn el_circuito_se_abre_se_cierra_con_el_vigilante_y_con_la_ventana() {
+        let _serie = circuit::lock_for_tests();
         // Ventana larga, vigilante rápido: lo cierra el vigilante cuando /api/tags responde.
         circuit::set_timing_for_tests(Duration::from_secs(60), Duration::from_millis(50));
         let url = fake_server_tags();
