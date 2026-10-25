@@ -266,7 +266,7 @@ mod tests {
         assert_eq!(san(r"\\?\D:\USERS\pepe\x"), r"\\?\D:\Users\…\x");
         // Forma con barras dobles del `{:?}` de Rust.
         assert_eq!(san(r"Os { path: C:\\Users\\usuario\\x }"), r"Os { path: C:\Users\…\\x }");
-        assert!(!san(r"C:\Users\usuario").contains("Txonso"));
+        assert!(!san(r"C:\Users\usuario").contains("usuario"));
         // Las rutas que no son de usuario se conservan.
         assert_eq!(san(r"C:\Program Files\Ollama\ollama.exe"), r"C:\Program Files\Ollama\ollama.exe");
     }
@@ -330,7 +330,7 @@ mod tests {
         assert_eq!(lines.len(), 2);
         let re = Regex::new(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[+-]\d{2}:\d{2} v2\.2\.0 \[pegado\] no se pudo pegar: acceso denegado$").unwrap();
         assert!(re.is_match(lines[0]), "{}", lines[0]);
-        assert!(lines[1].contains("[ollama]") && lines[1].contains(r"C:\Users\…\x") && !lines[1].contains("Txonso"), "{}", lines[1]);
+        assert!(lines[1].contains("[ollama]") && lines[1].contains(r"C:\Users\…\x") && !lines[1].contains("usuario"), "{}", lines[1]);
         let _ = fs::remove_dir_all(&d);
     }
 
