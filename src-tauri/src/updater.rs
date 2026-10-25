@@ -34,7 +34,8 @@ const LATEST_URL: &str = "https://api.github.com/repos/AlfonsoGo/pronto/releases
 pub const ENV_API: &str = "PRONTO_UPDATE_API";
 /// Solo para pruebas: finge que esta es otra versión (p. ej. `2.0.0` para ver el aviso).
 pub const ENV_FAKE_VERSION: &str = "PRONTO_FAKE_VERSION";
-/// Solo para pruebas: permite instalar desde un ejecutable de `target\debug|release`.
+/// Solo para pruebas: permite instalar desde un ejecutable de `target\release` (en una compilación
+/// de depuración nunca se instala).
 pub const ENV_ALLOW_DEV: &str = "PRONTO_UPDATE_ALLOW_DEV";
 
 const CHECK_EVERY: Duration = Duration::from_secs(4 * 3600);
@@ -247,10 +248,192 @@ pub fn url_allowed(url: &str, testing: bool) -> bool {
         return false;
     }
     let host = authority.split(':').next().unwrap_or("").to_ascii_lowercase();
+    // Lo que se lee a mano tiene que coincidir con lo que entiende ureq (el parser WHATWG de `url`):
+    // mismo esquema y mismo host, sin usuario. Una escritura que el parser reinterpreta se rechaza.
+    let parsed = tauri::Url::parse(url).ok().filter(|u| u.username().is_empty() && u.password().is_none());
+    if parsed.as_ref().and_then(|u| u.host_str()) != Some(host.as_str()) || parsed.is_some_and(|u| (u.scheme() == "https") != https) {
+        return false;
+    }
     if !https {
         return testing && (host == "127.0.0.1" || host == "localhost");
     }
+    is_github_host(&host)
+}
+
+/// GitHub y sus servidores de ficheros de releases (`*.githubusercontent.com`).
+pub(crate) fn is_github_host(host: &str) -> bool {
     host == "github.com" || host.ends_with(".github.com") || host.ends_with(".githubusercontent.com")
+}
+
+// ------------------------------------------------------------ red: redirecciones a mano y topes
+//
+// Todas las descargas (actualizador, modelos de voz, instalador de Ollama) usan agentes con
+// `redirects(0)` y siguen las redirecciones aquí. ureq 2 entra en pánico con una `Location` sin host
+// (`file:`, `data:`…) y, si las sigue él, va hasta 5 saltos a cualquier host, también de https a http
+// (rompedor 22-oct-c, descargas MEDIA 1 y 3).
+
+/// Como mucho tantas redirecciones (lo mismo que hacía ureq).
+pub const MAX_REDIRECTS: usize = 5;
+
+/// Por qué falló un GET con redirecciones a mano.
+#[derive(Debug)]
+pub enum GetError {
+    /// Código de error del servidor (>= 400, o un 3xx que no es una redirección).
+    Status(u16),
+    /// Sin conexión, plazo agotado, respuesta ilegible…
+    Transport(String),
+    /// Redirección rechazada: sin destino, a una URL rota o sin host, a otro esquema, de https a
+    /// http, a un host no permitido o demasiadas.
+    Redirect(String),
+}
+
+/// ¿`host` (tal como lo da `Url::host_str`) es este PC?
+pub(crate) fn is_loopback_host(host: &str) -> bool {
+    let h = host.trim_start_matches('[').trim_end_matches(']');
+    h.eq_ignore_ascii_case("localhost")
+        || h.parse::<std::net::IpAddr>().is_ok_and(|ip| match ip {
+            std::net::IpAddr::V4(v4) => v4.is_loopback(),
+            std::net::IpAddr::V6(v6) => v6.is_loopback() || v6.to_ipv4_mapped().is_some_and(|v4| v4.is_loopback()),
+        })
+}
+
+/// GET de `url` siguiendo como mucho `MAX_REDIRECTS` redirecciones (301, 302, 303, 307, 308). Cada
+/// `Location` se resuelve con el parser de `url` (el de ureq) contra la URL actual y se valida antes de
+/// pedirla: http o https con host, nunca de https a http, y `hop_allowed`. `prepare` añade cabeceras o
+/// plazo a cada petición. El agente tiene que tener `redirects(0)`; si no, ureq las sigue él.
+pub fn get_following(
+    agent: &ureq::Agent,
+    url: &str,
+    prepare: &dyn Fn(ureq::Request) -> ureq::Request,
+    hop_allowed: &dyn Fn(&tauri::Url) -> bool,
+) -> Result<ureq::Response, GetError> {
+    let mut current = tauri::Url::parse(url).map_err(|e| GetError::Transport(format!("dirección no válida ({e})")))?;
+    for hop in 0..=MAX_REDIRECTS {
+        let resp = match prepare(agent.get(current.as_str())).call() {
+            Ok(r) => r,
+            Err(ureq::Error::Status(code, _)) => return Err(GetError::Status(code)),
+            Err(e) => return Err(GetError::Transport(e.to_string())),
+        };
+        let code = resp.status();
+        if !(300..400).contains(&code) {
+            return Ok(resp);
+        }
+        if !matches!(code, 301 | 302 | 303 | 307 | 308) {
+            return Err(GetError::Status(code));
+        }
+        if hop == MAX_REDIRECTS {
+            return Err(GetError::Redirect(format!("más de {MAX_REDIRECTS} redirecciones")));
+        }
+        current = next_hop(&current, resp.header("Location"), hop_allowed).map_err(GetError::Redirect)?;
+    }
+    Err(GetError::Redirect(format!("más de {MAX_REDIRECTS} redirecciones")))
+}
+
+/// Plazo para recibir las CABECERAS de la respuesta final (toda la cadena de redirecciones). ureq 2 no
+/// distingue cabeceras de cuerpo: `timeout_read` cuenta por lectura y un servidor que manda las
+/// cabeceras a un byte por segundo no vencía nunca (rompedor 23-oct, descargas MEDIA 1).
+pub const HEADERS_DEADLINE: Duration = Duration::from_secs(60);
+
+/// Como `get_following`, con dos plazos: `headers` para tener la respuesta (cabeceras) y `total` para
+/// toda la petición, cuerpo incluido (`Request::timeout` de ureq 2 también corta las lecturas del
+/// cuerpo). La petición va en un hilo y quien llama espera `headers`: si vence, el hilo se abandona y
+/// ureq lo corta solo a los `total`; así «Descargando…» no queda colgado para siempre (regla 4).
+pub fn get_following_timed(
+    agent: &ureq::Agent,
+    url: &str,
+    headers: Duration,
+    total: Duration,
+    hop_allowed: impl Fn(&tauri::Url) -> bool + Send + 'static,
+) -> Result<ureq::Response, GetError> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let (agent, url) = (agent.clone(), url.to_string());
+    let spawned = std::thread::Builder::new().name("pronto-cabeceras".into()).spawn(move || {
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| get_following(&agent, &url, &|r| r.timeout(total), &hop_allowed)));
+        let _ = tx.send(r);
+    });
+    if let Err(e) = spawned {
+        return Err(GetError::Transport(format!("no se pudo lanzar la petición ({e})")));
+    }
+    match rx.recv_timeout(headers) {
+        Ok(Ok(r)) => r,
+        Ok(Err(_)) | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => Err(GetError::Transport("fallo interno en la petición".into())),
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => Err(GetError::Transport(format!("el servidor no respondió en {}", human(headers)))),
+    }
+}
+
+/// Destino de una redirección desde `current`, o por qué no se sigue.
+fn next_hop(current: &tauri::Url, location: Option<&str>, hop_allowed: &dyn Fn(&tauri::Url) -> bool) -> Result<tauri::Url, String> {
+    let location = location.map(str::trim).filter(|l| !l.is_empty()).ok_or("redirección sin destino")?;
+    let next = current.join(location).map_err(|_| "redirección a una dirección no válida".to_string())?;
+    let host = next.host_str().unwrap_or("").to_string();
+    if !matches!(next.scheme(), "http" | "https") {
+        return Err(format!("redirección a una dirección «{}:», que no es http ni https", next.scheme()));
+    }
+    if host.is_empty() {
+        return Err("redirección a una dirección sin servidor".into());
+    }
+    if current.scheme() == "https" && next.scheme() != "https" {
+        return Err(format!("redirección de https a http ({host})"));
+    }
+    if !hop_allowed(&next) {
+        return Err(format!("redirección a un servidor no permitido ({host})"));
+    }
+    Ok(next)
+}
+
+/// Topes de una descarga: tamaño máximo, plazo total y avance mínimo por ventana de tiempo.
+#[derive(Debug, Clone, Copy)]
+pub struct Limits {
+    /// Más bytes que esto = error en cuanto llega el primero de más (nada de llenar el disco).
+    pub max_bytes: u64,
+    /// Plazo total de la descarga (`None` = sin plazo; cada lectura ya tiene el suyo).
+    pub deadline: Option<Duration>,
+    /// En cada ventana de este tiempo tienen que llegar al menos `min_bytes` (servidor que gotea).
+    pub window: Option<(Duration, u64)>,
+}
+
+/// Fallo de `copy_limited`.
+#[derive(Debug)]
+pub enum CopyError {
+    TooBig(u64),
+    Deadline(Duration),
+    Stalled(Duration, u64),
+    Read(std::io::Error),
+    Write(std::io::Error),
+}
+
+/// Copia `reader` en `out` respetando `limits`. `progress(bytes)` tras cada bloque. Devuelve los bytes.
+pub fn copy_limited(reader: &mut dyn Read, out: &mut dyn Write, limits: Limits, progress: &mut dyn FnMut(u64)) -> Result<u64, CopyError> {
+    let mut buf = vec![0u8; 256 * 1024];
+    let start = Instant::now();
+    let (mut got, mut window_start, mut window_bytes) = (0u64, start, 0u64);
+    loop {
+        // Se pide como mucho un byte más de lo permitido: así se sabe enseguida si sobra.
+        let room = limits.max_bytes.saturating_sub(got).saturating_add(1).min(buf.len() as u64) as usize;
+        let n = reader.read(&mut buf[..room]).map_err(CopyError::Read)?;
+        if n == 0 {
+            return Ok(got);
+        }
+        if got + n as u64 > limits.max_bytes {
+            return Err(CopyError::TooBig(limits.max_bytes));
+        }
+        out.write_all(&buf[..n]).map_err(CopyError::Write)?;
+        got += n as u64;
+        window_bytes += n as u64;
+        progress(got);
+        let now = Instant::now();
+        if let Some(d) = limits.deadline.filter(|d| now.duration_since(start) > *d) {
+            return Err(CopyError::Deadline(d));
+        }
+        if let Some((w, min)) = limits.window {
+            if now.duration_since(window_start) >= w {
+                if window_bytes < min {
+                    return Err(CopyError::Stalled(w, min));
+                }
+                (window_start, window_bytes) = (now, 0);
+            }
+        }
+    }
 }
 
 /// Markdown de la release -> texto plano corto y seguro (la interfaz lo escapa de todos modos).
@@ -402,6 +585,15 @@ static INNER: Mutex<Inner> = Mutex::new(Inner { state: "idle", release: None, ch
 static CHECKING: AtomicBool = AtomicBool::new(false);
 static INSTALLING: AtomicBool = AtomicBool::new(false);
 
+/// Baja la bandera al salir del ámbito, también si el hilo termina por un pánico.
+struct Lowers(&'static AtomicBool);
+
+impl Drop for Lowers {
+    fn drop(&mut self) {
+        self.0.store(false, AtomicOrdering::SeqCst);
+    }
+}
+
 fn snapshot(g: &Inner) -> UpdateStatus {
     UpdateStatus {
         current_version: current_version().to_string(),
@@ -452,8 +644,14 @@ fn user_agent() -> String {
     format!("Pronto/{CARGO_VERSION} (actualizador; +https://github.com/AlfonsoGo/pronto)")
 }
 
+/// Sin redirecciones automáticas: las sigue `get_following`, que vuelve a aplicar `url_allowed`.
 fn agent() -> ureq::Agent {
-    ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(15)).timeout_read(Duration::from_secs(30)).user_agent(&user_agent()).build()
+    ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(15)).timeout_read(Duration::from_secs(30)).redirects(0).user_agent(&user_agent()).build()
+}
+
+/// Cada salto de una redirección del actualizador tiene que pasar `url_allowed` (GitHub por https).
+fn updater_hop(testing: bool) -> impl Fn(&tauri::Url) -> bool {
+    move |u: &tauri::Url| url_allowed(u.as_str(), testing)
 }
 
 fn api_url() -> String {
@@ -467,14 +665,16 @@ fn testing() -> bool {
 /// `releases/latest`. `Ok(None)` = no hay release instalable (404, borrador, sin `.exe`...).
 pub fn fetch_latest(url: &str) -> Result<Option<Release>, CheckError> {
     let fail = |msg: String, rate_limited: bool| CheckError { msg, rate_limited };
-    let resp = match agent().get(url).set("Accept", "application/vnd.github+json").set("X-GitHub-Api-Version", "2022-11-28").timeout(Duration::from_secs(20)).call() {
+    let prepare = |r: ureq::Request| r.set("Accept", "application/vnd.github+json").set("X-GitHub-Api-Version", "2022-11-28").timeout(Duration::from_secs(20));
+    let resp = match get_following(&agent(), url, &prepare, &updater_hop(testing())) {
         Ok(r) => r,
-        Err(ureq::Error::Status(404, _)) => return Ok(None),
-        Err(ureq::Error::Status(code @ (403 | 429), _)) => {
+        Err(GetError::Status(404)) => return Ok(None),
+        Err(GetError::Status(code @ (403 | 429))) => {
             return Err(fail(format!("GitHub ha limitado las consultas ({code}). Se reintentará más tarde."), true));
         }
-        Err(ureq::Error::Status(code, _)) => return Err(fail(format!("GitHub respondió {code}."), false)),
-        Err(e) => return Err(fail(format!("No se pudo conectar con GitHub: {e}"), false)),
+        Err(GetError::Status(code)) => return Err(fail(format!("GitHub respondió {code}."), false)),
+        Err(GetError::Transport(e)) => return Err(fail(format!("No se pudo conectar con GitHub: {e}"), false)),
+        Err(GetError::Redirect(e)) => return Err(fail(format!("GitHub respondió con una redirección que no se sigue: {e}."), false)),
     };
     let mut body = String::new();
     resp.into_reader().take(2 * 1024 * 1024).read_to_string(&mut body).map_err(|e| fail(format!("No se pudo leer la respuesta de GitHub: {e}"), false))?;
@@ -488,8 +688,11 @@ pub fn check(app: &AppHandle) -> Result<UpdateStatus, CheckError> {
     if busy_state(INNER.lock().state) || CHECKING.swap(true, AtomicOrdering::SeqCst) {
         return Ok(status());
     }
-    let result = fetch_latest(&api_url());
-    CHECKING.store(false, AtomicOrdering::SeqCst);
+    let result = {
+        // Se libera aunque la consulta entre en pánico: si no, «Buscar ahora» no volvería a consultar.
+        let _checking = Lowers(&CHECKING);
+        fetch_latest(&api_url())
+    };
     let release = result?;
     let current = current_version();
     let newer = release.filter(|r| is_newer(&r.version, &current));
@@ -565,34 +768,91 @@ pub fn work_dir() -> PathBuf {
     std::env::temp_dir().join("pronto-update")
 }
 
-/// Baja el instalador a `dir\<nombre>` (vía `.part`) y lo verifica. `emit(estado, hecho, total)`.
-pub fn fetch_installer(agent: &ureq::Agent, asset: &Asset, dir: &Path, emit: &mut dyn FnMut(&'static str, u64, u64)) -> Result<PathBuf, String> {
+/// Plazo total de la descarga del instalador (≈ 11 MB): pasado, se aborta y se borra el `.part`.
+pub const INSTALLER_DEADLINE: Duration = Duration::from_secs(30 * 60);
+/// Avance mínimo: al menos `INSTALLER_MIN_BYTES` cada `INSTALLER_WINDOW` (un servidor que gotea
+/// 1 B/s no deja «Descargando…» colgado media hora).
+pub const INSTALLER_WINDOW: Duration = Duration::from_secs(30);
+pub const INSTALLER_MIN_BYTES: u64 = 64 * 1024;
+/// Margen sobre el tamaño publicado por la API antes de cortar (el fichero tiene que medir justo eso).
+pub const INSTALLER_SIZE_MARGIN: u64 = 64 * 1024;
+/// Tope si la API no da el tamaño (y el servidor no manda `Content-Length`).
+pub const INSTALLER_MAX_BYTES: u64 = 512 * 1024 * 1024;
+
+/// `30 minutos`, `400 ms`…
+fn human(d: Duration) -> String {
+    match d.as_secs() {
+        s if s >= 120 => format!("{} minutos", s / 60),
+        s if s >= 1 => format!("{s} s"),
+        _ => format!("{} ms", d.as_millis()),
+    }
+}
+
+/// Nombre del fichero local del instalador: propio y corto (el del asset lo pone quien publica la
+/// release y puede no caber con `.part`, rompedor 22-oct-c, descargas BAJA 5).
+pub fn installer_file_name(version: Option<&Version>) -> String {
+    match version {
+        Some(v) => format!("Pronto-Setup-{v}.exe"),
+        None => "Pronto-Setup.exe".into(),
+    }
+}
+
+/// Baja el instalador a `dir\Pronto-Setup.exe` (vía `.part`) y lo verifica. `emit(estado, hecho, total)`.
+///
+/// El agente de quien llama no se usa: las redirecciones (a mano, con `url_allowed` en cada salto) y
+/// los topes son parte de la verificación y no pueden depender de cómo se construyó. Se conserva el
+/// parámetro para no cambiar la firma pública.
+pub fn fetch_installer(_agent: &ureq::Agent, asset: &Asset, dir: &Path, emit: &mut dyn FnMut(&'static str, u64, u64)) -> Result<PathBuf, String> {
+    let limits = Limits { max_bytes: 0, deadline: Some(INSTALLER_DEADLINE), window: Some((INSTALLER_WINDOW, INSTALLER_MIN_BYTES)) };
+    download_installer(asset, dir, &installer_file_name(None), limits, testing(), emit)
+}
+
+/// `fetch_installer` con nombre local, plazos (`limits.max_bytes` se calcula aquí) y modo de pruebas.
+fn download_installer(asset: &Asset, dir: &Path, file_name: &str, limits: Limits, testing: bool, emit: &mut dyn FnMut(&'static str, u64, u64)) -> Result<PathBuf, String> {
+    // Máximo absoluto, venga lo que venga en el JSON de la release (rompedor 23-oct, descargas BAJA 3).
+    if asset.size > INSTALLER_MAX_BYTES {
+        return Err(format!("El instalador publicado anuncia {} bytes, más del máximo admitido ({INSTALLER_MAX_BYTES}); no se descarga.", asset.size));
+    }
     fs::create_dir_all(dir).map_err(|e| format!("No se pudo crear {}: {e}", dir.display()))?;
-    let dest = dir.join(&asset.name);
-    let part = dir.join(format!("{}.part", asset.name));
+    let dest = dir.join(file_name);
+    let part = dir.join(format!("{file_name}.part"));
     let _ = fs::remove_file(&dest);
     let result = (|| {
-        let resp = agent.get(&asset.url).call().map_err(|e| match e {
-            ureq::Error::Status(code, _) => format!("GitHub respondió {code} al descargar el instalador."),
-            e => format!("No se pudo descargar el instalador: {e}"),
+        // Plazo para las cabeceras y plazo total de la petición (cabeceras + cuerpo).
+        // Unos segundos más que el de `copy_limited`, para que éste dé su aviso claro cuando llega antes.
+        let total_deadline = limits.deadline.unwrap_or(INSTALLER_DEADLINE) + Duration::from_secs(10);
+        let resp = get_following_timed(&agent(), &asset.url, HEADERS_DEADLINE, total_deadline, updater_hop(testing)).map_err(|e| match e {
+            GetError::Status(code) => format!("GitHub respondió {code} al descargar el instalador."),
+            GetError::Transport(e) => format!("No se pudo descargar el instalador: {e}"),
+            GetError::Redirect(e) => format!("No se descarga el instalador: {e}."),
         })?;
-        let total = if asset.size > 0 { asset.size } else { resp.header("Content-Length").and_then(|v| v.parse().ok()).unwrap_or(0) };
+        let announced: Option<u64> = resp.header("Content-Length").and_then(|v| v.trim().parse().ok());
+        // Tope: el tamaño de la API con un margen pequeño; sin él, el `Content-Length` o 512 MB.
+        let max_bytes = match (asset.size, announced) {
+            (0, Some(n)) => n.min(INSTALLER_MAX_BYTES),
+            (0, None) => INSTALLER_MAX_BYTES,
+            (size, _) => size.saturating_add(INSTALLER_SIZE_MARGIN).min(INSTALLER_MAX_BYTES),
+        };
+        if let Some(n) = announced.filter(|n| *n > max_bytes) {
+            return Err(format!("El servidor anuncia un instalador de {n} bytes y el publicado mide {}; no se descarga.", asset.size));
+        }
+        let total = if asset.size > 0 { asset.size } else { announced.unwrap_or(0) };
         let mut reader = resp.into_reader();
         let mut out = File::create(&part).map_err(|e| format!("No se pudo crear el fichero temporal: {e}"))?;
-        let mut buf = vec![0u8; 256 * 1024];
-        let (mut got, mut last) = (0u64, Instant::now() - EMIT_EVERY);
-        loop {
-            let n = reader.read(&mut buf).map_err(|e| format!("Se cortó la descarga: {e}"))?;
-            if n == 0 {
-                break;
-            }
-            out.write_all(&buf[..n]).map_err(|e| format!("No se pudo escribir en disco: {e}"))?;
-            got += n as u64;
+        let mut last = Instant::now() - EMIT_EVERY;
+        let got = copy_limited(&mut reader, &mut out, Limits { max_bytes, ..limits }, &mut |got| {
             if last.elapsed() >= EMIT_EVERY {
                 last = Instant::now();
                 emit("downloading", got, total);
             }
-        }
+        })
+        .map_err(|e| match e {
+            CopyError::TooBig(max) => format!("El servidor manda más de lo que mide el instalador publicado (más de {max} bytes); se ha cortado la descarga."),
+            CopyError::Deadline(d) => format!("La descarga tarda más de {}; se ha cancelado. Inténtalo más tarde.", human(d)),
+            CopyError::Stalled(w, min) => format!("La descarga va demasiado lenta (menos de {} KB en {} s); se ha cancelado. Inténtalo más tarde.", min / 1024, w.as_secs()),
+            CopyError::Read(e) => format!("Se cortó la descarga: {e}"),
+            CopyError::Write(e) => format!("No se pudo escribir en disco: {e}"),
+        })?;
         out.flush().map_err(|e| format!("No se pudo escribir en disco: {e}"))?;
         drop(out);
         emit("downloading", got, total.max(got));
@@ -659,9 +919,42 @@ pub fn spawn_helper(pid: u32, installer: &Path, exe: &Path, dir: &Path) -> Resul
     Err("El ayudante de actualización no llegó a arrancar.".into())
 }
 
+/// ¿Es un ejecutable compilado con cargo? Por la ruta (`target\debug|release`) o, con otro
+/// `target-dir` (el de src-tauri/.cargo/config.toml), por lo que cargo deja a su lado.
 fn is_dev_exe(exe: &Path) -> bool {
     let s = exe.to_string_lossy().to_ascii_lowercase().replace('/', "\\");
-    s.contains("\\target\\debug\\") || s.contains("\\target\\release\\")
+    let cargo_dir = exe.parent().is_some_and(|d| d.join("deps").is_dir() && d.join(".fingerprint").is_dir());
+    s.contains("\\target\\debug\\") || s.contains("\\target\\release\\") || cargo_dir
+}
+
+/// ¿Esta copia no se puede autoinstalar? Una compilación de depuración nunca; una de `target`
+/// solo con `PRONTO_UPDATE_ALLOW_DEV` (pruebas).
+fn install_blocked(exe: &Path, debug: bool, allow_dev: bool) -> bool {
+    debug || (is_dev_exe(exe) && !allow_dev)
+}
+
+/// Por qué no se puede cerrar Pronto ahora para instalar (reunión grabándose o dictado en curso).
+fn busy_reason(st: &AppState) -> Option<&'static str> {
+    if st.meeting.is_active() {
+        return Some("Hay una reunión grabándose. Termínala y actualiza después.");
+    }
+    // Cerrar Pronto con la fase 2 en marcha deja esas notas `failed` (rompedor 22-oct-c).
+    if st.meeting.any_processing() {
+        return Some("Se están preparando las notas de una reunión. Espera a que terminen y actualiza después.");
+    }
+    if st.active.load(AtomicOrdering::SeqCst) {
+        return Some("Estás dictando ahora mismo. Espera a que termine y vuelve a intentarlo.");
+    }
+    None
+}
+
+/// Lanza el ayudante (que cierra Pronto) solo si durante la descarga no se ha empezado a dictar ni
+/// a grabar una reunión: se vuelve a mirar justo antes de salir.
+fn launch_when_idle(busy: impl Fn() -> Option<&'static str>, launch: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+    match busy() {
+        Some(why) => Err(why.into()),
+        None => launch(),
+    }
 }
 
 fn set_error(app: &AppHandle, msg: String) {
@@ -692,14 +985,11 @@ fn publish(app: &AppHandle, state: &'static str, done: u64, total: u64) {
 pub fn install(app: &AppHandle, st: &Arc<AppState>) -> Result<(), String> {
     let preflight = || -> Result<(Release, PathBuf), String> {
         let exe = std::env::current_exe().map_err(|e| format!("No se pudo localizar Pronto: {e}"))?;
-        if is_dev_exe(&exe) && std::env::var(ENV_ALLOW_DEV).is_err() {
+        if install_blocked(&exe, cfg!(debug_assertions), std::env::var(ENV_ALLOW_DEV).is_ok()) {
             return Err("Esta copia de Pronto no está instalada con el instalador (es una compilación de desarrollo): no se actualiza sola.".into());
         }
-        if st.meeting.is_active() {
-            return Err("Hay una reunión grabándose. Termínala y actualiza después.".into());
-        }
-        if st.active.load(AtomicOrdering::SeqCst) {
-            return Err("Estás dictando ahora mismo. Espera a que termine y vuelve a intentarlo.".into());
+        if let Some(why) = busy_reason(st) {
+            return Err(why.into());
         }
         let release = INNER.lock().release.clone().ok_or("No hay ninguna actualización disponible. Pulsa «Buscar ahora».")?;
         if !url_allowed(&release.asset.url, testing()) {
@@ -717,33 +1007,45 @@ pub fn install(app: &AppHandle, st: &Arc<AppState>) -> Result<(), String> {
     if INSTALLING.swap(true, AtomicOrdering::SeqCst) {
         return Ok(()); // ya hay una en marcha
     }
-    let (app2, version) = (app.clone(), release.version.to_string());
+    // Si el hilo no llega a arrancar o termina por un pánico, `INSTALLING` se libera igual.
+    let installing = Lowers(&INSTALLING);
+    let (app2, st2, version) = (app.clone(), st.clone(), release.version.to_string());
     let spawned = std::thread::Builder::new().name("pronto-update".into()).spawn(move || {
+        let installing = installing;
         eprintln!("[updater] descargando {version}");
-        publish(&app2, "downloading", 0, release.asset.size);
-        let dir = work_dir();
-        let ag = agent();
-        let outcome = fetch_installer(&ag, &release.asset, &dir, &mut |state, done, total| publish(&app2, state, done, total))
-            .and_then(|installer| {
-                publish(&app2, "installing", release.asset.size, release.asset.size);
-                spawn_helper(std::process::id(), &installer, &exe, &dir)
-            });
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            publish(&app2, "downloading", 0, release.asset.size);
+            let dir = work_dir();
+            let limits = Limits { max_bytes: 0, deadline: Some(INSTALLER_DEADLINE), window: Some((INSTALLER_WINDOW, INSTALLER_MIN_BYTES)) };
+            let name = installer_file_name(Some(&release.version));
+            download_installer(&release.asset, &dir, &name, limits, testing(), &mut |state, done, total| publish(&app2, state, done, total)).and_then(|installer| {
+                launch_when_idle(
+                    || busy_reason(&st2),
+                    || {
+                        publish(&app2, "installing", release.asset.size, release.asset.size);
+                        spawn_helper(std::process::id(), &installer, &exe, &dir)
+                    },
+                )
+            })
+        }))
+        .unwrap_or_else(|_| Err("Fallo interno al descargar la actualización. Inténtalo de nuevo.".into()));
         match outcome {
             Ok(()) => {
                 eprintln!("[updater] ayudante en marcha; cerrando Pronto");
+                // Pronto se cierra: no se libera `INSTALLING` para no lanzar un segundo ayudante.
+                std::mem::forget(installing);
                 // Un instante para que la interfaz pinte «Instalando…» y salimos limpios.
                 std::thread::sleep(Duration::from_millis(600));
                 app2.exit(0);
             }
             Err(e) => {
                 eprintln!("[updater] {e}");
-                INSTALLING.store(false, AtomicOrdering::SeqCst);
+                drop(installing);
                 set_error(&app2, e);
             }
         }
     });
     if let Err(e) = spawned {
-        INSTALLING.store(false, AtomicOrdering::SeqCst);
         let msg = format!("No se pudo lanzar la actualización: {e}");
         set_error(app, msg.clone());
         return Err(msg);
@@ -791,8 +1093,11 @@ pub fn spawn_background(app: AppHandle, st: Arc<AppState>) {
         loop {
             let auto = st.settings.read().auto_update;
             if auto && Instant::now() >= next_due && !INSTALLING.load(AtomicOrdering::SeqCst) {
+                // Un pánico en la consulta no mata este hilo: se trata como un fallo y se reintenta.
+                let checked = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| check(&app)))
+                    .unwrap_or_else(|_| Err(CheckError { msg: "fallo interno al buscar actualizaciones".into(), rate_limited: false }));
                 next_due = Instant::now()
-                    + match check(&app) {
+                    + match checked {
                         Ok(_) => CHECK_EVERY,
                         Err(e) => {
                             eprintln!("[updater] {}", e.msg);
@@ -926,6 +1231,14 @@ mod tests {
     }
 
     #[test]
+    fn nombre_local_del_instalador_es_propio_y_corto() {
+        assert_eq!(installer_file_name(Some(&v("2.3.0"))), "Pronto-Setup-2.3.0.exe");
+        assert_eq!(installer_file_name(None), "Pronto-Setup.exe");
+        let max = installer_file_name(Some(&v("18446744073709551615.18446744073709551615.18446744073709551615")));
+        assert!(max.len() + ".part".len() < 100, "{max}");
+    }
+
+    #[test]
     fn nombre_de_asset_peligroso_se_sanea() {
         assert_eq!(safe_file_name("Pronto-Setup-2.0.2.exe"), "Pronto-Setup-2.0.2.exe");
         assert_eq!(safe_file_name("..\\..\\Windows\\evil.exe"), "evil.exe");
@@ -950,6 +1263,11 @@ mod tests {
         assert!(!url_allowed("http://127.0.0.1:80/x.exe", false), "local solo en pruebas");
         assert!(url_allowed("http://127.0.0.1:8080/x.exe", true));
         assert!(!url_allowed("http://evil.com/x.exe", true));
+        // Escrituras que el parser de ureq reinterpreta: se rechazan.
+        assert!(!url_allowed("http://127.1:8080/x.exe", true), "127.1 es 127.0.0.1 escrito de otra forma");
+        assert!(!url_allowed("https://git%68ub.com/x.exe", false));
+        assert!(!url_allowed("https://github.com\\@evil.com/x.exe", false));
+        assert!(!url_allowed("https://user@github.com/x.exe", false));
     }
 
     // ---------------------------------------------------------- notas
@@ -1092,9 +1410,9 @@ mod tests {
         let asset = asset_for(&url, &body, true);
         let mut events: Vec<(&str, u64, u64)> = Vec::new();
         let path = fetch_installer(&agent(), &asset, &dir, &mut |s, d, t| events.push((s, d, t))).unwrap();
-        assert_eq!(path, dir.join("Pronto-Setup-9.9.9.exe"));
+        assert_eq!(path, dir.join("Pronto-Setup.exe"), "nombre local propio, no el del asset");
         assert_eq!(fs::read(&path).unwrap(), body);
-        assert!(!dir.join("Pronto-Setup-9.9.9.exe.part").exists());
+        assert!(!dir.join("Pronto-Setup.exe.part").exists());
         assert_eq!(hits.load(AtomicOrdering::SeqCst), 1);
         assert!(events.iter().any(|e| e.0 == "downloading"));
         assert_eq!(events.last().unwrap(), &("verifying", body.len() as u64, body.len() as u64));
@@ -1128,6 +1446,226 @@ mod tests {
 
         assert_eq!(fs::read_dir(&dir).unwrap().count(), 0, "ni .part ni .exe");
         let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Servidor que contesta la respuesta HTTP cruda de `respond(ruta)` y cuenta las peticiones.
+    fn serve_raw(respond: impl Fn(&str, &mut std::net::TcpStream) + Send + Sync + 'static) -> (String, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        let hits = Arc::new(AtomicUsize::new(0));
+        let counter = hits.clone();
+        let respond = Arc::new(respond);
+        std::thread::spawn(move || {
+            for conn in listener.incoming().flatten() {
+                counter.fetch_add(1, AtomicOrdering::SeqCst);
+                let respond = respond.clone();
+                std::thread::spawn(move || {
+                    let mut reader = BufReader::new(conn.try_clone().unwrap());
+                    let mut line = String::new();
+                    let _ = reader.read_line(&mut line);
+                    loop {
+                        let mut h = String::new();
+                        if reader.read_line(&mut h).is_err() || h.trim().is_empty() {
+                            break;
+                        }
+                    }
+                    let path = line.split_whitespace().nth(1).unwrap_or("/").to_string();
+                    let mut conn = conn;
+                    respond(&path, &mut conn);
+                });
+            }
+        });
+        (url, hits)
+    }
+
+    fn redirect(to: &str) -> Vec<u8> {
+        format!("HTTP/1.1 302 Found\r\nLocation: {to}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").into_bytes()
+    }
+
+    const NO_LIMITS: Limits = Limits { max_bytes: 0, deadline: None, window: None };
+
+    /// Rompedor 22-oct-c, descargas MEDIA 1 y 3: las redirecciones se siguen a mano (como mucho 5),
+    /// con `url_allowed` en cada salto, y una `Location` sin host es un error, no un pánico.
+    #[test]
+    fn redirecciones_a_mano_validadas_en_cada_salto() {
+        let dir = tmp("redir");
+        let body = b"MZ-instalador-redirigido".to_vec();
+        let b2 = body.clone();
+        let (url, hits) = serve_raw(move |path, conn| {
+            let r = match path {
+                "/a" => redirect("/b"),
+                "/b" => redirect("setup.exe"),
+                "/setup.exe" => {
+                    let mut r = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", b2.len()).into_bytes();
+                    r.extend_from_slice(&b2);
+                    r
+                }
+                "/bucle" => redirect("/bucle"),
+                "/fuera" => redirect("https://127.0.0.1:1/x.exe"),
+                "/otro" => redirect("http://evil.example/x.exe"),
+                "/file" => redirect("file:///C:/Windows/win.ini"),
+                "/data" => redirect("data:,MZ"),
+                "/js" => redirect("javascript:alert(1)"),
+                "/vacio" => redirect("http://"),
+                "/sin" => b"HTTP/1.1 302 Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
+                "/300" => b"HTTP/1.1 300 Multiple Choices\r\nLocation: /setup.exe\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
+                _ => b"HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_vec(),
+            };
+            let _ = conn.write_all(&r);
+        });
+        let mut asset = asset_for(&url, &body, true);
+        asset.url = format!("{url}/a");
+        let p = download_installer(&asset, &dir, "P.exe", NO_LIMITS, true, &mut |_, _, _| {}).unwrap();
+        assert_eq!(fs::read(&p).unwrap(), body);
+        assert_eq!(hits.load(AtomicOrdering::SeqCst), 3, "dos redirecciones relativas y el fichero");
+        // Fuera del modo de pruebas http://127.0.0.1 no pasa `url_allowed`: el primer salto se rechaza.
+        let e = download_installer(&asset, &dir, "P.exe", NO_LIMITS, false, &mut |_, _, _| {}).unwrap_err();
+        assert!(e.contains("no permitido"), "{e}");
+        for (ruta, esperado) in [
+            ("/bucle", "más de 5"),
+            ("/fuera", "no permitido"),
+            ("/otro", "no permitido (evil.example)"),
+            ("/file", "no es http"),
+            ("/data", "no es http"),
+            ("/js", "no es http"),
+            ("/vacio", "no válida"),
+            ("/sin", "sin destino"),
+            ("/300", "300"),
+        ] {
+            asset.url = format!("{url}{ruta}");
+            let before = hits.load(AtomicOrdering::SeqCst);
+            let e = download_installer(&asset, &dir, "P.exe", NO_LIMITS, true, &mut |_, _, _| {}).unwrap_err();
+            assert!(e.contains(esperado), "{ruta}: {e}");
+            let n = hits.load(AtomicOrdering::SeqCst) - before;
+            assert!(n <= MAX_REDIRECTS + 1, "{ruta}: {n} peticiones");
+        }
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 0, "ni .part ni .exe");
+        // La consulta de la release, igual: una redirección sin host es un error, no un pánico.
+        let e = fetch_latest(&format!("{url}/file")).unwrap_err();
+        assert!(e.msg.contains("redirección"), "{}", e.msg);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn salto_de_https_a_http_o_a_otro_host_se_rechaza() {
+        let gh = tauri::Url::parse("https://github.com/AlfonsoGo/pronto/releases/download/v2/x.exe").unwrap();
+        let hop = updater_hop(false);
+        let ok = next_hop(&gh, Some("https://objects.githubusercontent.com/x?sig=1"), &hop).unwrap();
+        assert_eq!(ok.host_str(), Some("objects.githubusercontent.com"));
+        assert!(next_hop(&gh, Some("http://objects.githubusercontent.com/x"), &hop).unwrap_err().contains("https a http"));
+        assert!(next_hop(&gh, Some("https://evil.example/x.exe"), &hop).unwrap_err().contains("no permitido"));
+        assert!(next_hop(&gh, Some("https://github.com.evil.example/x.exe"), &hop).unwrap_err().contains("no permitido"));
+        assert!(next_hop(&gh, Some("//evil.example/x.exe"), &hop).unwrap_err().contains("no permitido"), "relativa al esquema");
+        assert!(next_hop(&gh, Some("\\\\evil.example\\x.exe"), &hop).unwrap_err().contains("no permitido"), "barras invertidas = //");
+        assert!(next_hop(&gh, Some("file:///C:/x.exe"), &hop).unwrap_err().contains("no es http"));
+        assert!(next_hop(&gh, Some("  "), &hop).unwrap_err().contains("sin destino"));
+        assert!(next_hop(&gh, None, &hop).unwrap_err().contains("sin destino"));
+        assert_eq!(next_hop(&gh, Some("/AlfonsoGo/pronto/y.exe"), &hop).unwrap().as_str(), "https://github.com/AlfonsoGo/pronto/y.exe");
+    }
+
+    /// PRNT-41: tope de tamaño (el de la API + un margen) en cuanto se pasa, y aviso adelantado si el
+    /// servidor anuncia más.
+    #[test]
+    fn descarga_corta_en_cuanto_pasa_del_tamano_publicado() {
+        let dir = tmp("tope");
+        let (url, _) = serve_raw(|path, conn| {
+            if path == "/anuncia" {
+                let _ = conn.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 10000000\r\nConnection: close\r\n\r\nMZ");
+                return;
+            }
+            let _ = conn.write_all(b"HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+            let mut block = vec![0u8; 64 * 1024];
+            block[..2].copy_from_slice(b"MZ");
+            for _ in 0..160 {
+                if conn.write_all(&block).is_err() {
+                    return;
+                }
+            }
+        });
+        let asset = Asset { name: "P.exe".into(), url: format!("{url}/chorro"), size: 1000, sha256: None };
+        let mut max_done = 0u64;
+        let e = download_installer(&asset, &dir, "P.exe", NO_LIMITS, true, &mut |_, d, _| max_done = max_done.max(d)).unwrap_err();
+        assert!(e.contains("más de"), "{e}");
+        assert!(max_done <= 1000 + INSTALLER_SIZE_MARGIN, "{max_done}");
+        let asset = Asset { name: "P.exe".into(), url: format!("{url}/anuncia"), size: 1000, sha256: None };
+        let e = download_installer(&asset, &dir, "P.exe", NO_LIMITS, true, &mut |_, _, _| {}).unwrap_err();
+        assert!(e.contains("anuncia"), "{e}");
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 0, "sin .part");
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// Rompedor 23-oct, descargas MEDIA 1: las cabeceras a goteo se cortan con el plazo de cabeceras.
+    #[test]
+    fn cabeceras_a_goteo_se_cortan_con_el_plazo_de_cabeceras() {
+        let (url, _) = serve_raw(|_, conn| {
+            let _ = conn.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nX-Goteo: ");
+            for _ in 0..30 {
+                std::thread::sleep(Duration::from_millis(200));
+                if conn.write_all(b"a").is_err() {
+                    return;
+                }
+            }
+        });
+        let t = Instant::now();
+        let agent = agent();
+        let e = get_following_timed(&agent, &format!("{url}/x"), Duration::from_millis(700), Duration::from_secs(30), |_| true).err().expect("tenía que fallar");
+        assert!(matches!(e, GetError::Transport(ref m) if m.contains("no respondió")), "{e:?}");
+        assert!(t.elapsed() < Duration::from_secs(3), "{:?}", t.elapsed());
+        // Con cabeceras normales, la respuesta llega entera.
+        let (ok, _) = serve(vec![("/b", b"hola".to_vec())]);
+        let r = get_following_timed(&agent, &format!("{ok}/b"), Duration::from_secs(5), Duration::from_secs(30), |_| true).unwrap();
+        assert_eq!(r.status(), 200);
+    }
+
+    /// Rompedor 23-oct, descargas BAJA 3: un `size` enorme en el JSON no sube el tope por encima de 512 MB.
+    #[test]
+    fn un_size_enorme_en_el_json_no_levanta_el_tope() {
+        let dir = tmp("size-enorme");
+        for size in [INSTALLER_MAX_BYTES + 1, 50 * 1024 * 1024 * 1024, u64::MAX] {
+            let asset = Asset { name: "P.exe".into(), url: "http://127.0.0.1:1/x.exe".into(), size, sha256: None };
+            let e = download_installer(&asset, &dir, "P.exe", NO_LIMITS, true, &mut |_, _, _| {}).unwrap_err();
+            assert!(e.contains("máximo"), "{e}");
+        }
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// PRNT-41: plazo total y avance mínimo. Un servidor que gotea aborta y no deja `.part`.
+    #[test]
+    fn descarga_que_gotea_se_aborta_y_no_deja_part() {
+        let dir = tmp("goteo");
+        let (url, _) = serve_raw(|_, conn| {
+            let _ = conn.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 100000\r\nConnection: close\r\n\r\nMZ");
+            for _ in 0..200 {
+                std::thread::sleep(Duration::from_millis(20));
+                if conn.write_all(b"\0").is_err() {
+                    return;
+                }
+            }
+        });
+        let asset = Asset { name: "P.exe".into(), url: format!("{url}/a.exe"), size: 100_000, sha256: None };
+        let t0 = Instant::now();
+        let lento = Limits { max_bytes: 0, deadline: None, window: Some((Duration::from_millis(400), 1024)) };
+        let e = download_installer(&asset, &dir, "P.exe", lento, true, &mut |_, _, _| {}).unwrap_err();
+        assert!(e.contains("lenta"), "{e}");
+        let plazo = Limits { max_bytes: 0, deadline: Some(Duration::from_millis(400)), window: None };
+        let e = download_installer(&asset, &dir, "P.exe", plazo, true, &mut |_, _, _| {}).unwrap_err();
+        assert!(e.contains("tarda"), "{e}");
+        assert!(t0.elapsed() < Duration::from_secs(3), "{:?}", t0.elapsed());
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 0, "sin .part");
+        // Los de verdad: 30 min de plazo y 64 KB cada 30 s.
+        assert_eq!((INSTALLER_DEADLINE, INSTALLER_WINDOW, INSTALLER_MIN_BYTES), (Duration::from_secs(1800), Duration::from_secs(30), 65_536));
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn hosts_de_este_pc() {
+        for h in ["localhost", "LocalHost", "127.0.0.1", "127.9.9.9", "[::1]", "[::ffff:127.0.0.1]"] {
+            assert!(is_loopback_host(h), "{h}");
+        }
+        for h in ["", "evil.example", "localhost.evil", "0.0.0.0", "[::]", "192.168.1.5", "10.0.0.1"] {
+            assert!(!is_loopback_host(h), "{h}");
+        }
     }
 
     #[test]
@@ -1185,16 +1723,52 @@ mod tests {
         assert!(is_dev_exe(Path::new(r"C:\x\Prontov2\src-tauri\target\release\pronto.exe")));
         assert!(is_dev_exe(Path::new(r"C:\x\src-tauri\target\debug\pronto.exe")));
         assert!(!is_dev_exe(Path::new(r"C:\Users\a\AppData\Local\Programs\Pronto\pronto.exe")));
+        // Carpeta de compilación con otro nombre (`target-dir` de src-tauri/.cargo/config.toml): se
+        // reconoce por lo que cargo deja junto al ejecutable.
+        let dir = std::env::temp_dir().join(format!("pronto_dev_pt_{}", std::process::id())).join("release");
+        fs::create_dir_all(dir.join("deps")).unwrap();
+        fs::create_dir_all(dir.join(".fingerprint")).unwrap();
+        assert!(is_dev_exe(&dir.join("pronto.exe")));
+        let _ = fs::remove_dir_all(dir.parent().unwrap());
+        // En depuración nunca, ni con la variable de pruebas; instalada, sí.
+        let installed = Path::new(r"C:\Users\a\AppData\Local\Programs\Pronto\pronto.exe");
+        assert!(install_blocked(installed, true, true));
+        assert!(!install_blocked(installed, false, false));
+        assert!(install_blocked(Path::new(r"C:\x\target\release\pronto.exe"), false, false));
+        assert!(!install_blocked(Path::new(r"C:\x\target\release\pronto.exe"), false, true));
+    }
+
+    #[test]
+    fn no_se_cierra_pronto_si_se_empezo_a_dictar_durante_la_descarga() {
+        let mut launched = false;
+        let r = launch_when_idle(|| Some("Estás dictando ahora mismo."), || {
+            launched = true;
+            Ok(())
+        });
+        assert!(r.is_err() && !launched, "el ayudante cierra Pronto: no se lanza con un dictado en curso");
+        let mut launched = false;
+        assert!(launch_when_idle(|| None, || {
+            launched = true;
+            Ok(())
+        })
+        .is_ok());
+        assert!(launched);
     }
 
     #[test]
     fn el_ayudante_hace_lo_prometido() {
         let s = HELPER_SCRIPT;
-        for needle in ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "Wait-Process", "helper-started", "result.txt", "Start-Process -FilePath $Exe"] {
+        for needle in ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "Wait-Process", "helper-started", "result.txt", "[System.Diagnostics.Process]::Start($psi)"] {
             assert!(s.contains(needle), "falta {needle}");
         }
         assert!(s.is_ascii(), "ASCII puro: PowerShell 5.1 lee el script sin sorpresas");
-        assert_eq!(s.matches("Start-Process -FilePath $Exe").count(), 1, "un solo punto de reapertura");
+        assert_eq!(s.matches("::Start(").count() + s.matches("Start-Process -FilePath $Exe").count(), 1, "un solo punto de reapertura");
+        // Rompedor 22-oct-c, descargas MEDIA 2: con corchetes en la carpeta («C:\Programas [Alfonso]»)
+        // `-WorkingDirectory` y `Out-File -FilePath` los toman como comodín. Nada de parámetros que
+        // interpreten comodines con rutas que vienen de fuera.
+        for wildcard in ["-WorkingDirectory", "Out-File -FilePath", "Split-Path -Parent $Exe", "Test-Path $", "Get-Item $"] {
+            assert!(!s.contains(wildcard), "{wildcard}: trata los corchetes como comodín");
+        }
     }
 
     /// `#[ignore]`: consulta REAL a GitHub (solo lectura). `cargo test ultima_release_real -- --ignored --nocapture`

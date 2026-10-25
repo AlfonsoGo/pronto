@@ -17,7 +17,8 @@ param(
 $ErrorActionPreference = 'Continue'
 $log = Join-Path $WorkDir 'update.log'
 function Log([string]$m) {
-    try { ((Get-Date -Format o) + '  ' + $m) | Out-File -FilePath $log -Append -Encoding utf8 } catch { }
+    # -LiteralPath: con -FilePath, unos corchetes en la carpeta ("tmp [1]") se toman como comodin.
+    try { ((Get-Date -Format o) + '  ' + $m) | Out-File -LiteralPath $log -Append -Encoding utf8 } catch { }
 }
 
 # 1) Senal de vida para Pronto.
@@ -66,7 +67,15 @@ for ($i = 0; $i -lt 8; $i++) {
     if (Test-ProntoRunning) { Log 'Pronto en marcha'; break }
     if (Test-Path -LiteralPath $Exe) {
         Log "abriendo $Exe (intento $i)"
-        try { Start-Process -FilePath $Exe -WorkingDirectory (Split-Path -Parent $Exe) } catch { Log "no se pudo abrir: $_" }
+        # ProcessStartInfo y no el parametro WorkingDirectory de Start-Process, que toma los corchetes de la carpeta
+        # ("C:\Programas [Alfonso]\Pronto") como comodin y no abre nada.
+        try {
+            $psi = New-Object System.Diagnostics.ProcessStartInfo
+            $psi.FileName = $Exe
+            $psi.WorkingDirectory = [System.IO.Path]::GetDirectoryName($Exe)
+            $psi.UseShellExecute = $true
+            [void][System.Diagnostics.Process]::Start($psi)
+        } catch { Log "no se pudo abrir: $_" }
     } else {
         Log "no existe $Exe"
     }

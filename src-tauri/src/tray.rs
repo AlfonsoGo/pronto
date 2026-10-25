@@ -43,17 +43,47 @@ fn update_label(lang: &str, version: &str) -> String {
     if lang == "en" { format!("Update to {version}") } else { format!("Actualizar a {version}") }
 }
 
-pub fn show_hub(app: &AppHandle) {
+/// Muestra el hub. Al cerrarlo se destruye (su WebView2 ocupa ~300 MB que no hace falta tener
+/// cogidos en la bandeja), así que si no existe se crea de nuevo con `query` en la URL (`page=…`,
+/// `meeting=…`, `settings=…`, que `hub.js` lee al arrancar). Devuelve si ya existía: solo entonces
+/// tiene sentido mandarle eventos, porque una página recién creada aún no escucha.
+fn ensure_hub(app: &AppHandle, query: &str) -> bool {
     if let Some(w) = app.get_webview_window("hub") {
         let _ = w.show();
         let _ = w.unminimize();
         let _ = w.set_focus();
+        return true;
     }
+    let Some(mut cfg) = app.config().app.windows.iter().find(|w| w.label == "hub").cloned() else { return false };
+    if !query.is_empty() {
+        cfg.url = tauri::WebviewUrl::App(format!("hub.html?{query}").into());
+    }
+    cfg.visible = true;
+    // En otro hilo: crear una ventana desde un comando síncrono bloquea el bucle de eventos en Windows.
+    let app = app.clone();
+    std::thread::spawn(move || match tauri::WebviewWindowBuilder::from_config(&app, &cfg).and_then(|b| b.build()) {
+        Ok(w) => {
+            let _ = w.set_focus();
+        }
+        Err(e) => eprintln!("[tray] no se pudo abrir el hub: {e}"),
+    });
+    false
+}
+
+pub fn show_hub(app: &AppHandle) {
+    ensure_hub(app, "");
 }
 
 /// Muestra el hub y, con `page`, le pide navegar (`hub://navigate { page, id? }`).
 pub fn open_hub(app: &AppHandle, page: Option<&str>, id: Option<i64>) {
-    show_hub(app);
+    let query = match (page, id) {
+        (Some(p), Some(id)) => format!("page={p}&meeting={id}"),
+        (Some(p), None) => format!("page={p}"),
+        _ => String::new(),
+    };
+    if !ensure_hub(app, &query) {
+        return;
+    }
     if let Some(page) = page {
         let payload = match id {
             Some(id) => serde_json::json!({ "page": page, "id": id }),
@@ -65,7 +95,9 @@ pub fn open_hub(app: &AppHandle, page: Option<&str>, id: Option<i64>) {
 
 /// Muestra el hub y le pide abrir Configuración (`hub://settings { tab }`).
 pub fn open_settings(app: &AppHandle, tab: Option<&str>) {
-    show_hub(app);
+    if !ensure_hub(app, &format!("settings={}", tab.unwrap_or("general"))) {
+        return;
+    }
     let _ = app.emit("hub://settings", serde_json::json!({ "tab": tab }));
 }
 
@@ -163,10 +195,15 @@ fn build_menu(app: &AppHandle, s: &Settings) -> tauri::Result<Menu<Wry>> {
     Menu::with_items(app, &[&open, &paste, &mic_menu, &PredefinedMenuItem::separator(app)?, &quit])
 }
 
+/// «Pronto», o «Pronto (pruebas)» en la versión de pruebas (`PRONTO_DATOS`).
+fn tip_base() -> &'static str {
+    if crate::db::test_build() { "Pronto (pruebas)" } else { "Pronto" }
+}
+
 pub fn build(app: &AppHandle, s: &Settings) -> tauri::Result<()> {
     let menu = build_menu(app, s)?;
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
-        .tooltip("Pronto")
+        .tooltip(tip_base())
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| on_menu(app, event.id().as_ref()))
@@ -190,8 +227,8 @@ pub fn rebuild(app: &AppHandle, s: &Settings) {
                 eprintln!("[tray] no se pudo actualizar el menú: {e}");
             }
             let tip = match updater::pending_version() {
-                Some(v) => format!("Pronto · {}", update_label(&s.app_language, &v).to_lowercase()),
-                None => "Pronto".to_string(),
+                Some(v) => format!("{} · {}", tip_base(), update_label(&s.app_language, &v).to_lowercase()),
+                None => tip_base().to_string(),
             };
             let _ = tray.set_tooltip(Some(tip));
         }

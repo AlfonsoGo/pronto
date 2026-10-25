@@ -31,6 +31,21 @@ export function debounce(fn, ms = 250) {
   d.flush = (...a) => { clearTimeout(h); fn(...a); };
   return d;
 }
+// Guardados pendientes (p. ej. el autoguardado de una nota) que hay que vaciar antes de cerrar la ventana.
+const pendingSaves = new Set();
+/** Registra fn() -> Promise que guarda lo pendiente ya. Devuelve la función para quitarla. */
+export function onBeforeClose(fn) { pendingSaves.add(fn); return () => pendingSaves.delete(fn); }
+/** Lanza todos los guardados pendientes y espera a que acaben. Devuelve true si todos se guardaron; false si alguno
+ *  falló (cada fn puede devolver false) o si pasó `ms`. Rompedor 23-oct, hub MEDIA 1: antes cortaba a los 1,5 s y la
+ *  ventana se cerraba con el último `save_note` sin mandar cuando el anterior iba lento (base ocupada, antivirus).
+ *  Ahora espera al guardado en vuelo y al pendiente; el tope de 30 s solo evita que una base colgada deje la ventana
+ *  imposible de cerrar. */
+export function flushPending(ms = 30000) {
+  const all = [...pendingSaves].map((fn) => { try { return Promise.resolve(fn()).then((r) => r !== false, () => false); } catch (_) { return Promise.resolve(false); } });
+  return Promise.race([Promise.all(all).then((rs) => rs.every(Boolean)), sleep(ms).then(() => false)]);
+}
+/** Texto sin tildes ni mayúsculas, para que «cancion» encuentre «Canción» (NFD + quitar los acentos combinados). */
+export const fold = (s) => String(s ?? '').normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 export const errText = (e) => (typeof e === 'string' ? e : e && e.message ? e.message : t('Algo salió mal.'));
 
 // ------------------------------------------------------------------ formato
@@ -121,7 +136,7 @@ document.addEventListener('keydown', (e) => {
   if (!top) return;
   if (e.key === 'Escape' && !top.noEsc) {
     if (menuEl) return;
-    e.preventDefault(); e.stopPropagation(); top.close();
+    e.preventDefault(); e.stopPropagation(); top.dismiss();
   } else if (e.key === 'Tab') {
     const f = $$(FOCUSABLE, top.modal).filter((x) => x.offsetParent !== null);
     if (!f.length) return;
@@ -132,9 +147,10 @@ document.addEventListener('keydown', (e) => {
   }
 }, true);
 
-/** Abre un modal. opts: {title, subtitle, body, footer, width, cls, raw, onClose, noEsc, noX, height}. */
+/** Abre un modal. opts: {title, subtitle, body, footer, width, cls, raw, onClose, noEsc, noX, height, dirty}.
+ *  dirty() -> true si hay cambios sin guardar: Esc o un clic en el velo preguntan antes de descartarlos. */
 export function openModal(opts) {
-  const { title = '', subtitle = '', body = '', footer = '', width = 520, height, cls = '', raw = '', onClose, noEsc, noX } = opts;
+  const { title = '', subtitle = '', body = '', footer = '', width = 520, height, cls = '', raw = '', onClose, noEsc, noX, dirty } = opts;
   const prev = document.activeElement;
   const velo = document.createElement('div');
   velo.className = 'velo';
@@ -143,13 +159,13 @@ export function openModal(opts) {
       style="width:${typeof width === 'number' ? width + 'px' : width};${height ? `height:${height};` : ''}">
     <div class="modal-core">${raw || `
       <div class="modal-hd"><div><h2 id="${id}">${esc(title)}</h2>${subtitle ? `<p>${subtitle}</p>` : ''}</div>
-        ${noX ? '' : `<button class="icon-btn" data-close aria-label="${esc(t('Cerrar'))}">${icon('x', 18)}</button>`}</div>
+        ${noX ? '' : `<button class="icon-btn" data-close data-x aria-label="${esc(t('Cerrar'))}">${icon('x', 18)}</button>`}</div>
       <div class="modal-bd">${body}</div>
       ${footer ? `<div class="modal-ft">${footer}</div>` : ''}`}
     </div></div>`;
   document.body.appendChild(velo);
   const modal = velo.firstElementChild;
-  let closed = false;
+  let closed = false, asking = false;
   const ctl = {
     el: velo, modal, core: modal.firstElementChild, noEsc,
     bd: $('.modal-bd', velo), ft: $('.modal-ft', velo),
@@ -162,10 +178,20 @@ export function openModal(opts) {
       if (prev && prev.focus && document.contains(prev)) { try { prev.focus({ preventScroll: true }); } catch (_) { /* */ } }
       if (onClose) onClose(result);
     },
+    // Esc o clic en el velo: cierra, salvo que haya cambios sin guardar y no se confirme descartarlos.
+    dismiss() {
+      if (closed || asking) return;
+      if (!dirty || !dirty()) { ctl.close(); return; }
+      asking = true;
+      confirmDialog({ title: t('¿Descartar los cambios?'), body: t('Lo que has escrito no se ha guardado.'), confirmText: t('Descartar') })
+        .then((ok) => { asking = false; if (ok) ctl.close(); });
+    },
   };
   stack.push(ctl);
-  velo.addEventListener('mousedown', (e) => { if (e.target === velo && !noEsc) ctl.close(); });
-  velo.addEventListener('click', (e) => { if (e.target.closest('[data-close]')) ctl.close(); });
+  velo.addEventListener('mousedown', (e) => { if (e.target === velo && !noEsc) ctl.dismiss(); });
+  // La × del encabezado pregunta antes de descartar (como Esc y el clic fuera); «Cancelar» y los demás [data-close] descartan a propósito.
+  // (rompedor 23-oct, hub BAJA 3)
+  velo.addEventListener('click', (e) => { const c = e.target.closest('[data-close]'); if (c) { if (c.hasAttribute('data-x')) ctl.dismiss(); else ctl.close(); } });
   requestAnimationFrame(() => {
     const auto = $('[autofocus],[data-autofocus]', modal) || $('input:not([type=hidden]),textarea', modal);
     (auto || $('.modal-ft .btn-primary,.modal-ft .btn', modal) || $('[data-close]', modal) || modal).focus({ preventScroll: true });
@@ -224,6 +250,9 @@ export function openMenu(anchor, items, opts = {}) {
     const b = e.target.closest('.m-item'); if (!b) return;
     const it = items[+b.dataset.i];
     closeMenu();
+    // El foco vuelve al botón que abrió el menú antes de ejecutar la acción: un modal que abra la acción lo recordará
+    // (y al cancelarlo el foco no cae al <body>). [rompedor 23-oct, hub BAJA 5]
+    if (anchor.isConnected && anchor.focus) anchor.focus({ preventScroll: true });
     if (it && it.onClick) it.onClick();
   });
   const btns = $$('.m-item:not([disabled])', el);

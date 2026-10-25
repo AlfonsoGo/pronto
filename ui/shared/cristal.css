@@ -24,7 +24,7 @@
 :root{
   /* paleta */
   --violeta:#8B5CF6; --violeta-hondo:#6D28D9; --violeta-suave:#A78BFA;
-  --amarillo:#FDE047; --verde:#34D399; --rojo:#F87171; --rojo-fuerte:#E5484D; --naranja:#FB923C;
+  --amarillo:#FDE047; --verde:#34D399; --rojo:#F87171; --rojo-fuerte:#C8333A; --naranja:#FB923C;
   --oled:#050505; --tinta:#F5F3FF; --tinta-2:#CFC9E0; --apagado:#9C93AE;
   --fondo:var(--oled);
 
@@ -71,7 +71,8 @@
 /* Tema claro: el mismo cristal y el mismo violeta, sobre lavanda casi blanca. */
 :root[data-theme="light"]{
   --fondo:#F2EFFA;
-  --tinta:#1B1530; --tinta-2:#40385C; --apagado:#6B6285;
+  /* 24-oct-2026: --apagado #6B6285 → #5E5677. Sobre las cajas de los diálogos el gris quedaba en 4,11:1 (< 4,5). */
+  --tinta:#1B1530; --tinta-2:#40385C; --apagado:#5E5677;
   --hilo:rgba(46,30,96,.11); --hilo-fuerte:rgba(46,30,96,.2);
   --brillo:inset 0 1px 1px rgba(255,255,255,.95);
   --carcasa-bg:rgba(255,255,255,.5);
@@ -171,23 +172,26 @@ kbd,.kbd{display:inline-flex;align-items:center;justify-content:center;min-width
     opacity 300ms var(--curva),box-shadow 300ms var(--curva)}
 .btn:active:not(:disabled){transform:scale(.98)}
 .btn:disabled{opacity:.4}
-.btn-primary{background:linear-gradient(180deg,var(--violeta),var(--violeta-hondo));color:#fff;
+/* 24-oct-2026: el degradado empezaba en #8B5CF6, donde el blanco daba 4,23:1 (< 4,5). Desde #7C3AED es 5,70:1 en todo el botón. */
+.btn-primary{background:linear-gradient(180deg,#7C3AED,var(--violeta-hondo));color:#fff;
   box-shadow:var(--brillo),0 8px 24px rgba(109,40,217,.35)}
 .btn-primary:hover:not(:disabled){box-shadow:var(--brillo),0 10px 30px rgba(109,40,217,.5);
-  background:linear-gradient(180deg,#9468f8,var(--violeta-hondo))}
+  background:linear-gradient(180deg,#7C3AED,#5B21B6)}
 .btn-secondary{background:var(--hover);border:1px solid var(--hilo);box-shadow:var(--brillo)}
 .btn-secondary:hover:not(:disabled){background:var(--pulsado);border-color:var(--hilo-fuerte)}
 .btn-ghost{color:var(--tinta-2)}
 .btn-ghost:hover:not(:disabled){background:var(--hover);color:var(--tinta)}
 .btn-danger{background:var(--err-bg);color:var(--err-t);border:1px solid rgba(248,113,113,.35)}
 .btn-danger:hover:not(:disabled){background:rgba(248,113,113,.24)}
-.btn-danger-solid{background:var(--rojo-fuerte);color:#fff;box-shadow:var(--brillo),0 8px 24px rgba(229,72,77,.3)}
-.btn-danger-solid:hover:not(:disabled){background:#EC5A5F}
+/* rompedor 23-oct, hub MEDIA 6: blanco sobre #E5484D era 3,91:1 (< 4,5, WCAG 1.4.3). #C8333A da 5,26:1 y el hover
+   #D13C43 4,73:1 (antes el hover aclaraba el rojo y bajaba aún más el contraste). */
+.btn-danger-solid{background:var(--rojo-fuerte);color:#fff;box-shadow:var(--brillo),0 8px 24px rgba(200,51,58,.3)}
+.btn-danger-solid:hover:not(:disabled){background:#D13C43}
 .btn-sm{height:30px;padding:0 13px;font-size:12.5px}
 
 /* Píldora con botón dentro del botón */
 .pill{display:inline-flex;align-items:center;gap:12px;height:44px;padding:0 7px 0 20px;border-radius:999px;
-  background:linear-gradient(180deg,var(--violeta),var(--violeta-hondo));color:#fff;font-weight:600;font-size:14px;
+  background:linear-gradient(180deg,#7C3AED,var(--violeta-hondo));color:#fff;font-weight:600;font-size:14px;
   box-shadow:var(--brillo),0 8px 30px rgba(109,40,217,.4);white-space:nowrap;
   transition:transform 400ms var(--curva),box-shadow 400ms var(--curva)}
 .pill .circ{width:30px;height:30px;border-radius:999px;background:rgba(255,255,255,.16);display:grid;place-items:center;
@@ -228,7 +232,7 @@ kbd,.kbd{display:inline-flex;align-items:center;justify-content:center;min-width
 .input:hover,.textarea:hover,.select select:hover{border-color:var(--hilo-fuerte)}
 .input:focus,.textarea:focus,.select select:focus{outline:none;border-color:rgba(139,92,246,.65);
   box-shadow:0 0 0 3px rgba(139,92,246,.2)}
-.input::placeholder,.textarea::placeholder{color:var(--apagado);opacity:.8}
+.input::placeholder,.textarea::placeholder{color:var(--apagado);opacity:1}
 .field{display:flex;flex-direction:column;gap:7px}
 .field>label,.field>.lab{font-size:12px;font-weight:700;color:var(--tinta-2)}
 .field .hint{font-size:12px;color:var(--apagado)}

@@ -5,11 +5,11 @@
 //! hooks que tardan más de ~300 ms, y la transcripción nunca debe correr aquí. Toda la lógica de
 //! tiempos (debounce, doble toque) vive en el controlador (`state.rs`), no en el hook.
 
-use crate::inject::{send_key_events, KeyEvent, MARKER};
+use crate::inject::{foreground_window, send_key_events, KeyEvent, MARKER};
 use crate::models::{Hotkey, Settings};
 use crossbeam_channel::{bounded, Sender};
 use parking_lot::{Mutex, RwLock};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
@@ -32,6 +32,10 @@ pub enum HotkeyEvent {
     Meeting,
     /// Transform N (1-based).
     Transform(u8),
+    /// Enter con la vista previa de un Transform en pantalla: pegar el resultado.
+    PreviewAccept,
+    /// Esc con la vista previa de un Transform en pantalla: descartarlo.
+    PreviewDiscard,
 }
 
 /// Evento con la hora a la que ocurrió en el hook (no cuando lo procese el controlador): el
@@ -98,14 +102,48 @@ static CONFIG: RwLock<Option<Config>> = RwLock::new(None);
 static STATE: Mutex<Option<HookState>> = Mutex::new(None);
 static CAPTURE: Mutex<Option<Capture>> = Mutex::new(None);
 static RECORDING: AtomicBool = AtomicBool::new(false);
+/// Hay una vista previa de un Transform esperando Enter o Esc (decisión A de Txonso, 23-oct: el
+/// resultado de la IA no se pega solo; la persona es la guarda).
+static PREVIEW: AtomicBool = AtomicBool::new(false);
+/// Ventana donde se seleccionó el texto del Transform (0 = cualquiera): Enter y Esc solo son de
+/// Pronto con ESA ventana delante; en otra (una terminal, un chat) siguen siendo suyos.
+static PREVIEW_TARGET: AtomicIsize = AtomicIsize::new(0);
 static TX: OnceLock<Sender<TimedEvent>> = OnceLock::new();
 
 const VK_ESCAPE: u32 = 0x1B;
+const VK_RETURN: u32 = 0x0D;
 const VK_NEUTRAL: u16 = 0xE8; // tecla sin asignar: sirve para «interrumpir» Win/Alt
 
 /// Mientras hay una grabación en curso, Esc se traga y cancela; fuera de ella pasa intacta.
 pub fn set_recording(on: bool) {
     RECORDING.store(on, Ordering::SeqCst);
+}
+
+/// Con `Some(ventana)`, Enter y Esc (sin modificadores, con esa ventana delante) se tragan y mandan
+/// `PreviewAccept` / `PreviewDiscard`; con `None` el gancho vuelve a dejarlas pasar intactas. Lo
+/// llama el controlador al abrir y cerrar la vista previa de un Transform.
+pub fn set_preview(target: Option<isize>) {
+    match target {
+        Some(t) => {
+            PREVIEW_TARGET.store(t, Ordering::SeqCst);
+            PREVIEW.store(true, Ordering::SeqCst);
+        }
+        None => PREVIEW.store(false, Ordering::SeqCst),
+    }
+}
+
+/// ¿Esta pulsación es de la vista previa? Solo Enter y Esc sin modificadores (Mayús+Enter, Ctrl+Enter…
+/// siguen siendo de la app), solo con vista previa abierta y solo si delante está la ventana donde
+/// se seleccionó el texto (`target` 0 = cualquiera). Fuera de eso el gancho no cambia nada.
+fn preview_key(vk: u32, mods: &Mods, active: bool, target: isize, foreground: isize) -> Option<HotkeyEvent> {
+    if !active || mods.any() || (target != 0 && foreground != target) {
+        return None;
+    }
+    match vk {
+        VK_RETURN => Some(HotkeyEvent::PreviewAccept),
+        VK_ESCAPE => Some(HotkeyEvent::PreviewDiscard),
+        _ => None,
+    }
 }
 
 /// Recarga los atajos desde los ajustes (se llama al arrancar y al guardar).
@@ -447,6 +485,18 @@ fn handle(ev: KeyEvent) -> bool {
         return false;
     }
 
+    // Vista previa de un Transform: Enter pega, Esc descarta. La ventana con foco solo se mira si
+    // la tecla es una de esas dos y hay vista previa (el gancho tiene que ser rápido).
+    let preview_on = PREVIEW.load(Ordering::SeqCst);
+    if preview_on && (vk == VK_RETURN || vk == VK_ESCAPE) {
+        if let Some(ev) = preview_key(vk, &mods, preview_on, PREVIEW_TARGET.load(Ordering::SeqCst), foreground_window()) {
+            // También se tragan sus repeticiones y su «up»: la app no ve ni el Enter ni el Esc.
+            hs.swallowed.push(vk);
+            send(ev);
+            return true;
+        }
+    }
+
     if vk == VK_ESCAPE && RECORDING.load(Ordering::SeqCst) {
         hs.swallowed.push(vk);
         send(HotkeyEvent::Cancel);
@@ -561,6 +611,39 @@ mod tests {
         let b = Mods { win: true, ..Default::default() };
         assert!(a.contains(&b));
         assert!(!b.contains(&a));
+    }
+
+    /// Decisión A de Txonso (23-oct): el gancho solo se queda Enter y Esc con la vista previa de un
+    /// Transform abierta y la ventana del texto delante. Fuera de eso no toca nada.
+    #[test]
+    fn el_gancho_solo_traga_enter_y_esc_con_vista_previa() {
+        let nada = Mods::default();
+        let (destino, otra) = (0x1234, 0x5678);
+        // Con vista previa y la ventana destino delante: Enter pega, Esc descarta.
+        assert_eq!(preview_key(VK_RETURN, &nada, true, destino, destino), Some(HotkeyEvent::PreviewAccept));
+        assert_eq!(preview_key(VK_ESCAPE, &nada, true, destino, destino), Some(HotkeyEvent::PreviewDiscard));
+        // Sin vista previa: ni Enter ni Esc se tocan (siguen llegando a la app).
+        assert_eq!(preview_key(VK_RETURN, &nada, false, destino, destino), None);
+        assert_eq!(preview_key(VK_ESCAPE, &nada, false, destino, destino), None);
+        // Con otra ventana delante (una terminal donde el usuario pulsa Enter): pasan intactas.
+        assert_eq!(preview_key(VK_RETURN, &nada, true, destino, otra), None);
+        assert_eq!(preview_key(VK_ESCAPE, &nada, true, destino, otra), None);
+        // Sin ventana destino conocida (0) vale cualquiera.
+        assert_eq!(preview_key(VK_RETURN, &nada, true, 0, otra), Some(HotkeyEvent::PreviewAccept));
+        // Con modificadores (Mayús+Enter en un chat, Ctrl+Enter, Alt+Esc) siguen siendo de la app.
+        for m in [Mods { shift: true, ..nada }, Mods { ctrl: true, ..nada }, Mods { alt: true, ..nada }, Mods { win: true, ..nada }] {
+            assert_eq!(preview_key(VK_RETURN, &m, true, destino, destino), None, "{m:?}");
+            assert_eq!(preview_key(VK_ESCAPE, &m, true, destino, destino), None, "{m:?}");
+        }
+        // Otras teclas nunca, ni con vista previa.
+        for vk in [0x20, 0x41, 0x09, 0x08, 0x2E, 0x25] {
+            assert_eq!(preview_key(vk, &nada, true, destino, destino), None, "{vk:#X}");
+        }
+        // La marca se pone y se quita.
+        set_preview(Some(destino));
+        assert!(PREVIEW.load(Ordering::SeqCst) && PREVIEW_TARGET.load(Ordering::SeqCst) == destino);
+        set_preview(None);
+        assert!(!PREVIEW.load(Ordering::SeqCst));
     }
 
     #[test]

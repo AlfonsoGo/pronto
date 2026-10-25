@@ -1,14 +1,15 @@
-// Estado global de la reunión en curso (Notetaker local). Vive fuera de las páginas para que la
-// reunión siga «viva» en el sidebar aunque el usuario cambie de sección.
+// Estado global del Meet en curso (Contrato v12). Vive fuera de las páginas para que la reunión
+// siga «viva» en el sidebar aunque el usuario cambie de sección. Durante el Meet solo llegan el
+// estado y el nivel (no hay texto en vivo); al parar, el avance de la fase 2 por pasos.
 import { invoke, listen, notify } from './api.js';
 
 export const live = {
   active: false,
   meeting: null,          // Meeting en curso
   startedAt: 0,           // Date.now() - elapsedMs
-  segments: [],           // segmentos recibidos en vivo
   level: { mic: 0, system: 0 },
   summarizing: new Set(), // ids con resumen pendiente
+  progress: new Map(),    // id -> { stage: 'transcribing' | 'polishing' | 'labeling' | 'understanding', percent, step, steps }
   auto: false,            // reunión iniciada sola (detección), no desde el botón del hub
   manual: false,          // el hub acaba de pedir start_meeting
 };
@@ -38,7 +39,6 @@ function setActive(meeting, elapsed = 0) {
   live.auto = !!(meeting && meeting.auto);
   live.meeting = meeting;
   live.startedAt = Date.now() - elapsed;
-  live.segments = [];
   live.level = { mic: 0, system: 0 };
 }
 function clearActive() {
@@ -65,20 +65,22 @@ export async function initMeetingState() {
       if (e.meetingId != null) live.summarizing.add(e.meetingId);
       clearActive();
     } else if (e.state === 'done' || e.state === 'error') {
-      if (e.meetingId != null) live.summarizing.delete(e.meetingId);
+      if (e.meetingId != null) { live.summarizing.delete(e.meetingId); live.progress.delete(e.meetingId); }
       if (e.state === 'error') clearActive();
     } else if (e.state === 'idle') clearActive();
     notify('meeting', e);
-  });
-  listen('meeting://segment', (seg) => {
-    if (!seg) return;
-    live.segments.push(seg);
-    notify('meeting-segment', seg);
   });
   listen('meeting://level', (lv) => {
     if (!lv) return;
     live.level = lv;
     notify('meeting-level', lv);
+  });
+  // Fase 2 (al parar), por pasos: transcribir, pulir, etiquetar y entender.
+  listen('meeting://progress', (p) => {
+    if (!p || p.meetingId == null) return;
+    if (p.stage === 'done') live.progress.delete(p.meetingId);
+    else { live.progress.set(p.meetingId, p); live.summarizing.add(p.meetingId); }
+    notify('meeting-progress', p);
   });
   listen('meeting://summary', (d) => {
     if (d) live.summarizing.delete(d.id);

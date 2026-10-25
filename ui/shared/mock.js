@@ -5,6 +5,8 @@
 //   ?ollama=off (instalado, sin arrancar) ?ollama=none (sin instalar) ?ollama=nomodel (arrancado, sin qwen3:1.7b) ?ai=error (la primera activación falla al 40 %)
 //   ?model=missing (tarjeta «Falta el modelo de voz», descarga simulada)  ?model=error (la primera descarga falla al 40 %)
 //   ?update=available|event|error|offline|none (aviso de actualización, ver «Contrato v7» en docs/ARQUITECTURA.md)
+//   ?pinned=2 (barra fijada en la pantalla 2)  ?pinned=3 (fijada en una pantalla desconectada)  ?monitors=1 (un solo monitor) («Contrato v8»)
+//   Diccionario por voz (Contrato v9): «Grabar pronunciación» simula ~2 s de micro y devuelve un texto «oído»; ?engine=error lo rechaza.
 
 const qs = new URLSearchParams(typeof location !== 'undefined' ? location.search : '');
 const delay = (ms = 25) => new Promise((r) => setTimeout(r, ms));
@@ -85,13 +87,15 @@ let history = qs.get('empty') ? [] : mkHistory();
 let nextHistoryId = 2000;
 
 let words = qs.get('empty') ? [] : [
-  { id: 1, word: 'Txonso', replacement: null, createdAt: at(40, 10, 0), starred: true, source: 'manual' },
+  { id: 1, word: 'Txonso', replacement: null, createdAt: at(40, 10, 0), starred: true, source: 'manual', variants: [{ id: 201, heard: 'Chonso' }, { id: 202, heard: 'Chonzo' }],
+    samples: [{ id: 301, durationMs: 640, createdAt: at(40, 10, 1) }, { id: 302, durationMs: 710, createdAt: at(40, 10, 2) }, { id: 303, durationMs: 590, createdAt: at(40, 10, 3) }] },
   { id: 2, word: 'tauri', replacement: 'Tauri', createdAt: at(30, 10, 0), starred: false, source: 'manual' },
-  { id: 3, word: 'olama', replacement: 'Ollama', createdAt: at(21, 10, 0), starred: false, source: 'manual' },
+  { id: 3, word: 'olama', replacement: 'Ollama', createdAt: at(21, 10, 0), starred: false, source: 'manual', variants: [{ id: 203, heard: 'Oyama' }],
+    samples: [{ id: 304, durationMs: 820, createdAt: at(21, 10, 1) }] },
   { id: 4, word: 'sherpa onix', replacement: 'sherpa-onnx', createdAt: at(15, 10, 0), starred: true, source: 'manual' },
   { id: 5, word: 'Parakeet', replacement: null, createdAt: at(12, 10, 0), starred: false, source: 'auto' },
   { id: 6, word: 'cubernetes', replacement: 'Kubernetes', createdAt: at(9, 10, 0), starred: false, source: 'manual' },
-  { id: 7, word: 'BeltranLabs', replacement: null, createdAt: at(6, 10, 0), starred: false, source: 'auto' },
+  { id: 7, word: 'BeltranLabs', replacement: null, createdAt: at(6, 10, 0), starred: false, source: 'auto', variants: [{ id: 204, heard: 'Beltrán Labs' }] },
   { id: 8, word: 'guiti', replacement: 'Git', createdAt: at(2, 10, 0), starred: false, source: 'manual' },
 ];
 let snippets = qs.get('empty') ? [] : [
@@ -126,16 +130,22 @@ let settings = {
   hotkeyTransform: hk({ alt: true, shift: true, key: 'P' }),
   micName: null, language: 'auto', appLanguage: qs.get('lang') === 'en' ? 'en' : 'es',
   modelDir: 'C:\\Users\\Alfonso\\AppData\\Roaming\\Pronto\\Pronto\\models\\parakeet',
+  asrEngine: 'parakeet', whisperModel: 'large-v3-turbo',
   launchAtLogin: true, showFlowBar: true, sounds: true, muteMusic: true,
   removeFillers: true, backtrack: true,
   styles: { personal: 'casual', work: 'casual', email: 'formal', other: 'casual' },
   historyRetentionDays: 0, firstName: 'Alfonso', cleanupLevel: 'medium', pressEnterCommand: false,
   ollamaUrl: 'http://localhost:11434', ollamaModel: 'qwen3:1.7b', keepAudioDays: 14,
   theme: qs.get('theme') === 'light' ? 'light' : 'dark', flowBarHiddenUntil: null,
+  flowBarMonitor: qs.get('pinned') ? `\\\\.\\DISPLAY${qs.get('pinned')}` : null, flowBarMonitorRect: null,
   autoUpdate: true,
-  hotkeyMeeting: hk({ win: true, alt: true, key: 'M' }), meetingAuto: qs.get('auto') === 'ask' ? 'ask' : 'auto', meetingKeepAudio: false,
+  hotkeyMeeting: hk({ win: true, alt: true, key: 'M' }), meetingAuto: qs.get('auto') === 'ask' ? 'ask' : 'auto', meetingAutoConfirmed: false, meetingKeepAudio: false,
   aiPolish: qs.get('polish') === 'on', aiPolishModel: 'qwen3:1.7b', aiPolishTimeoutMs: 6000,
 };
+const MONITORS = [
+  { device: '\\\\.\\DISPLAY1', number: 1, name: '', primary: true, width: 1920, height: 1200, current: true },
+  { device: '\\\\.\\DISPLAY2', number: 2, name: 'DELL U2723QE', primary: false, width: 3840, height: 2160, current: false },
+].slice(0, qs.get('monitors') === '1' ? 1 : 2);
 const DEFAULT_SHORTCUTS = {
   hotkeyHold: clone(settings.hotkeyHold), hotkeyHandsFree: clone(settings.hotkeyHandsFree),
   hotkeyPasteLast: clone(settings.hotkeyPasteLast), hotkeyCopyLast: clone(settings.hotkeyCopyLast),
@@ -156,6 +166,16 @@ let model = {
   doneBytes: modelMissing ? 0 : MODEL_TOTAL, totalBytes: MODEL_TOTAL, overallPercent: modelMissing ? 0 : 100, error: null,
   files: MODEL_FILES.map(([name, size]) => ({ name, ok: !modelMissing, bytes: modelMissing ? 0 : size, size })),
 };
+// Modelos de Whisper (como `whisper::MODELS` + `present`). La descarga simulada los marca presentes.
+const WHISPER = [
+      { id: 'large-v3-turbo', name: 'Whisper large-v3-turbo', desc: 'El más rápido de los grandes: casi la precisión de large-v3 a varias veces su velocidad. El recomendado con tarjeta gráfica.', file: 'ggml-large-v3-turbo-q5_0.bin', mb: 574, present: true, available: true, reason: null, minVramGb: 3, wer: 4.2, speed: 5 },
+      { id: 'large-v3', name: 'Whisper large-v3', desc: 'El más grande de Whisper: el que mejor aguanta ruido y acentos. Dos o tres veces más lento que turbo y más pesado.', file: 'ggml-large-v3-q5_0.bin', mb: 1081, present: false, available: true, reason: null, minVramGb: 4, wer: 3.8, speed: 2 },
+      { id: 'medium', name: 'Whisper medium', desc: 'El que menos se equivocó en las pruebas de reuniones, pero lento. Para tarjetas de 2 GB.', file: 'ggml-medium-q5_0.bin', mb: 539, present: false, available: true, reason: null, minVramGb: 2, wer: 3.4, speed: 2 },
+      { id: 'small', name: 'Whisper small', desc: 'Ligero y rápido, para tarjetas pequeñas (1 GB). Algo menos preciso que los grandes.', file: 'ggml-small-q5_1.bin', mb: 190, present: false, available: true, reason: null, minVramGb: 1, wer: 4.0, speed: 4 },
+      { id: 'base', name: 'Whisper base', desc: 'El mínimo: 60 MB y muy rápido, pero el que más se equivoca. Para equipos muy justos.', file: 'ggml-base-q5_1.bin', mb: 59, present: false, available: true, reason: null, minVramGb: 1, wer: null, speed: 5 },
+];
+let whisperDl = null;
+
 let modelAttempts = 0;
 function modelProgress(state, done, error) {
   const file = state === 'done' ? '' : (MODEL_FILES.find((f, i) => done <= MODEL_FILES.slice(0, i + 1).reduce((a, x) => a + x[1], 0)) || MODEL_FILES[3])[0];
@@ -410,26 +430,29 @@ function captureHotkey() {
   });
 }
 
-// ------------------------------------------------------------------ reuniones (Notetaker local)
+// ------------------------------------------------------------------ Meets (Contrato v12; antes «Notas de reunión»)
+// Guion: [hablante, texto, extra?] con extra = { kind, overlap, rawText, replyTo } como los da la fase 2.
 const mkSegs = (meetingId, script, gap = 11000) => {
   let t = 3000;
-  return script.map(([speaker, text]) => {
+  return script.map(([speaker, text, extra = {}]) => {
     const dur = 2500 + text.split(/\s+/).length * 380;
-    const seg = { meetingId, speaker, startMs: t, endMs: t + dur, text };
-    t += dur + gap * (0.5 + ((text.length * 7) % 10) / 10);
+    const start = extra.overlap ? t - Math.round(gap * 0.4) - 1800 : t;
+    const seg = { meetingId, speaker, startMs: start, endMs: start + dur, text, rawText: null, kind: 'otro', overlap: false, replyTo: null, ...extra };
+    t = start + dur + gap * (0.5 + ((text.length * 7) % 10) / 10);
     return seg;
   });
 };
 
 const S1 = [
-  ['them', 'Buenos días a todos. Empezamos con el estado de la versión dos punto cero, ¿cómo vamos con el motor de voz?'],
-  ['me', 'Muy bien. Parakeet funciona de maravilla en español, incluso con nombres propios y cifras. Lo único que falta es probarlo con más micrófonos.'],
-  ['them', 'Perfecto. Marta, ¿puedes encargarte de una lista de pruebas con micrófonos USB y auriculares Bluetooth?'],
-  ['me', 'Yo me ocupo de la pantalla de estadísticas, tengo el diseño casi cerrado. Lo termino antes del jueves.'],
-  ['them', 'Genial. Entonces congelamos las funciones nuevas hasta el viernes y nos centramos en probar.'],
-  ['me', 'De acuerdo. Y queda pendiente probar la detección de reuniones en Meet y en Zoom.'],
-  ['them', 'Sí, eso lo repartimos al final. ¿Alguna duda sobre Ollama como motor de resúmenes?'],
-  ['me', 'Ninguna, para esta versión lo dejamos como único motor. Más adelante vemos si compensa añadir otro.'],
+  ['them', 'Buenos días a todos. Empezamos con el estado de la versión dos punto cero, ¿cómo vamos con el motor de voz?', { kind: 'pregunta' }],
+  ['me', 'Muy bien. Parakeet funciona de maravilla en español, incluso con nombres propios y cifras. Lo único que falta es probarlo con más micrófonos.',
+    { kind: 'respuesta', replyTo: 0, rawText: 'Muy bien. Para kit funciona de maravilla en español, incluso con nombres propios y cifras cifras. Lo único que falta es probarlo con más micrófonos.' }],
+  ['them', 'Perfecto. Marta, ¿puedes encargarte de una lista de pruebas con micrófonos USB y auriculares Bluetooth?', { kind: 'tarea' }],
+  ['me', 'Yo me ocupo de la pantalla de estadísticas, tengo el diseño casi cerrado. Lo termino antes del jueves.', { kind: 'tarea', overlap: true }],
+  ['them', 'Genial. Entonces congelamos las funciones nuevas hasta el viernes y nos centramos en probar.', { kind: 'decision' }],
+  ['me', 'De acuerdo. Y queda pendiente probar la detección de reuniones en Meet y en Zoom.', { kind: 'tarea' }],
+  ['them', 'Sí, eso lo repartimos al final. ¿Alguna duda sobre Ollama como motor de resúmenes?', { kind: 'pregunta' }],
+  ['me', 'Ninguna, para esta versión lo dejamos como único motor. Más adelante vemos si compensa añadir otro.', { kind: 'respuesta', replyTo: 6 }],
   ['them', 'Perfecto, pues lo dejamos aquí. Gracias a todos.'],
 ];
 const S2 = [
@@ -457,18 +480,29 @@ const S5 = [
 
 const MT = (id, title, daysAgo, h, m, mins, app, status, script, extra = {}) => ({
   id, title, startedAt: at(daysAgo, h, m), endedAt: at(daysAgo, h, m), durationMs: mins * 60000,
-  app, summaryStatus: status, segments: mkSegs(id, script), summary: null, actionItems: [], decisions: [], topics: [], ...extra,
+  app, summaryStatus: status, segments: mkSegs(id, script), summary: null, actionItems: [], decisions: [], topics: [],
+  keyPoints: [], nextSteps: [], openQuestions: [], questions: [], saidByMe: [], saidByThem: [], transcriptFinal: status !== 'pending', ...extra,
 });
 let meetings = qs.get('empty') ? [] : [
   MT(501, 'Revisión semanal de producto', 0, 9, 0, 42, 'Teams', 'done', S1, {
     summary: 'El equipo repasó el estado de la versión 2.0: el motor de voz funciona bien en español y quedan por cerrar la detección de reuniones y el diseño de la pantalla de estadísticas. Se acordó congelar las funciones nuevas hasta el viernes y dedicar el tiempo a probar con distintos micrófonos.',
     actionItems: [
-      { text: 'Preparar una lista de pruebas con micrófonos USB y auriculares Bluetooth', owner: 'Marta', done: true },
-      { text: 'Cerrar el diseño de la pantalla de estadísticas antes del jueves', owner: 'Alfonso', done: false },
-      { text: 'Probar la detección de reuniones en Meet y en Zoom', owner: null, done: false },
+      { text: 'Preparar una lista de pruebas con micrófonos USB y auriculares Bluetooth', owner: 'Marta', done: true, due: null },
+      { text: 'Cerrar el diseño de la pantalla de estadísticas', owner: 'Alfonso', done: false, due: 'antes del jueves' },
+      { text: 'Probar la detección de reuniones en Meet y en Zoom', owner: null, done: false, due: null },
     ],
     decisions: ['Congelar las funciones nuevas hasta el viernes', 'Priorizar las pruebas con micrófonos USB y Bluetooth', 'Mantener Ollama como único motor de resúmenes en esta versión'],
     topics: ['Versión 2.0', 'Motor de voz', 'Detección de reuniones', 'Estadísticas'],
+    keyPoints: ['Parakeet funciona bien en español, también con nombres propios y cifras', 'Falta probar el motor con más micrófonos', 'El diseño de la pantalla de estadísticas está casi cerrado'],
+    nextSteps: ['Repartir al final de la semana las pruebas de detección de reuniones'],
+    openQuestions: ['Si compensa añadir otro motor de resúmenes además de Ollama'],
+    questions: [
+      { text: '¿cómo vamos con el motor de voz?', askedBy: 'them', atMs: 3000, answered: true, answer: 'Muy bien. Parakeet funciona de maravilla en español, incluso con nombres propios y cifras.' },
+      { text: 'Marta, ¿puedes encargarte de una lista de pruebas con micrófonos USB y auriculares Bluetooth?', askedBy: 'them', atMs: 30000, answered: false, answer: null },
+      { text: '¿Alguna duda sobre Ollama como motor de resúmenes?', askedBy: 'them', atMs: 90000, answered: true, answer: 'Ninguna, para esta versión lo dejamos como único motor.' },
+    ],
+    saidByMe: ['Parakeet funciona de maravilla en español, incluso con nombres propios y cifras.', 'Yo me ocupo de la pantalla de estadísticas, tengo el diseño casi cerrado. Lo termino antes del jueves.', 'Queda pendiente probar la detección de reuniones en Meet y en Zoom.'],
+    saidByThem: ['¿cómo vamos con el motor de voz?', 'Entonces congelamos las funciones nuevas hasta el viernes y nos centramos en probar.'],
   }),
   MT(502, 'Llamada con la imprenta', 0, 10, 30, 18, 'Meet', 'pending', S2),
   MT(503, 'Planificación del trimestre', 1, 16, 0, 55, 'Zoom', 'failed', S3),
@@ -484,6 +518,18 @@ let meetings = qs.get('empty') ? [] : [
   }),
 ];
 
+// Decisión A de Txonso (23-oct): cada tarea y decisión lleva la cita literal de lo dicho (texto
+// crudo, quién, cuándo y el turno). La 501 las tiene; la 504 y la 505 son notas de antes de la v10
+// (sin cita) y se ven como siempre.
+const citeAt = (m, i) => { const s = m && m.segments[i]; return s ? { text: s.rawText || s.text, speaker: s.speaker, atMs: s.startMs, turn: i } : null; };
+{
+  const m = meetings.find((x) => x.id === 501);
+  if (m) {
+    [2, 3, 5].forEach((seg, k) => { if (m.actionItems[k]) m.actionItems[k].cita = citeAt(m, seg); });
+    m.decisionCitas = [citeAt(m, 4), citeAt(m, 2), citeAt(m, 7)];
+  }
+}
+
 let live = null; // { meeting, idx, timers, startTs }
 const LIVE = [
   ['them', 'Buenas, ¿me oís bien? Creo que el micro iba un poco bajo.'],
@@ -498,13 +544,26 @@ const LIVE = [
 const SUMMARY_FOR_NEW = {
   summary: 'Se confirmó la entrega de la versión nueva para el viernes. Las pruebas con auriculares se cierran mañana y los textos en inglés pasan por revisión antes de publicar. La sincronización queda fuera de esta versión.',
   actionItems: [
-    { text: 'Enviar los resultados de las pruebas con auriculares', owner: 'Alfonso', done: false },
-    { text: 'Revisar los textos en inglés antes de publicar', owner: 'Marta', done: false },
+    { text: 'Enviar los resultados de las pruebas con auriculares', owner: 'Alfonso', done: false, due: 'mañana por la mañana' },
+    { text: 'Revisar los textos en inglés antes de publicar', owner: 'Marta', done: false, due: null },
   ],
   decisions: ['Entregar la versión nueva el viernes', 'Dejar la sincronización fuera de esta versión'],
   topics: ['Entrega', 'Pruebas', 'Sincronización'],
+  keyPoints: ['El micrófono del otro participante sonaba bajo al principio', 'La entrega está prevista para el viernes'],
+  nextSteps: ['Plantear la sincronización para el trimestre que viene'],
+  openQuestions: [],
+  questions: [
+    { text: '¿me oís bien?', askedBy: 'them', atMs: 1800, answered: true, answer: 'Sí, te oímos perfectamente.' },
+    { text: '¿Algo más que debamos decidir hoy?', askedBy: 'me', atMs: 26000, answered: true, answer: 'Sí, si dejamos la sincronización fuera de esta versión. Yo diría que sí.' },
+  ],
+  saidByMe: ['Yo termino hoy las pruebas con auriculares y os las paso mañana por la mañana.', 'La dejamos fuera y la planteamos para el trimestre que viene.'],
+  saidByThem: ['La entrega de la versión nueva la tenemos prevista para el viernes.', 'Marta se encarga de revisar los textos en inglés antes de publicar.'],
 };
-const meetingBase = (m) => { const { segments, summary, actionItems, decisions, topics, ...b } = m; return clone(b); };
+const LIVE_KINDS = [{ kind: 'pregunta' }, { kind: 'respuesta', replyTo: 0 }, { kind: 'otro' }, { kind: 'tarea' }, { kind: 'tarea' }, { kind: 'pregunta' }, { kind: 'respuesta', replyTo: 5, overlap: true }, { kind: 'decision' }];
+const meetingBase = (m) => {
+  const { segments, summary, actionItems, decisions, topics, keyPoints, nextSteps, openQuestions, questions, saidByMe, saidByThem, transcriptFinal, ...b } = m;
+  return clone(b);
+};
 const meetingDetail = (m) => clone(m);
 const listItem = (m) => ({
   ...meetingBase(m),
@@ -512,20 +571,49 @@ const listItem = (m) => ({
   actionCount: m.actionItems.length,
 });
 function finishSummary(m) {
-  Object.assign(m, clone(SUMMARY_FOR_NEW), { summaryStatus: 'done' });
+  // La transcripción llega al final (en el Meet solo se graba), ya encadenada y etiquetada.
+  const script = LIVE.map(([who, text], i) => [who, text, LIVE_KINDS[i]]);
+  Object.assign(m, clone(SUMMARY_FOR_NEW), { segments: mkSegs(m.id, script, 3000), summaryStatus: 'done', transcriptFinal: true });
+  m.actionItems.forEach((a, k) => { a.cita = citeAt(m, [3, 4][k]); });
+  m.decisionCitas = [citeAt(m, 2), citeAt(m, 7)];
   emit('meeting://summary', meetingDetail(m));
+  emit('meeting://progress', progress(m.id, 'done', 100));
   emit('meeting://state', { state: 'done', meetingId: m.id });
 }
-// la reunión «generando» de ejemplo termina sola a los 25 s
+const STAGE_STEP = { transcribing: 1, polishing: 2, labeling: 3, understanding: 4, done: 5 };
+const progress = (meetingId, stage, percent) => ({ meetingId, stage, percent, step: STAGE_STEP[stage], steps: 4 });
+/** Fase 2 simulada por pasos: transcribir (si hay audio), pulir, etiquetar y entender; luego `done()`. */
+function fakePhase2(id, transcribe, done) {
+  const steps = [];
+  if (transcribe) for (let p = 0; p < 100; p += 12) steps.push(['transcribing', p]);
+  steps.push(['polishing', 0], ['polishing', 50], ['labeling', 0], ['understanding', 0], ['understanding', 50]);
+  const each = qs.get('slow') ? 60000 : 380;
+  steps.forEach(([stage, percent], i) => setTimeout(() => emit('meeting://progress', progress(id, stage, percent)), i * each));
+  setTimeout(done, steps.length * each);
+}
+// la reunión «generando» de ejemplo avisa del avance de la fase 2 y termina sola a los 25 s
+{
+  let p = 0;
+  const tick = setInterval(() => {
+    const m = meetings.find((x) => x.id === 502);
+    if (!m || m.summaryStatus !== 'pending') { clearInterval(tick); return; }
+    p += 9;
+    const stage = p < 100 ? 'transcribing' : p < 118 ? 'polishing' : p < 136 ? 'labeling' : 'understanding';
+    emit('meeting://progress', progress(502, stage, p < 100 ? p : Math.min(90, ((p - 100) % 18) * 5)));
+  }, qs.get('slow') ? 60000 : 1800);
+}
 setTimeout(() => {
   const m = meetings.find((x) => x.id === 502);
   if (m && m.summaryStatus === 'pending') {
     Object.assign(m, {
       summary: 'Se acordó mantener el precio de las tarjetas pidiendo mil unidades. El pedido se confirmó el mismo día y llegará el martes siguiente.',
-      actionItems: [{ text: 'Aprobar el presupuesto de la imprenta esta tarde', owner: 'Alfonso', done: false }],
-      decisions: ['Pedir mil unidades al precio acordado'], topics: ['Presupuesto', 'Plazo de entrega'], summaryStatus: 'done',
+      actionItems: [{ text: 'Aprobar el presupuesto de la imprenta', owner: 'Alfonso', done: false, due: 'esta tarde' }],
+      decisions: ['Pedir mil unidades al precio acordado'], topics: ['Presupuesto', 'Plazo de entrega'], summaryStatus: 'done', transcriptFinal: true,
+      keyPoints: ['La imprenta subió el papel pero mantiene el precio para mil unidades', 'Las tarjetas llegan el martes si se confirma hoy'],
     });
     emit('meeting://summary', meetingDetail(m));
+    emit('meeting://progress', progress(502, 'done', 100));
+    emit('meeting://state', { state: 'done', meetingId: 502 });
   }
 }, qs.get('slow') ? 600000 : 25000);
 
@@ -533,9 +621,12 @@ function mdOf(m) {
   const d = new Date(m.startedAt);
   const mm = (ms) => `${pad(Math.floor(ms / 60000))}:${pad(Math.floor((ms % 60000) / 1000))}`;
   let o = `# ${m.title}\n\n${d.toLocaleString('es-ES')} · ${Math.round(m.durationMs / 60000)} min${m.app ? ' · ' + m.app : ''}\n\n`;
+  const cita = (c) => (c ? `\n  > «${c.text}» — ${c.speaker === 'me' ? 'Tú' : 'Ellos'}, ${mm(c.atMs)}` : '');
+  if (m.summary || m.actionItems.length || m.decisions.length) o += '*Generado con IA local: resumen, tareas, decisiones y demás notas. Cada tarea y decisión lleva la cita de lo dicho que la respalda.*\n\n';
   if (m.summary) o += `## Resumen\n\n${m.summary}\n\n`;
-  if (m.actionItems.length) o += '## Tareas\n\n' + m.actionItems.map((a) => `- [${a.done ? 'x' : ' '}] ${a.text}${a.owner ? ' (' + a.owner + ')' : ''}`).join('\n') + '\n\n';
-  if (m.decisions.length) o += '## Decisiones\n\n' + m.decisions.map((x) => `- ${x}`).join('\n') + '\n\n';
+  if (m.actionItems.length) o += '## Tareas\n\n' + m.actionItems.map((a) => `- [${a.done ? 'x' : ' '}] ${a.text}${a.owner ? ' (' + a.owner + ')' : ''}${cita(a.cita)}`).join('\n') + '\n\n';
+  if (m.decisions.length) o += '## Decisiones\n\n' + m.decisions.map((x, i) => `- ${x}${cita((m.decisionCitas || [])[i])}`).join('\n') + '\n\n';
+  if ((m.questions || []).length) o += '## Preguntas\n\n' + m.questions.map((q) => `- (${q.askedBy === 'me' ? 'Tú' : 'Ellos'}) ${q.text}${q.answered ? ` → ${q.answer}` : ' (sin resolver)'}`).join('\n') + '\n\n';
   if (m.topics.length) o += '## Temas\n\n' + m.topics.map((x) => `- ${x}`).join('\n') + '\n\n';
   o += '## Transcripción\n\n' + m.segments.map((s) => `**${s.speaker === 'me' ? 'Tú' : 'Ellos'}** [${mm(s.startMs)}]: ${s.text}`).join('\n\n') + '\n';
   return o;
@@ -549,8 +640,9 @@ function stopLive() {
   m.durationMs = Date.now() - live.startTs;
   m.summaryStatus = 'pending';
   live = null;
+  m.transcriptFinal = false;
   emit('meeting://state', { state: 'summarizing', meetingId: m.id });
-  setTimeout(() => finishSummary(m), qs.get('slow') ? 600000 : 3500);
+  fakePhase2(m.id, true, () => finishSummary(m));
   return m;
 }
 
@@ -559,7 +651,7 @@ const meetingCommands = {
     if (live) throw 'Ya hay una reunión en curso.';
     const id = (Date.now() % 100000) + 1000;
     const m = { id, title: title || 'Reunión sin título', startedAt: new Date().toISOString(), endedAt: null, durationMs: 0, app: _app || 'Chrome', auto: !!_auto, summaryStatus: 'none',
-      segments: [], summary: null, actionItems: [], decisions: [], topics: [] };
+      segments: [], summary: null, actionItems: [], decisions: [], topics: [], questions: [], saidByMe: [], saidByThem: [] };
     meetings.push(m);
     live = { meeting: m, startTs: Date.now(), idx: 0, timers: [] };
     emit('meeting://state', { state: 'recording', meetingId: id });
@@ -569,16 +661,7 @@ const meetingCommands = {
       lv = [clamp(lv[0] + (rand() - 0.5) * 0.6), clamp(lv[1] + (rand() - 0.5) * 0.6)];
       emit('meeting://level', { mic: lv[0], system: lv[1] });
     }, 120));
-    const push = () => {
-      if (!live) return;
-      const [speaker, text] = LIVE[live.idx++ % LIVE.length];
-      const startMs = Date.now() - live.startTs;
-      const seg = { meetingId: id, speaker, startMs, endMs: startMs + 2500 + text.length * 45, text };
-      m.segments.push(seg);
-      emit('meeting://segment', seg);
-    };
-    live.timers.push(setTimeout(push, 1800));
-    live.timers.push(setInterval(push, 4800));
+    // Fase 1: solo se graba (tiempo y nivel); no hay texto en vivo.
     return meetingBase(m);
   },
   stop_meeting: () => { if (!live) throw 'No hay ninguna reunión en curso.'; return meetingBase(stopLive()); },
@@ -596,15 +679,19 @@ const meetingCommands = {
     const m = meetings.find((x) => x.id === id); if (!m) throw 'La reunión no existe.';
     m.summaryStatus = 'pending';
     emit('meeting://state', { state: 'summarizing', meetingId: id });
-    setTimeout(() => {
+    // Sin transcripción final todavía, la fase 2 empieza por transcribir el audio.
+    fakePhase2(id, !m.transcriptFinal, () => {
       Object.assign(m, {
         summary: 'Se repasaron los objetivos del trimestre: cerrar la versión estable es la primera prioridad y las notas de reunión la segunda. La sincronización entre equipos se aplaza al trimestre siguiente.',
-        actionItems: [{ text: 'Cerrar la versión estable antes de fin de mes', owner: 'Alfonso', done: false }, { text: 'Definir el alcance de las notas de reunión', owner: null, done: false }],
-        decisions: ['Aplazar la sincronización al trimestre siguiente'], topics: ['Objetivos', 'Versión estable', 'Notas de reunión'], summaryStatus: 'done',
+        actionItems: [{ text: 'Cerrar la versión estable', owner: 'Alfonso', done: false, due: 'antes de fin de mes' }, { text: 'Definir el alcance de las notas de reunión', owner: null, done: false, due: null }],
+        decisions: ['Aplazar la sincronización al trimestre siguiente'], topics: ['Objetivos', 'Versión estable', 'Notas de reunión'],
+        keyPoints: ['La versión estable es la primera prioridad del trimestre', 'Las notas de reunión pasan a ser la segunda prioridad'],
+        nextSteps: [], openQuestions: ['Cuándo retomar la sincronización entre equipos'], summaryStatus: 'done', transcriptFinal: true,
       });
       emit('meeting://summary', meetingDetail(m));
+      emit('meeting://progress', progress(id, 'done', 100));
       emit('meeting://state', { state: 'done', meetingId: id });
-    }, qs.get('slow') ? 600000 : 3200);
+    });
   },
   toggle_action_item: ({ meetingId, index }) => {
     const m = meetings.find((x) => x.id === meetingId); const a = m && m.actionItems[index];
@@ -630,12 +717,106 @@ const meetingCommands = {
   },
 };
 
+// ------------------------------------------------------------------ diccionario por voz (Contrato v9)
+// «Grabar pronunciación» simulada: ~2 s de nivel de micro, «Transcribiendo…» y un texto «oído» con las faltas
+// típicas de Parakeet (tx→ch, ll→y, k→c, w→gu, v→b, CamelCase partido). Cada grabación de la misma palabra
+// oye otra forma; a la tercera, la palabra tal cual («Pronto ya la entiende bien»).
+const pron = { stop: null, n: new Map() };
+let nextVariantId = 500;
+const normHeard = (s) => String(s || '').split(/\s+/).map((w) => w.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')).filter(Boolean).join(' ');
+const MISHEAR = [
+  (w) => w.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/tx/gi, 'ch').replace(/ll/gi, 'y').replace(/k/gi, 'c').replace(/w/gi, 'gu').replace(/v/gi, 'b'),
+  (w) => w.replace(/([a-z])([A-Z])/g, '$1 $2').replace(/tx/gi, 'ch').replace(/s\b/g, 'z').replace(/e/g, 'i'),
+  (w) => w,
+];
+function pronounceStatus(word, replacement, heard) {
+  const h = normHeard(heard).toLowerCase();
+  if (!h) return 'empty';
+  if (normHeard(replacement || word).toLowerCase() === h) return 'ok';
+  if (replacement && normHeard(word).toLowerCase() === h) return 'covered';
+  return 'new';
+}
+function pronounceRecord({ word, replacement }) {
+  return new Promise((resolve, reject) => {
+    if (!String(word || '').trim()) { reject('Escribe primero la palabra'); return; }
+    if (!engine.ready) {
+      reject(engine.loading ? 'El motor de voz aún se está cargando. Prueba otra vez en unos segundos' : 'El motor de voz no está listo: ' + engine.error);
+      return;
+    }
+    if (pron.stop) { reject('Ya se está grabando una pronunciación'); return; }
+    emit('pronounce://state', { state: 'recording' });
+    const t0 = Date.now();
+    const tick = setInterval(() => {
+      const s = (Date.now() - t0) / 1000;
+      emit('pronounce://level', { level: s > 0.4 && s < 1.4 ? 0.45 + 0.45 * Math.abs(Math.sin(s * 9)) : 0.06 + Math.random() * 0.05 });
+    }, 33);
+    let auto = null;
+    const finish = (cancel) => {
+      clearInterval(tick); clearTimeout(auto); pron.stop = null;
+      const durationMs = Date.now() - t0;
+      if (cancel) { emit('pronounce://state', { state: 'idle' }); reject('Grabación cancelada'); return; }
+      emit('pronounce://state', { state: 'transcribing' });
+      setTimeout(() => {
+        emit('pronounce://state', { state: 'idle' });
+        const target = (replacement || word).trim();
+        const n = pron.n.get(target.toLowerCase()) || 0;
+        pron.n.set(target.toLowerCase(), n + 1);
+        let heard = MISHEAR[n % MISHEAR.length](target);
+        heard = heard.charAt(0).toUpperCase() + heard.slice(1) + '.';
+        const variant = normHeard(heard);
+        const status = pronounceStatus(word, replacement, heard);
+        // Huella de voz (Contrato v11): la grabación recortada queda pendiente hasta guardar la palabra.
+        const sample = `pendiente-${Date.now()}.wav`, sampleMs = Math.max(300, Math.min(durationMs - 900, 900));
+        pendingSamples.set(sample, sampleMs);
+        resolve({ heard, variant, status, common: status === 'new' && ['casa', 'mar', 'the'].includes(variant.toLowerCase()), durationMs, sample, sampleMs });
+      }, 650);
+    };
+    auto = setTimeout(() => finish(false), 2100);
+    pron.stop = finish;
+  });
+}
+/** Muestras de voz grabadas aún sin palabra: fichero -> ms. */
+const pendingSamples = new Map();
+let nextSampleId = 900;
+function attachSample(w, file) {
+  if (!pendingSamples.has(file)) throw 'La grabación ya no está: vuelve a grabarla';
+  const smp = { id: nextSampleId++, durationMs: pendingSamples.get(file), createdAt: new Date().toISOString() };
+  pendingSamples.delete(file);
+  (w.samples = w.samples || []).push(smp);
+  return smp;
+}
+/** Deja en `w` exactamente las variantes de `list` (normalizadas, sin repetir, conservando ids). */
+function setVariants(w, list) {
+  const out = [];
+  for (const h of list || []) {
+    const heard = normHeard(h);
+    if (!heard) throw 'La variante no puede estar vacía';
+    if (out.some((v) => v.heard.toLowerCase() === heard.toLowerCase())) continue;
+    out.push((w.variants || []).find((v) => v.heard.toLowerCase() === heard.toLowerCase()) || { id: nextVariantId++, heard });
+  }
+  w.variants = out;
+}
+
 // ------------------------------------------------------------------ comandos
 const normHist = (q) => (q || '').trim().toLowerCase();
 
+// ¿La dirección de Ollama es de este PC (loopback)? Mismo criterio que `aisetup::is_loopback_url` (el host lo saca el parser WHATWG).
+const ollamaUrlIsLocal = (u) => {
+  const x = String(u || '').trim();
+  try {
+    const host = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(x) ? x : 'http://' + x).hostname.toLowerCase();
+    return !x || ['localhost', '[::1]'].includes(host) || /^127(\.\d{1,3}){3}$/.test(host) || /^\[::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}\]$/.test(host);
+  } catch (_) { return false; }
+};
 const commands = {
   get_settings: () => clone(settings),
-  save_settings: ({ settings: s }) => { settings = { ...settings, ...clone(s) }; emit('settings://changed', settings); },
+  // Como el backend (commands.rs): Ollama solo en este PC (decisión de Txonso, 23-oct-2026), una dirección de otro equipo se rechaza y no se guarda.
+  save_settings: ({ settings: s }) => {
+    if (s.ollamaUrl !== settings.ollamaUrl && !ollamaUrlIsLocal(s.ollamaUrl)) throw 'Pronto solo usa Ollama en este PC (localhost o 127.0.0.1). La dirección «' + String(s.ollamaUrl || '').trim().slice(0, 80) + '» no es de este equipo y tus dictados y reuniones tendrían que salir del PC para llegar a ella.';
+    settings = { ...settings, ...clone(s) }; emit('settings://changed', settings);
+  },
+  open_error_log: () => {},
+  app_info: () => ({ version: '2.3.0', test: new URLSearchParams(location.search).has('pruebas') }),
   list_mics: () => ['Micrófono (Realtek High Definition Audio)', 'Auriculares (Jabra Evolve2 65)', 'Entrada de línea (USB Audio Device)'],
   get_stats: () => stats(),
   list_history: ({ query, limit = 50, offset = 0 }) => {
@@ -649,15 +830,37 @@ const commands = {
   paste_last: () => { if (!history.length) throw 'No hay ninguna transcripción todavía.'; },
   copy_last: () => { if (!history.length) throw 'No hay ninguna transcripción todavía.'; },
   list_words: () => clone(words),
-  add_word: ({ word, replacement }) => {
+  add_word: ({ word, replacement, variants, newSamples }) => {
     if (!String(word || '').trim()) throw 'La palabra no puede estar vacía';
-    const w = { id: Date.now(), word: word.trim(), replacement: replacement ? replacement.trim() : null, createdAt: new Date().toISOString(), starred: false, source: 'manual' };
+    const w = { id: Date.now(), word: word.trim(), replacement: replacement ? replacement.trim() : null, createdAt: new Date().toISOString(), starred: false, source: 'manual', variants: [], samples: [] };
+    setVariants(w, variants);
+    (newSamples || []).forEach((f) => attachSample(w, f));
     words.push(w); return clone(w);
   },
-  update_word: ({ id, word, replacement }) => {
+  update_word: ({ id, word, replacement, variants, keepSamples, newSamples }) => {
     const w = words.find((x) => x.id === id); if (!w) throw 'No existe';
     w.word = word.trim(); w.replacement = replacement ? replacement.trim() : null;
+    if (variants) setVariants(w, variants);
+    if (keepSamples) w.samples = (w.samples || []).filter((x) => keepSamples.includes(x.id));
+    (newSamples || []).forEach((f) => attachSample(w, f));
   },
+  add_word_sample: ({ wordId, sample }) => {
+    const w = words.find((x) => x.id === wordId); if (!w) throw 'Esa palabra ya no está en el diccionario';
+    return clone(attachSample(w, sample));
+  },
+  delete_word_sample: ({ id }) => { words.forEach((w) => { w.samples = (w.samples || []).filter((x) => x.id !== id); }); },
+  get_word_sample_audio: ({ id, pending }) => {
+    const ms = id != null ? (words.flatMap((w) => w.samples || []).find((x) => x.id === id) || {}).durationMs : pendingSamples.get(pending);
+    return ms ? wavB64(ms / 1000) : null;
+  },
+  add_word_variant: ({ wordId, heard }) => {
+    const w = words.find((x) => x.id === wordId); if (!w) throw 'Esa palabra ya no está en el diccionario';
+    setVariants(w, [...(w.variants || []).map((v) => v.heard), heard]);
+    return clone(w.variants.find((v) => v.heard.toLowerCase() === normHeard(heard).toLowerCase()));
+  },
+  delete_word_variant: ({ id }) => { words.forEach((w) => { w.variants = (w.variants || []).filter((v) => v.id !== id); }); },
+  pronounce_record: (args) => pronounceRecord(args),
+  pronounce_stop: ({ cancel } = {}) => { if (pron.stop) pron.stop(!!cancel); },
   delete_word: ({ id }) => { words = words.filter((w) => w.id !== id); },
   toggle_word_star: ({ id }) => { const w = words.find((x) => x.id === id); if (w) w.starred = !w.starred; },
   list_snippets: () => clone(snippets),
@@ -684,6 +887,29 @@ const commands = {
   engine_status: () => clone(engine),
   model_status: () => clone(model),
   model_download_start: () => { fakeModelDownload(); },
+  asr_options: () => ({
+    gpu: 'NVIDIA GeForce RTX 4070 Ti', vramGb: 12.8, downloading: whisperDl,
+    whisper: clone(WHISPER),
+  }),
+  // Como `modeldl::whisper_start`: progreso por `whisper://progress` y un `done` con el nombre del fichero.
+  whisper_download_start: ({ id }) => {
+    const m = WHISPER.find((x) => x.id === id);
+    if (!m) throw `Modelo de Whisper desconocido: ${id}`;
+    if (whisperDl) throw 'Ya se está descargando otro modelo; espera a que termine';
+    whisperDl = m.file;
+    const total = m.mb * 1048576;
+    let done = 0;
+    const tick = setInterval(() => {
+      done = Math.min(total, done + total / 8);
+      if (done < total) { emit('whisper://progress', { file: m.file, doneBytes: done, totalBytes: total, overallPercent: Math.floor((done * 100) / total), state: 'downloading' }); return; }
+      clearInterval(tick);
+      emit('whisper://progress', { file: m.file, doneBytes: total, totalBytes: total, overallPercent: 100, state: 'verifying' });
+      setTimeout(() => {
+        m.present = true; whisperDl = null;
+        emit('whisper://progress', { file: m.file, doneBytes: total, totalBytes: total, overallPercent: 100, state: 'done' });
+      }, 300);
+    }, 250);
+  },
   update_status: () => clone(upd),
   update_check: async () => {
     await delay(700);
@@ -723,6 +949,13 @@ const commands = {
   capture_hotkey: () => captureHotkey(),
   open_hub: () => {}, open_settings: () => {},
   hide_flowbar_for_hour: () => {},
+  // Contrato v8 · barra fija en un monitor (la barra está en la pantalla 1)
+  list_monitors: () => clone(MONITORS),
+  pin_flowbar: ({ pinned }) => {
+    settings = { ...settings, flowBarMonitor: pinned ? MONITORS.find((m) => m.current).device : null };
+    emit('settings://changed', settings);
+    return clone(settings);
+  },
   ...meetingCommands,
 };
 

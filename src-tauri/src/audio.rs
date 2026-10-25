@@ -262,19 +262,43 @@ where
         .map_err(|e| e.to_string())
 }
 
+/// Cada cuánto audio escrito se reescriben los tamaños de la cabecera (5 s). Si la app se cierra a
+/// medias, el WAV sigue siendo válido y como mucho declara unos segundos de menos (ver `WavReader`).
+const WAV_CHECKPOINT_BYTES: u32 = TARGET_RATE * 2 * 5;
+/// El primer volcado llega antes, al primer segundo: si la app o el PC caen pronto, el WAV no se
+/// queda en 0 B (rompedor 22-oct-c, MEDIA 1). La cabecera ya se vuelca al crear el fichero.
+const WAV_FIRST_CHECKPOINT_BYTES: u32 = TARGET_RATE * 2;
+
 /// WAV PCM16 mono 16 kHz que se va escribiendo a disco según llega el audio (una reunión de una
-/// hora no cabe cómoda en memoria). `finish` rellena las longitudes de la cabecera.
+/// hora no cabe cómoda en memoria). La cabecera se pone al día cada 5 s y al cerrar (`finish`).
 pub struct WavStream {
     file: std::io::BufWriter<std::fs::File>,
     bytes: u32,
+    /// Bytes que declara la cabecera ahora mismo.
+    synced: u32,
 }
 
 impl WavStream {
+    #[cfg(test)]
     pub fn create(path: &std::path::Path) -> std::io::Result<Self> {
+        Self::from_file(std::fs::File::create(path)?)
+    }
+
+    /// Como `create`, pero nunca sobrescribe: si ya hay un fichero se aparta antes (`db::set_aside`).
+    /// Lo usan las reuniones: un WAV de otra reunión con el mismo nombre no se pierde.
+    pub fn create_new(path: &std::path::Path) -> std::io::Result<Self> {
+        crate::db::set_aside(path)?;
+        Self::from_file(std::fs::OpenOptions::new().write(true).create_new(true).open(path)?)
+    }
+
+    fn from_file(file: std::fs::File) -> std::io::Result<Self> {
         use std::io::Write;
-        let mut file = std::io::BufWriter::new(std::fs::File::create(path)?);
+        let mut file = std::io::BufWriter::new(file);
         file.write_all(&encode_wav(&[])[..44])?;
-        Ok(Self { file, bytes: 0 })
+        // La cabecera, a disco ya: un WAV que nunca llega a volcar audio es una pista vacía (44 B),
+        // no un fichero de 0 B ilegible.
+        file.flush()?;
+        Ok(Self { file, bytes: 0, synced: 0 })
     }
 
     pub fn write(&mut self, samples: &[f32]) -> std::io::Result<()> {
@@ -282,11 +306,16 @@ impl WavStream {
         for &s in samples {
             self.file.write_all(&((s.clamp(-1.0, 1.0) * 32767.0) as i16).to_le_bytes())?;
         }
-        self.bytes = self.bytes.saturating_add(samples.len() as u32 * 2);
+        self.bytes = self.bytes.saturating_add((samples.len() as u32).saturating_mul(2));
+        let every = if self.synced == 0 { WAV_FIRST_CHECKPOINT_BYTES } else { WAV_CHECKPOINT_BYTES };
+        if self.bytes - self.synced >= every {
+            self.sync_header()?;
+        }
         Ok(())
     }
 
-    pub fn finish(mut self) -> std::io::Result<()> {
+    /// Vuelca lo pendiente y escribe en la cabecera los tamaños actuales.
+    fn sync_header(&mut self) -> std::io::Result<()> {
         use std::io::{Seek, SeekFrom, Write};
         self.file.flush()?;
         let f = self.file.get_mut();
@@ -294,7 +323,112 @@ impl WavStream {
         f.write_all(&(36 + self.bytes).to_le_bytes())?;
         f.seek(SeekFrom::Start(40))?;
         f.write_all(&self.bytes.to_le_bytes())?;
-        f.flush()
+        f.seek(SeekFrom::End(0))?;
+        self.synced = self.bytes;
+        Ok(())
+    }
+
+    pub fn finish(mut self) -> std::io::Result<()> {
+        use std::io::Write;
+        self.sync_header()?;
+        self.file.flush()
+    }
+}
+
+/// Lector por bloques de los WAV de reunión (PCM16 mono). No se fía del tamaño que declara la
+/// cabecera: el bloque `data` es siempre el último, así que lee hasta el final del fichero. Así
+/// recupera el audio de una reunión cuya app se cerró antes de poner al día la cabecera.
+pub struct WavReader {
+    file: std::io::BufReader<std::fs::File>,
+    rate: u32,
+    /// Muestras que hay en el fichero (según su tamaño real).
+    total: u64,
+}
+
+/// Mensajes de `WavReader::open` cuando la CABECERA no se puede leer (a diferencia de un WAV
+/// legible pero de otro formato, que sí es un error de verdad).
+const HEADER_UNREADABLE: [&str; 3] = ["no es un WAV", "WAV sin bloque de audio", "WAV sin formato"];
+
+impl WavReader {
+    /// Como `open`, pero para los WAV que escribe Pronto (reuniones): si la cabecera está a ceros o
+    /// ilegible y el fichero tiene datos, la reconstruye con el formato fijo que escribe `WavStream`
+    /// (PCM16 mono 16 kHz, cabecera de 44 B) y lee las muestras desde el byte 44. Tras un apagón
+    /// NTFS deja a ceros la página de la cabecera (la que más se reescribe, cada 5 s, sin `fsync`)
+    /// aunque las muestras sigan en el disco (rompedor 23-oct, reuniones MEDIA 1).
+    pub fn open_recovering(path: &std::path::Path) -> std::io::Result<Self> {
+        use std::io::{Seek, SeekFrom};
+        match Self::open(path) {
+            Err(e) if e.kind() == std::io::ErrorKind::InvalidData && HEADER_UNREADABLE.iter().any(|m| e.to_string() == *m) => {
+                let len = std::fs::metadata(path)?.len();
+                if len <= 44 {
+                    return Err(e);
+                }
+                let mut file = std::io::BufReader::new(std::fs::File::open(path)?);
+                file.seek(SeekFrom::Start(44))?;
+                eprintln!("[audio] cabecera ilegible en {}: se reconstruye (PCM16 mono {TARGET_RATE} Hz, {} B de audio)", path.display(), len - 44);
+                Ok(Self { file, rate: TARGET_RATE, total: (len - 44) / 2 })
+            }
+            r => r,
+        }
+    }
+
+    pub fn open(path: &std::path::Path) -> std::io::Result<Self> {
+        use std::io::{Error, ErrorKind, Read, Seek, SeekFrom};
+        let bad = |m: &str| Error::new(ErrorKind::InvalidData, m.to_string());
+        let len = std::fs::metadata(path)?.len();
+        let mut file = std::io::BufReader::new(std::fs::File::open(path)?);
+        let mut head = [0u8; 12];
+        file.read_exact(&mut head)?;
+        if &head[0..4] != b"RIFF" || &head[8..12] != b"WAVE" {
+            return Err(bad("no es un WAV"));
+        }
+        let mut pos: u64 = 12;
+        let mut rate = 0;
+        loop {
+            let mut ch = [0u8; 8];
+            file.read_exact(&mut ch).map_err(|_| bad("WAV sin bloque de audio"))?;
+            let size = u32::from_le_bytes([ch[4], ch[5], ch[6], ch[7]]) as u64;
+            let body = pos + 8;
+            if &ch[0..4] == b"fmt " {
+                let mut fmt = [0u8; 16];
+                file.read_exact(&mut fmt)?;
+                let (format, channels, bits) = (u16::from_le_bytes([fmt[0], fmt[1]]), u16::from_le_bytes([fmt[2], fmt[3]]), u16::from_le_bytes([fmt[14], fmt[15]]));
+                if format != 1 || channels != 1 || bits != 16 {
+                    return Err(bad("el WAV no es PCM de 16 bits mono"));
+                }
+                rate = u32::from_le_bytes([fmt[4], fmt[5], fmt[6], fmt[7]]);
+            } else if &ch[0..4] == b"data" {
+                if rate == 0 {
+                    return Err(bad("WAV sin formato"));
+                }
+                file.seek(SeekFrom::Start(body))?;
+                return Ok(Self { file, rate, total: len.saturating_sub(body) / 2 });
+            }
+            pos = body + size + (size & 1);
+            file.seek(SeekFrom::Start(pos))?;
+        }
+    }
+
+    pub fn rate(&self) -> u32 {
+        self.rate
+    }
+
+    pub fn total_samples(&self) -> u64 {
+        self.total
+    }
+
+    /// Siguiente bloque de hasta `max` muestras; vacío al llegar al final.
+    pub fn read_block(&mut self, max: usize) -> std::io::Result<Vec<f32>> {
+        use std::io::Read;
+        let mut buf = vec![0u8; max * 2];
+        let mut got = 0;
+        while got < buf.len() {
+            match self.file.read(&mut buf[got..])? {
+                0 => break,
+                n => got += n,
+            }
+        }
+        Ok(buf[..got - got % 2].chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0).collect())
     }
 }
 
@@ -404,6 +538,98 @@ mod tests {
         let bytes = std::fs::read(&path).unwrap();
         let _ = std::fs::remove_file(&path);
         assert_eq!(bytes, encode_wav(&src));
+    }
+
+    #[test]
+    fn wav_en_streaming_pone_al_dia_la_cabecera_sin_cerrar() {
+        let path = std::env::temp_dir().join(format!("pronto_wavckpt_{}.wav", std::process::id()));
+        let src: Vec<f32> = (0..16_000 * 7).map(|i| (i as f32 * 0.01).sin() * 0.3).collect();
+        let mut w = WavStream::create(&path).unwrap();
+        for c in src.chunks(1600) {
+            w.write(c).unwrap();
+        }
+        // La app «se cierra» sin `finish`: la cabecera declara al menos los 5 s del último punto de control.
+        drop(w);
+        let bytes = std::fs::read(&path).unwrap();
+        let declared = u32::from_le_bytes(bytes[40..44].try_into().unwrap());
+        assert!(declared >= 16_000 * 2 * 5 && declared < src.len() as u32 * 2, "{declared}");
+        // El lector no se fía de la cabecera y recupera los 7 s enteros.
+        let mut r = WavReader::open(&path).unwrap();
+        assert_eq!((r.rate(), r.total_samples()), (16_000, src.len() as u64));
+        let mut back = Vec::new();
+        loop {
+            let b = r.read_block(5000).unwrap();
+            if b.is_empty() {
+                break;
+            }
+            back.extend(b);
+        }
+        let _ = std::fs::remove_file(&path);
+        assert_eq!(back.len(), src.len());
+        assert!(src.iter().zip(&back).all(|(a, b)| (a - b).abs() < 1e-3));
+    }
+
+    /// Rompedor 22-oct-c, MEDIA 1: una caída al principio (sin `finish` ni `Drop`) no deja el WAV en
+    /// 0 B: la cabecera está en disco desde el principio y el audio desde el primer segundo.
+    #[test]
+    fn wav_en_streaming_vuelca_al_primer_segundo() {
+        let path = std::env::temp_dir().join(format!("pronto_wavearly_{}.wav", std::process::id()));
+        let w = WavStream::create(&path).unwrap();
+        std::mem::forget(w);
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), 44, "la cabecera se vuelca al crear");
+        let _ = std::fs::remove_file(&path);
+        let mut w = WavStream::create(&path).unwrap();
+        for c in vec![0.2f32; 16_000 + 1600].chunks(800) {
+            w.write(c).unwrap();
+        }
+        std::mem::forget(w); // la app muere sin cerrar el WAV
+        let r = WavReader::open(&path).unwrap();
+        let n = r.total_samples();
+        drop(r);
+        let _ = std::fs::remove_file(&path);
+        assert!(n >= 16_000, "{n} muestras en disco tras 1,1 s");
+    }
+
+    #[test]
+    fn wav_con_cabecera_a_cero_se_lee_entero() {
+        // Caso del cierre brusco antes del primer punto de control: tamaños a cero.
+        let path = std::env::temp_dir().join(format!("pronto_wavzero_{}.wav", std::process::id()));
+        let mut bytes = encode_wav(&vec![0.25f32; 4000]);
+        bytes[4..8].copy_from_slice(&36u32.to_le_bytes());
+        bytes[40..44].copy_from_slice(&0u32.to_le_bytes());
+        bytes.push(7); // byte suelto de una muestra a medio escribir
+        std::fs::write(&path, &bytes).unwrap();
+        let mut r = WavReader::open(&path).unwrap();
+        assert_eq!(r.total_samples(), 4000);
+        assert_eq!(r.read_block(10_000).unwrap().len(), 4000);
+        assert!(r.read_block(10).unwrap().is_empty());
+        std::fs::write(&path, b"RIFF\0\0\0\0WAVEjunk").unwrap();
+        assert!(WavReader::open(&path).is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Rompedor 23-oct, reuniones MEDIA 1: tras un apagón la página de la cabecera queda a ceros,
+    /// pero las muestras siguen en el disco: se reconstruye la cabecera y se lee el audio.
+    #[test]
+    fn wav_con_cabecera_a_ceros_de_apagon_se_recupera() {
+        let path = std::env::temp_dir().join(format!("pronto_wavnul_{}.wav", std::process::id()));
+        let mut bytes = encode_wav(&vec![0.25f32; 4000]);
+        bytes[..44].iter_mut().for_each(|b| *b = 0);
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(WavReader::open(&path).is_err(), "el lector estricto sigue rechazándolo");
+        let mut r = WavReader::open_recovering(&path).unwrap();
+        assert_eq!((r.rate(), r.total_samples()), (TARGET_RATE, 4000));
+        let got = r.read_block(10_000).unwrap();
+        assert_eq!(got.len(), 4000);
+        assert!((got[0] - 0.25).abs() < 1e-3);
+        // Solo la cabecera (o menos) no tiene audio que recuperar; un WAV legible de otro formato sigue siendo error.
+        std::fs::write(&path, &bytes[..44]).unwrap();
+        assert!(WavReader::open_recovering(&path).is_err());
+        let mut other = encode_wav(&vec![0.25f32; 100]);
+        other[22..24].copy_from_slice(&2u16.to_le_bytes()); // estéreo
+        std::fs::write(&path, &other).unwrap();
+        assert!(WavReader::open_recovering(&path).is_err());
+        let _ = std::fs::remove_file(&path);
     }
 
     /// Abre el loopback del dispositivo de salida 1,5 s y cuenta lo recibido (sin guardar nada).

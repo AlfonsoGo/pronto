@@ -19,3 +19,7 @@ docs/logo/animado/AGENTS.md
 docs/logo/animado/CLAUDE.md
 docs/logo/animado/node_modules/
 docs/logo/iconos/_*
+node_modules/
+rompedor-backup/
+e2e/results/*.png
+e2e/rompedor/capturas/

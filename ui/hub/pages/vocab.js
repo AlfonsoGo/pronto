@@ -2,14 +2,14 @@
 // selección múltiple y borrado. [spec §2.3 Dictionary / Snippets]
 import { icon } from '../../shared/icons.js';
 import { invoke } from '../api.js';
-import { t, esc, $, $$, toast, errText, openMenu, confirmDialog, debounce } from '../util.js';
+import { t, esc, $, $$, toast, errText, openMenu, confirmDialog, debounce, fold } from '../util.js';
 import { pageHeader, tabsHtml, tabsKeys, emptyState, heroBanner, searchBtn, highlight } from '../ui.js';
 
 /**
  * cfg: {
  *  id, title, listCmd, deleteCmd, searchPlaceholder, sortOptions:[{id,label}], defaultSort, sortFn(sort)->cmp,
  *  tabFilter(tab,item)->bool, banner:{titleHtml, body, cta, deco, extra}, noun:{one,other}, addLabel,
- *  rowMain(item,q)->html, rowActs(item)->html, onAct(act,item,helpers)->bool, haystack(item)->string,
+ *  rowMain(item,q)->html, rowActs(item)->html, onAct(act,item,helpers,boton)->bool, haystack(item)->string,
  *  phrase(item)->string, openEditor(item|null, {done, items}), emptyTitle, emptyBody, deleteTitle
  * }
  */
@@ -28,8 +28,8 @@ export function makeVocabPage(cfg) {
       const elTabs = $('#v-tabs', root), elBulk = $('#v-bulk', root), elList = $('#v-list', root);
 
       const visible = () => {
-        const q = query.toLowerCase();
-        return items.filter((i) => cfg.tabFilter(tab, i) && (!q || cfg.haystack(i).toLowerCase().includes(q))).sort(cfg.sortFn(sort));
+        const q = fold(query); // sin tildes ni mayúsculas (rompedor 23-oct, hub BAJA 9)
+        return items.filter((i) => cfg.tabFilter(tab, i) && (!q || fold(cfg.haystack(i)).includes(q))).sort(cfg.sortFn(sort));
       };
 
       function renderTabs() {
@@ -67,8 +67,8 @@ export function makeVocabPage(cfg) {
             <button class="check" role="checkbox" aria-checked="${selected.has(i.id)}" data-act="select" aria-label="${esc(t('Seleccionar'))}">${icon('check', 12)}</button>
             <div class="v-main">${cfg.rowMain(i, query)}</div>
             <div class="v-acts">${cfg.rowActs ? cfg.rowActs(i) : ''}
-              <button class="icon-btn" data-act="edit" aria-label="${esc(t('Editar'))}" title="${esc(t('Editar'))}">${icon('pencil', 16)}</button>
-              <button class="icon-btn danger" data-act="delete" aria-label="${esc(t('Eliminar'))}" title="${esc(t('Eliminar'))}">${icon('trash-2', 16)}</button>
+              <button class="icon-btn" data-act="edit" aria-label="${esc(t('Editar «{x}»', { x: cfg.phrase(i) }))}" title="${esc(t('Editar'))}">${icon('pencil', 16)}</button>
+              <button class="icon-btn danger" data-act="delete" aria-label="${esc(t('Eliminar «{x}»', { x: cfg.phrase(i) }))}" title="${esc(t('Eliminar'))}">${icon('trash-2', 16)}</button>
             </div></div>`).join('')}</div>`;
       }
 
@@ -137,7 +137,7 @@ export function makeVocabPage(cfg) {
           openMenu(b, [{ title: t('Ordenar por') }, ...cfg.sortOptions.map((o) => ({
             label: o.label, sel: sort === o.id, onClick: () => { sort = o.id; renderList(); },
           }))]);
-        } else if (it && cfg.onAct) cfg.onAct(act, it, helpers);
+        } else if (it && cfg.onAct) cfg.onAct(act, it, helpers, b);
       });
       root.addEventListener('input', (e) => {
         if (e.target.matches('[data-search-input]')) { query = e.target.value.trim(); wantFocus = true; renderList(); }

@@ -42,7 +42,7 @@ function heatmapHtml(days) {
 
   return `<div class="hm" style="--cols:${cols}">
     <div class="hm-dow">${dow.map((x) => `<span>${esc(x)}</span>`).join('')}</div>
-    <div class="hm-scroll"><div class="hm-wrap">
+    <div class="hm-scroll" tabindex="0" role="region" aria-label="${esc(t('Mapa de calor de palabras dictadas por día'))}"><div class="hm-wrap">
       <div class="hm-months">${labels.map((l) => `<span>${esc(l)}</span>`).join('')}</div>
       <div class="hm-grid" role="img" aria-label="${esc(t('Mapa de calor de palabras dictadas por día'))}">${cells.map((c) => c
         ? `<i class="hm-c l${lvl(c.words, th)}" data-d="${c.date}" data-w="${c.words}"></i>` : '<i class="hm-c off"></i>').join('')}</div>

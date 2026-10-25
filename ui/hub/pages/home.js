@@ -6,11 +6,9 @@ import {
   keysHtml, openMenu, confirmDialog,
 } from '../util.js';
 import { emptyState, heroBanner, waveDeco, searchBtn, searchBar, highlight } from '../ui.js';
+import { openSettingsDialog } from './settings.js';
 
 const PAGE = 40;
-const HERO_KEY = 'pronto.hero.personalization.dismissed';
-const lsGet = (k) => { try { return localStorage.getItem(k); } catch (_) { return null; } };
-const lsSet = (k, v) => { try { localStorage.setItem(k, v); } catch (_) { /* */ } };
 
 export default {
   id: 'home',
@@ -25,16 +23,14 @@ export default {
     const s = () => state.settings;
 
     function title() {
-      const name = esc(s().firstName || '');
-      const total = stats ? stats.totalWords : 0;
-      return total >= 2000
-        ? t('Hola de nuevo, {name}', { name })
-        : t('Hola {name}, vuelve al flow con {keys}', { name, keys: keysHtml(s().hotkeyHold) });
+      const name = esc((s().firstName || '').trim());
+      return name ? t('Hola, {name}', { name }) : t('Hola');
     }
 
     // ------------------------------------------------------------ esqueleto
     root.innerHTML = `<div class="page-inner">
-      <div class="ph"><div class="ph-t"><h1 class="ptitle" id="h-title"></h1></div></div>
+      <div class="ph"><div class="ph-t"><h1 class="ptitle" id="h-title"></h1></div>
+        <div class="ph-actions"><button class="btn btn-secondary btn-sm" data-act="open-insights">${icon('chart-column', 15)}${esc(t('Ver estadísticas'))}</button></div></div>
       <div class="home">
         <div class="home-main"><div id="h-model"></div><div id="h-hero"></div><div id="h-hist"></div></div>
         <aside class="home-aside" id="h-aside" aria-label="${esc(t('Tu actividad'))}"></aside>
@@ -62,27 +58,33 @@ export default {
           <p>${esc(t('Se descarga una sola vez (≈ 670 MB) y se queda en tu equipo. Después Pronto funciona sin conexión.'))}</p>${body}</div></div></div>`;
     }
 
-    // ------------------------------------------------------------ banner
+    // ------------------------------------------------------------ cómo se dicta
+    // Siempre a la vista (24-oct-2026): ninguno de los tres primerizos supo cómo dictar desde aquí; el cartel de antes
+    // hablaba de estilos. Debajo, la tecla, el micrófono y el idioma, cada uno con su botón.
+    const LANG = () => ({ auto: t('Español e inglés'), es: t('Solo español'), en: t('Solo inglés') });
     function renderHero() {
-      if (lsGet(HERO_KEY) !== '1') {
-        elHero.innerHTML = heroBanner({
-          titleHtml: t('Haz que Pronto suene como <em>tú</em>'),
-          body: t('Configura distintos estilos de escritura para distintas apps.'),
-          cta: t('Empezar ahora'), ctaAct: 'hero-style', closeAct: 'hero-close', deco: waveDeco(),
-        });
-      } else {
-        elHero.innerHTML = heroBanner({
-          titleHtml: t('Mantén presionada {keys} para dictar', { keys: keysHtml(s().hotkeyHold) }),
-          body: t('Suelta para pegar el texto en la app con foco. Para dictar sin mantener, pulsa {keys}.', { keys: keysHtml(s().hotkeyHandsFree) }),
-          deco: waveDeco(), cls: 'hero-quiet',
-        });
-      }
+      const st = s();
+      const cfg = (act, ic, label, value, btn) => `<div class="howto-item"><span class="howto-ic" aria-hidden="true">${icon(ic, 16)}</span>
+        <span class="howto-v"><small>${esc(label)}</small><b>${value}</b></span>
+        <button class="btn btn-secondary btn-sm" data-act="${act}">${esc(btn)}</button></div>`;
+      elHero.innerHTML = heroBanner({
+        titleHtml: t('Mantén pulsadas {keys} y habla', { keys: keysHtml(st.hotkeyHold) }),
+        body: esc(t('Al soltar, el texto se escribe donde tengas el cursor, en cualquier programa. Aquí abajo queda todo lo que has dictado.')),
+        extra: `<div class="howto-cfgs">
+          ${cfg('cfg-keys', 'keyboard', t('Tecla'), keysHtml(st.hotkeyHold), t('Cambiar tecla'))}
+          ${cfg('cfg-mic', 'mic', t('Micrófono'), esc(st.micName || t('El que use Windows')), t('Cambiar micrófono'))}
+          ${cfg('cfg-lang', 'globe', t('Idioma'), esc(LANG()[st.language] || st.language), t('Cambiar idioma'))}
+        </div>`,
+        deco: waveDeco(), cls: 'hero-howto',
+      });
     }
 
     // ------------------------------------------------------------ historial
     function rowHtml(it) {
       const clamp = expanded.has(it.id) ? '' : ' clamp';
       const dur = it.durationMs ? Math.max(1, Math.round(it.durationMs / 1000)) : 0;
+      // Cada botón nombra su dictado («… de las 9:12»): con nombres iguales, quien busca el de una fila pulsaba el de otra.
+      const when = formatTime(it.createdAt);
       return `<article class="hrow${it.id === freshId ? ' fresh' : ''}" data-id="${it.id}">
         <div class="h-time"><span>${esc(formatTime(it.createdAt))}</span>${it.app ? `<small>${esc(it.app)}</small>` : ''}</div>
         <div class="h-body">
@@ -91,10 +93,10 @@ export default {
             <span>${esc(t('{n} palabras', { n: it.words ?? 0 }))}${dur ? ' · ' + dur + ' s' : ''}</span></div>
         </div>
         <div class="h-acts">
-          <button class="icon-btn" data-act="copy" aria-label="${esc(t('Copiar transcripción'))}" title="${esc(t('Copiar transcripción'))}">${icon('copy', 17)}</button>
-          <button class="icon-btn" data-act="play" ${it.hasAudio ? '' : 'disabled'} aria-label="${esc(t('Reproducir audio'))}"
-            title="${esc(it.hasAudio ? t('Reproducir audio') : t('El audio ya no está disponible (más de 14 días)'))}">${icon(playingId === it.id ? 'pause' : 'play', 16)}</button>
-          <button class="icon-btn" data-act="more" aria-label="${esc(t('Más opciones'))}" title="${esc(t('Más opciones'))}">${icon('ellipsis', 18)}</button>
+          <button class="btn btn-secondary btn-sm h-copy" data-act="copy" aria-label="${esc(t('Copiar transcripción de las {h}', { h: when }))}">${icon('copy', 15)}${esc(t('Copiar'))}</button>
+          <button class="icon-btn" data-act="play" ${it.hasAudio ? '' : 'disabled'} aria-label="${esc(t('Reproducir audio de las {h}', { h: when }))}"
+            title="${esc(it.hasAudio ? t('Escuchar el audio') : t('El audio ya no está disponible (más de 14 días)'))}">${icon(playingId === it.id ? 'pause' : 'play', 16)}</button>
+          <button class="icon-btn" data-act="more" aria-label="${esc(t('Más opciones de las {h}', { h: when }))}" title="${esc(t('Más opciones: reintentar o eliminar'))}">${icon('ellipsis', 18)}</button>
         </div></article>`;
     }
 
@@ -131,18 +133,34 @@ export default {
     }
     let searchWantsFocus = false;
 
+    // rompedor 23-oct, hub MEDIA 4 y 5: «Cargar más» no se lanza dos veces (el segundo clic pedía la misma página y la
+    // pintaba repetida) y cada petición lleva un número: si llega una respuesta que ya no es la última pedida (una búsqueda
+    // nueva, otro «Cargar más»), se descarta en vez de pegarse a los resultados de otra consulta.
+    let seq = 0, moreBusy = false;
     async function load(reset = true) {
+      if (!reset && moreBusy) return;
+      const req = ++seq;
+      moreBusy = !reset;
       loading = true;
+      let enfocarNuevo = false;
       if (reset) { items = []; renderHist(); }
+      else {
+        const bt = $('[data-act=load-more]', elHist);
+        if (bt) { enfocarNuevo = document.activeElement === bt; bt.setAttribute('aria-disabled', 'true'); bt.setAttribute('aria-busy', 'true'); }
+      }
+      let nuevo = null;
       try {
         const offset = reset ? 0 : items.length;
         const page = await invoke('list_history', { query: query || null, limit: PAGE, offset });
-        if (!alive) return;
+        if (!alive || req !== seq) return;
         items = reset ? page : items.concat(page);
         hasMore = page.length === PAGE;
-      } catch (e) { toast(errText(e), { kind: 'err' }); }
-      loading = false;
+        if (!reset && page.length) nuevo = page[0].id;
+      } catch (e) { if (req !== seq) return; toast(errText(e), { kind: 'err' }); }
+      loading = false; moreBusy = false;
       renderHist();
+      // El botón «Cargar más» se rehace al pintar: el foco pasa al primer dictado nuevo, no al <body>.
+      if (enfocarNuevo && nuevo != null) { const f = $(`.hrow[data-id="${nuevo}"] .h-text`, elHist); if (f) f.focus({ preventScroll: true }); }
     }
     const doSearch = debounce(() => load(true), 250);
 
@@ -154,12 +172,12 @@ export default {
       elAside.innerHTML = `
         <div class="tarj"><div class="in stats">
           <div class="stat"><b>${esc(formatCompact(st.totalWords))}</b><span>${esc(t('palabras totales'))}</span></div>
-          <div class="stat"><b>${esc(formatDec(st.wpm, 0))}</b><span>${esc(t('ppm'))}</span></div>
+          <div class="stat"><b>${esc(formatDec(st.wpm, 0))}</b><span>${esc(t('palabras por minuto'))}</span></div>
           <div class="stat"><b>${esc(formatInt(st.streakDays))}</b><span>${esc(t('días seguidos'))}</span>${st.streakDays > 0 ? `<i class="flame">${icon('flame', 15)}</i>` : ''}</div>
           ${st.wordsThisWeek ? `<div class="stat-foot">${esc(t('{n} palabras esta semana', { n: formatInt(st.wordsThisWeek) }))}</div>` : ''}
         </div></div>
         <div class="tarj apps-card"><div class="in">
-          <h3>${esc(t('Vuelve a tu Flow'))}</h3>
+          <h3>${esc(t('Dónde más dictas'))}</h3>
           ${top.length ? `<p class="muted sm">${esc(t('Tus apps más usadas'))}</p><ul class="toplist">${top.map((a) =>
             `<li><span class="tl-n">${esc(a.app)}</span><span class="tl-v">${esc(formatCompact(a.words))}</span><i class="tl-bar" style="--w:${Math.round((a.words / max) * 100)}%"></i></li>`).join('')}</ul>`
             : `<p class="muted sm">${esc(t('Empieza a usar Pronto en cualquier app para ver aquí tus apps más usadas.'))}</p>`}
@@ -176,10 +194,13 @@ export default {
         if (!b64) { toast(t('No se puede reproducir el audio porque ya no está disponible (tiene más de 14 días)'), { kind: 'err' }); btn.disabled = false; return; }
         audio = new Audio('data:audio/wav;base64,' + b64);
         playingId = id;
+        // Audio dañado: el <audio> da `error` y play() se rechaza (en inglés técnico): un solo aviso, traducido.
+        let failed = false;
+        const fail = () => { if (failed) return; failed = true; stopAudio(); toast(t('No se pudo reproducir el audio'), { kind: 'err' }); };
         audio.addEventListener('ended', stopAudio);
-        audio.addEventListener('error', () => { stopAudio(); toast(t('No se pudo reproducir el audio'), { kind: 'err' }); });
-        await audio.play();
-        setPlayIcon(id, true);
+        audio.addEventListener('error', fail);
+        try { await audio.play(); setPlayIcon(id, true); }
+        catch (er) { if (!er || er.name !== 'AbortError') fail(); }
       } catch (e) { stopAudio(); toast(errText(e), { kind: 'err' }); }
       btn.disabled = false;
     }
@@ -194,7 +215,11 @@ export default {
       if (id != null) setPlayIcon(id, false);
     }
 
+    // Ids que se están reintentando: un segundo «Reintentar» sobre el mismo dictado no se lanza (rompedor 23-oct, hub BAJA 2).
+    const retrying = new Set();
     async function retry(it) {
+      if (retrying.has(it.id)) return;
+      retrying.add(it.id);
       toast(t('Reintentando la transcripción…'), { kind: 'info' });
       try {
         const n = await invoke('retry_history', { id: it.id });
@@ -203,19 +228,26 @@ export default {
         renderHist();
         toast(t('Transcripción actualizada'));
       } catch (e) { toast(errText(e) || t('Falló el reintento. Inténtalo de nuevo.'), { kind: 'err' }); }
+      finally { retrying.delete(it.id); }
     }
     async function remove(it) {
       const ok = await confirmDialog({
-        title: t('¿Seguro que quieres eliminar esta transcripción?'),
-        body: t('Una vez eliminado, no se puede recuperar'),
+        title: t('¿Eliminar este dictado y su audio?'),
+        body: t('Se borran el texto y la grabación de este PC. No se puede recuperar.'),
       });
       if (!ok) return;
+      // Al borrar desde el menú «⋯» la fila desaparece y el foco caía al <body>: pasa al «⋯» de la fila siguiente (o la anterior).
+      // (rompedor 23-oct, hub BAJA 5)
+      const i0 = items.findIndex((x) => x.id === it.id);
+      const vecino = (items[i0 + 1] || items[i0 - 1] || {}).id;
       try {
         await invoke('delete_history', { id: it.id });
         if (playingId === it.id) stopAudio();
         items = items.filter((x) => x.id !== it.id);
         renderHist();
-        toast(t('Transcripción eliminada'));
+        const f = vecino != null && $(`.hrow[data-id="${vecino}"] [data-act=more]`, elHist);
+        (f || root).focus({ preventScroll: true });
+        toast(t('Dictado eliminado'));
         refreshAside();
       } catch (e) { toast(errText(e), { kind: 'err' }); }
     }
@@ -227,8 +259,10 @@ export default {
       const row = b.closest('.hrow');
       const it = row ? items.find((x) => x.id === Number(row.dataset.id)) : null;
       if (act === 'model-dl') startModelDownload();
-      else if (act === 'hero-style') ctx.navigate('style');
-      else if (act === 'hero-close') { lsSet(HERO_KEY, '1'); renderHero(); }
+      else if (act === 'cfg-keys') openSettingsDialog('shortcuts');
+      else if (act === 'cfg-mic') openSettingsDialog('mic');
+      else if (act === 'cfg-lang') openSettingsDialog('langs');
+      else if (act === 'open-insights') ctx.navigate('insights');
       else if (act === 'toggle-search') { searchOpen = true; searchWantsFocus = true; renderHist(); }
       else if (act === 'clear-search') {
         searchOpen = false; searchWantsFocus = false;
@@ -246,8 +280,9 @@ export default {
       } else if (act === 'play' && it) playRow(it.id, b);
       else if (act === 'more' && it) {
         openMenu(b, [
-          { label: t('Reintentar transcripción'), icon: 'rotate-ccw', disabled: !it.hasAudio, onClick: () => retry(it) },
-          { label: t('Eliminar transcripción'), icon: 'trash-2', danger: true, onClick: () => remove(it) },
+          { label: t('Reintentar transcripción'), icon: 'rotate-ccw', disabled: !it.hasAudio || retrying.has(it.id), onClick: () => retry(it) },
+          { sep: true },
+          { label: t('Eliminar dictado y su audio'), icon: 'trash-2', danger: true, onClick: () => remove(it) },
         ]);
       }
     });
@@ -292,7 +327,12 @@ export default {
     }).then((u) => offs.push(u));
     listen('settings://changed', () => { if (alive) { elTitle.innerHTML = title(); renderHero(); } }).then((u) => offs.push(u));
 
-    offs.push(subscribe((what) => { if (alive && (what === 'model' || what === 'engine')) renderModel(); }));
+    // La tecla, el micrófono y el idioma se cambian en diálogos de este mismo hub: la tarjeta se repinta al guardarlos.
+    offs.push(subscribe((what) => {
+      if (!alive) return;
+      if (what === 'model' || what === 'engine') renderModel();
+      if (what === 'settings' || what === 'settings-ext') renderHero();
+    }));
 
     return () => { alive = false; stopAudio(); offs.forEach((u) => { try { u(); } catch (_) { /* */ } }); doSearch.cancel(); };
   },

@@ -124,6 +124,10 @@ pub struct Settings {
     pub meeting_detect: bool,
     /// Qué hacer al detectar una reunión (por defecto, tomar notas solo).
     pub meeting_auto: MeetingAuto,
+    /// El usuario ya dijo que sí a que Pronto empiece solo a grabar reuniones (decisión de Txonso,
+    /// 23-oct-2026): la primera vez que el modo `Auto` fuera a grabar, se pregunta («¿Grabar esta
+    /// reunión en Meets?»). Quien ya tiene reuniones grabadas cuenta como confirmado.
+    pub meeting_auto_confirmed: bool,
     /// Guardar el audio (mic y sistema) de las reuniones.
     pub meeting_keep_audio: bool,
     pub first_name: String,
@@ -131,6 +135,10 @@ pub struct Settings {
     pub language: String,
     pub app_language: String,
     pub model_dir: String,
+    /// Motor de voz: `parakeet` (de fábrica, cualquier PC) o `whisper` (más preciso, con GPU).
+    pub asr_engine: String,
+    /// Modelo de Whisper (id de `whisper::MODELS`) cuando `asr_engine` es `whisper`.
+    pub whisper_model: String,
     pub launch_at_login: bool,
     pub show_flow_bar: bool,
     pub sounds: bool,
@@ -151,6 +159,12 @@ pub struct Settings {
     pub keep_audio_days: u32,
     pub theme: String,
     pub flow_bar_hidden_until: Option<String>,
+    /// Monitor donde se fija la Flow bar (`\\.\DISPLAY2`, el `szDevice` de Win32). `None` = sigue al
+    /// cursor. Si ese monitor no está conectado la barra sigue al cursor, pero el ajuste se conserva.
+    pub flow_bar_monitor: Option<String>,
+    /// Rectángulo (px físicos) que tenía ese monitor al fijarlo: Windows renumera las pantallas al
+    /// enchufar y desenchufar, y con él se reencuentra. Lo rellena el backend, no la UI.
+    pub flow_bar_monitor_rect: Option<MonitorRect>,
     pub styles: Styles,
     pub history_retention_days: u32,
     /// Buscar actualizaciones en GitHub al abrir y cada 4 horas (`updater.rs`).
@@ -174,12 +188,15 @@ impl Default for Settings {
             hotkey_meeting: Hotkey { win: true, alt: true, key: Some("M".into()), ..Hotkey::default() },
             meeting_detect: true,
             meeting_auto: MeetingAuto::Auto,
+            meeting_auto_confirmed: false,
             meeting_keep_audio: false,
             first_name: windows_first_name(),
             mic_name: None,
             language: "auto".into(),
             app_language: "es".into(),
             model_dir,
+            asr_engine: "parakeet".into(),
+            whisper_model: crate::whisper::DEFAULT_MODEL.into(),
             launch_at_login: false,
             show_flow_bar: true,
             sounds: true,
@@ -196,6 +213,8 @@ impl Default for Settings {
             keep_audio_days: 14,
             theme: "dark".into(),
             flow_bar_hidden_until: None,
+            flow_bar_monitor: None,
+            flow_bar_monitor_rect: None,
             styles: Styles::default(),
             history_retention_days: 0,
             auto_update: true,
@@ -248,6 +267,54 @@ pub struct Word {
     pub starred: bool,
     /// `manual` | `auto`
     pub source: String,
+    /// Cómo transcribe Parakeet esta palabra al oírla (grabado con «Grabar pronunciación»). La
+    /// tubería corrige cada variante a la palabra, o a su `replacement` si lo tiene.
+    #[serde(default)]
+    pub variants: Vec<WordVariant>,
+    /// Grabaciones de su voz diciendo la palabra (huella de voz, Contrato v11): al dictar se busca
+    /// en el audio un tramo que suene igual y se escribe la palabra aunque Parakeet oiga otra cosa.
+    #[serde(default)]
+    pub samples: Vec<VoiceSample>,
+}
+
+/// Una grabación de la voz del usuario diciendo una palabra del diccionario. El audio (WAV 16 kHz
+/// mono, recortado a la voz) vive en `%APPDATA%\Pronto2oz\{file}`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct VoiceSample {
+    pub id: i64,
+    pub duration_ms: i64,
+    pub created_at: String,
+    /// Nombre del WAV en la carpeta `voz` (solo backend).
+    #[serde(skip)]
+    pub file: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WordVariant {
+    pub id: i64,
+    pub heard: String,
+}
+
+/// Resultado de grabar una pronunciación. `status`: `new` (variante nueva que guardar), `ok` (Pronto
+/// ya la escribe bien) o `covered` (lo oído ya se corrige con la entrada tal cual está).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Pronunciation {
+    /// Texto crudo del motor, tal cual.
+    pub heard: String,
+    /// Lo oído normalizado (sin puntuación alrededor): lo que se guarda como variante.
+    pub variant: String,
+    pub status: &'static str,
+    /// La variante es una palabra corriente («casa», «the»): se corregirá siempre que se dicte.
+    pub common: bool,
+    pub duration_ms: i64,
+    /// Muestra de voz pendiente (recortada a la voz) para la huella: se guarda con la palabra
+    /// (`add_word`/`update_word` con `newSamples`, o `add_word_sample`). `None` si fue demasiado corta.
+    pub sample: Option<String>,
+    /// Duración de la muestra recortada.
+    pub sample_ms: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -308,6 +375,33 @@ pub struct Rect {
     pub height: f64,
 }
 
+/// Rectángulo de un monitor en px físicos del escritorio virtual (`MONITORINFO.rcMonitor`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MonitorRect {
+    pub left: i32,
+    pub top: i32,
+    pub right: i32,
+    pub bottom: i32,
+}
+
+/// Un monitor conectado (respuesta de `list_monitors`).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MonitorInfo {
+    /// Nombre de dispositivo de Win32 (`\\.\DISPLAY2`): lo que se guarda en `flowBarMonitor`.
+    pub device: String,
+    /// Número de la pantalla para el usuario: 1, 2… en el orden de Windows (no el de `DISPLAY7`, que salta).
+    pub number: u32,
+    /// Nombre comercial del monitor según su EDID («DELL U2719D»); vacío si Windows no lo da.
+    pub name: String,
+    pub primary: bool,
+    /// Resolución en px físicos.
+    pub width: i32,
+    pub height: i32,
+    /// La Flow bar está ahora en este monitor.
+    pub current: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Snippet {
@@ -333,6 +427,9 @@ pub struct EngineStatus {
     pub loading: bool,
     pub model_dir: String,
     pub error: Option<String>,
+    /// Motor cargado de verdad: `parakeet` o `whisper` (Whisper elegido sin GPU válida carga Parakeet).
+    #[serde(default)]
+    pub active: String,
 }
 
 /// Estado de un fichero del modelo de voz en disco.
@@ -386,7 +483,7 @@ pub struct DictationState {
     pub state: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
-    /// `tap` | `nomic` | `noaudio` | `paste` | `ollama` | `select`
+    /// `tap` | `nomic` | `noaudio` (micro mudo) | `empty` (no se oyó nada) | `paste` | `ollama` | `select`
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kind: Option<&'static str>,
 }
@@ -428,7 +525,7 @@ pub struct MeetingListItem {
     pub action_count: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Segment {
     pub meeting_id: i64,
@@ -437,6 +534,30 @@ pub struct Segment {
     pub start_ms: i64,
     pub end_ms: i64,
     pub text: String,
+    /// Texto que salió del reconocedor si el turno se pulió con IA (Contrato v12); `null` si no.
+    #[serde(default)]
+    pub raw_text: Option<String>,
+    /// `pregunta` | `respuesta` | `propuesta` | `decision` | `tarea` | `otro`; `null` en reuniones viejas.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// Empezó mientras la otra persona aún hablaba.
+    #[serde(default)]
+    pub overlap: bool,
+    /// Posición (en `segments`) de la pregunta a la que contesta.
+    #[serde(default)]
+    pub reply_to: Option<i64>,
+}
+
+/// Una pregunta de la reunión (Contrato v12): quién la hizo y si se contestó.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct Question {
+    pub text: String,
+    /// `me` | `them`
+    pub asked_by: String,
+    pub at_ms: i64,
+    pub answered: bool,
+    pub answer: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -445,6 +566,13 @@ pub struct ActionItem {
     pub text: String,
     pub owner: Option<String>,
     pub done: bool,
+    /// Fecha o plazo tal como se dijo («el viernes», «antes del 15»). Desde el Contrato v10.
+    #[serde(default)]
+    pub due: Option<String>,
+    /// Cita literal de lo dicho que respalda la tarea (decisión A de Txonso, 23-oct; esquema v10).
+    /// `None` en las notas anteriores, que se ven como antes.
+    #[serde(default)]
+    pub cita: Option<crate::summary::Cita>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -457,6 +585,28 @@ pub struct MeetingDetail {
     pub action_items: Vec<ActionItem>,
     pub decisions: Vec<String>,
     pub topics: Vec<String>,
+    /// Lo que se dijo de cada tema (hechos y datos concretos). Vacío en reuniones anteriores al v10.
+    #[serde(default)]
+    pub key_points: Vec<String>,
+    #[serde(default)]
+    pub next_steps: Vec<String>,
+    #[serde(default)]
+    pub open_questions: Vec<String>,
+    /// `true` si la transcripción es la final de la fase 2; `false` si es la vista previa en vivo.
+    #[serde(default)]
+    pub transcript_final: bool,
+    /// Preguntas con quién las hizo y si se contestaron (Contrato v12).
+    #[serde(default)]
+    pub questions: Vec<Question>,
+    /// Lo que dijo el usuario («Tú») y lo que dijeron los demás («Ellos»), un punto por línea.
+    #[serde(default)]
+    pub said_by_me: Vec<String>,
+    #[serde(default)]
+    pub said_by_them: Vec<String>,
+    /// Cita de cada decisión, en el orden de `decisions` (decisión A de Txonso, 23-oct; esquema
+    /// v10). Vacía en las notas anteriores.
+    #[serde(default)]
+    pub decision_citas: Vec<Option<crate::summary::Cita>>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -6,6 +6,10 @@ use windows::Win32::System::Registry::{RegCloseKey, RegDeleteValueW, RegOpenKeyE
 pub const HIDDEN_FLAG: &str = "--hidden";
 
 pub fn set(enabled: bool) -> Result<(), String> {
+    // La versión de pruebas (`PRONTO_DATOS`) no toca el arranque con Windows: es del Pronto instalado.
+    if crate::db::test_build() {
+        return Ok(());
+    }
     let mut key = HKEY::default();
     // SAFETY: llamadas al registro con punteros a datos locales que viven durante la llamada.
     unsafe {

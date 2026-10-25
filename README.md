@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/AlfonsoGo/pronto/releases/download/v2.0.2/Pronto-Setup-2.0.2.exe"><b>⬇ Descargar Pronto 2 para Windows</b></a>
+  <a href="https://github.com/AlfonsoGo/pronto/releases/latest/download/Pronto-Setup.exe"><b>⬇ Descargar Pronto 2 para Windows</b></a>
   · <a href="https://github.com/AlfonsoGo/pronto/releases/latest">Novedades</a>
 </p>
 
@@ -21,12 +21,14 @@ Pronto 2 es la nueva versión de Pronto, reescrita desde cero en Rust (la versi�
 Flutter, sigue en la rama [`v1-flutter`](https://github.com/AlfonsoGo/pronto/tree/v1-flutter)).
 
 - **Dictado en cualquier app.** Navegador, correo, chat, editor de código.
-- **Notas de reunión automáticas.** Detecta Teams, Zoom, Meet, Webex o Slack, toma notas solo y
-  entrega título, resumen, tareas con responsable, decisiones y temas.
+- **Notas de reunión con quién dijo qué (beta).** Detecta Teams, Zoom y Meet, pregunta la primera vez
+  y al colgar entrega resumen, tareas y decisiones, cada una con la frase exacta y el minuto.
+- **Diccionario por voz.** Graba cómo dices un nombre o una marca y Pronto lo reconoce por tu voz.
 - **Polish.** Selecciona un texto, pulsa `Alt + Shift + P` y la IA local lo deja pulido.
 - **Privado de verdad.** La voz y el texto no salen del equipo. Funciona sin conexión.
 - **Rápido.** Motor NVIDIA Parakeet TDT 0.6B v3 (español e inglés con puntuación) en CPU: unos
-  0,5 s por frase de 8 s. Ejecutable nativo de 33 MB.
+  0,5 s por frase de 8 s. O Whisper (large-v3, turbo o medium) en la tarjeta gráfica.
+- **Fácil.** Panel pensado para quien no sabe de informática, con «Novedades» dentro de la app.
 - **Interfaz propia.** «Cristal etéreo»: violeta sobre negro OLED, modo oscuro y claro.
 - **Se actualiza solo.** Busca versiones nuevas al abrirse y cada 4 horas; un botón y se instala.
 
@@ -34,12 +36,12 @@ Flutter, sigue en la rama [`v1-flutter`](https://github.com/AlfonsoGo/pronto/tre
 
 ## Instalar
 
-1. Descarga [`Pronto-Setup-2.0.2.exe`](https://github.com/AlfonsoGo/pronto/releases/download/v2.0.2/Pronto-Setup-2.0.2.exe)
+1. Descarga [`Pronto-Setup.exe`](https://github.com/AlfonsoGo/pronto/releases/latest/download/Pronto-Setup.exe)
    y ejecútalo. El instalador no está firmado: si Windows muestra SmartScreen, pulsa
    «Más información › Ejecutar de todas formas».
 2. En el primer arranque Pronto descarga el modelo de voz (≈ 670 MB, una sola vez). Después no
    necesita Internet.
-3. Opcional, IA local con [Ollama](https://ollama.com): en Configuración › Experimental pulsa
+3. Opcional, IA local con [Ollama](https://ollama.com): en Configuración › Limpieza e IA pulsa
    «Activar IA local» y Pronto instala Ollama (≈ 1,5 GB, comprobando su firma) y descarga el modelo
    `qwen3:1.7b` (≈ 1,4 GB). Sirve para pulir textos (Polish y «Pulir cada dictado»), resumir
    reuniones y responder preguntas sobre ellas. Sin Ollama, el dictado y la transcripción de
@@ -47,7 +49,7 @@ Flutter, sigue en la rama [`v1-flutter`](https://github.com/AlfonsoGo/pronto/tre
    usa CPU, RAM y GPU a la vez que la transcripción.
 4. Actualizaciones: Pronto mira en GitHub si hay versión nueva al abrirse y cada 4 horas. Si la hay,
    sale un aviso con las novedades y «Actualizar ahora» la descarga, la instala y vuelve a abrir
-   Pronto. Se puede apagar en Configuración › Sistema › Actualizaciones. Si vienes de Pronto 1, su
+   Pronto. Se puede apagar en Configuración › Ventana y sonidos › Actualizaciones. Si vienes de Pronto 1, su
    propio aviso de actualización te trae a Pronto 2 y reutiliza el modelo de voz que ya tenías.
 
 Si usas otra app de dictado que también use `Win + Alt`, ciérrala: chocan en el atajo y en la barra
@@ -77,13 +79,15 @@ error y el estado de la reunión («Tomando notas de Teams · Detener»).
 
 ### Notas de reunión
 
-- **Automático** (por defecto): cuando Teams, Zoom, Meet (en el navegador), Webex o Slack empiezan
-  a usar el micro, Pronto empieza a tomar notas y para solo 20 s después de colgar.
-- Graba tu micro («Tú») y el audio del ordenador («Ellos») por separado y transcribe en directo.
-- Al terminar genera título, resumen, tareas con responsable, decisiones y temas. Cada reunión se
-  puede copiar y se puede preguntar sobre ella o sobre todas («Pregunta sobre tus reuniones»).
+- **Automático** (por defecto): cuando Teams, Zoom o Meet (en el navegador) empiezan a usar el micro,
+  Pronto toma notas solo y para después de colgar. La primera vez pregunta antes de grabar. Webex y
+  Slack solo se detectan en «Preguntar antes».
+- Durante la llamada solo graba: tu micro («Tú») y el audio del ordenador («Los demás») por separado.
+- Al colgar, en segundo plano, transcribe con el motor de voz que uses y la IA local saca título,
+  resumen, tareas y decisiones, cada una con su cita literal, quién la dijo y el minuto. Se puede
+  preguntar sobre una reunión o sobre todas. Está en beta.
 - Las reuniones de menos de 1 minuto sin conversación se descartan solas.
-- **Configuración › Notas de reunión**: Automático · Preguntar antes · Desactivado.
+- **Configuración › Reuniones**: Automático · Preguntar antes · Desactivado.
 - Pide siempre consentimiento antes de transcribir a otras personas.
 
 ### Cómo suena lo que escribes
@@ -92,7 +96,8 @@ error y el estado de la reunión («Tomando notas de Teams · Detener»).
   o entusiasta, y cuatro niveles de limpieza de muletillas.
 - **Diccionario**: palabras y nombres que Pronto debe escribir siempre bien.
 - **Fragmentos**: dices «mi correo» y se pega la dirección completa.
-- **Transforms**: instrucciones de IA (Polish y las tuyas) sobre el texto seleccionado.
+- **Reescribir**: instrucciones de IA (Polish y las tuyas) sobre el texto seleccionado; el resultado
+  sale en la barra y solo se pega con `Enter`.
 - **Pulir cada dictado con IA** (Estilo › Limpieza automática, apagado de fábrica): Ollama corrige
   puntuación y tildes antes de pegar. Añade una espera que depende de tu PC; si Ollama no responde
   en 6 s, se pega sin pulir.
@@ -109,7 +114,8 @@ error y el estado de la reunión («Tomando notas de Teams · Detener»).
 
 ## Compilar desde el código
 
-Requisitos: Rust estable, Windows 10/11 con WebView2.
+Requisitos: Rust estable, Windows 10/11 con WebView2, y para Whisper el Vulkan SDK y libclang
+(rutas en `src-tauri/.cargo/config.toml`).
 
 ```bash
 cd src-tauri
@@ -132,9 +138,9 @@ powershell -ExecutionPolicy Bypass -File installer\build_installer.ps1
 ## Estado
 
 Probado de verdad en Windows 11: dictado completo, manos libres, cancelar, Polish, notas de reunión
-automáticas con una videollamada simulada, resumen y preguntas (probados con `qwen2.5:7b`; desde la 2.0.2 el modelo de
-fábrica es `qwen3:1.7b`, más ligero). Todavía sin probar
-con una reunión real de Teams o Zoom. Sin hacer: cuentas y equipos, ventana aparte de Scratchpad,
+automáticas con una videollamada simulada, resumen y preguntas. Las notas usan el mejor modelo de
+Ollama que tengas instalado (de fábrica `qwen3:1.7b`). Las notas de reunión siguen en beta: todavía
+sin probar con una reunión real de Teams o Zoom. Pruebas automáticas: `npm test`. Sin hacer: cuentas y equipos, ventana aparte de Scratchpad,
 «Command Mode».
 
 ## Licencia

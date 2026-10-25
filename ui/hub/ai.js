@@ -77,11 +77,15 @@ function consent() {
 }
 
 /** Pide confirmación y lanza la activación. Devuelve true si se lanzó. */
+let asking = false; // aviso previo abierto: un doble clic no abre otro ni lanza la activación dos veces
 export async function aiActivate() {
   ensureListening();
-  if (aiKind() === 'running') return false;
-  await refreshAi();
-  if (!(await consent())) return false;
+  if (asking || aiKind() === 'running') return false;
+  asking = true;
+  try {
+    await refreshAi();
+    if (!(await consent())) return false;
+  } finally { asking = false; }
   const s = ai.status || {};
   ai.plan = [];
   if (!s.ollamaInstalled) ai.plan.push('download-ollama', 'install-ollama');

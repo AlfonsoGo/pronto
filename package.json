@@ -1,0 +1,15 @@
+{
+  "name": "pronto",
+  "private": true,
+  "description": "Herramientas de pruebas de Pronto 2 (la app es Rust/Tauri en src-tauri/). No se empaqueta.",
+  "type": "module",
+  "scripts": {
+    "ui": "node scripts/servir-ui.mjs",
+    "e2e": "node e2e/correr.mjs",
+    "test": "node --test --test-concurrency=1 \"tests/no-se-negocia/*.test.mjs\" tests/novedades.test.mjs && cd src-tauri && cargo test --quiet"
+  },
+  "devDependencies": {
+    "axe-core": "^4.14.0",
+    "playwright-core": "^1.64.1"
+  }
+}

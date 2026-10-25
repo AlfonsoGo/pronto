@@ -26,7 +26,7 @@ const hkLabel = (n) => { const h = hkIdx(n); return h ? hotkeyText(h) : null; };
 export default {
   id: 'transforms',
   mount(root) {
-    let list = [], editing = null, ollama = null, alive = true;
+    let list = [], editing = null, ollama = null, alive = true, snap = null;
     root.innerHTML = '<div class="page-inner" id="tr-root"></div>';
     const el = $('#tr-root', root);
 
@@ -51,7 +51,7 @@ export default {
 
     function renderList() {
       const sub = SUB();
-      el.innerHTML = `${pageHeader(t('Transforms'), {
+      el.innerHTML = `${pageHeader(t('Reescribir con IA'), {
         sub: t('Transforma tu texto para que <em>suene como quieras</em>.'),
       })}
         <div class="feat-chips">${[t('Mantén tu tono'), t('Hacer más conciso'), t('Reformular para mayor claridad'), t('Reorganizar para mejor lectura'), t('Optimiza el texto para LLM')]
@@ -95,7 +95,19 @@ export default {
             <button class="btn btn-ghost" data-act="back">${esc(t('Cancelar'))}</button>
             <button class="btn btn-primary" data-act="save">${esc(t('Guardar'))}</button>
           </div></div></div>`;
+      snap = formState();
     }
+
+    // Foto del formulario al abrir el editor: si cambia, salir (‹ Transforms, Cancelar o el menú lateral) pregunta antes de
+    // descartar, como el editor de notas, palabras y fragmentos. [rompedor 23-oct, hub MEDIA 2]
+    const formState = () => {
+      const n = $('#t-name', el), p = $('#t-prompt', el), h = $('[data-select=hk]', el);
+      return n && p ? JSON.stringify([n.value, p.value, h ? h.value : '']) : null;
+    };
+    const dirty = () => !!editing && snap !== null && formState() !== snap;
+    const confirmDiscard = () => (dirty()
+      ? confirmDialog({ title: t('¿Descartar los cambios?'), body: t('Lo que has escrito no se ha guardado.'), confirmText: t('Descartar') })
+      : Promise.resolve(true));
 
     async function checkOllama() {
       try { ollama = await invoke('ollama_status'); } catch (_) { ollama = { reachable: false, models: [] }; }
@@ -118,13 +130,13 @@ export default {
       }
       const b = e.target.closest('[data-act]'); if (!b) return;
       const act = b.dataset.act;
-      if (act === 'back') { editing = null; renderList(); }
+      if (act === 'back') { if (!(await confirmDiscard())) return; editing = null; snap = null; renderList(); }
       else if (act === 'ollama-retry') { b.disabled = true; await checkOllama(); }
       else if (act === 'reset') { $('#t-prompt', el).value = DEFAULTS[editing.name] || ''; toast(t('Configuración restablecida'), { kind: 'info' }); }
       else if (act === 'delete') {
         const ok = await confirmDialog({ title: t('¿Eliminar este Transform?'), body: t("'{x}' se eliminará permanentemente.", { x: esc(editing.name) }) });
         if (!ok) return;
-        try { await invoke('delete_transform', { id: editing.id }); toast(t('Transform eliminado')); editing = null; await load(); }
+        try { await invoke('delete_transform', { id: editing.id }); toast(t('Transform eliminado')); editing = null; snap = null; await load(); }
         catch (err) { toast(errText(err), { kind: 'err' }); }
       } else if (act === 'save') {
         const err = $('#t-err', el); err.hidden = true;
@@ -140,7 +152,7 @@ export default {
         try {
           await invoke('save_transform', { transform: { id: editing.id || 0, name, prompt, builtin: !!editing.builtin, hotkeyIndex } });
           toast(t('Transform guardado'));
-          editing = null; await load();
+          editing = null; snap = null; await load();
         } catch (er) { showErr(errText(er) || t('No se pudo guardar, inténtalo de nuevo')); b.disabled = false; }
       }
     });
@@ -149,6 +161,8 @@ export default {
     load();
     checkOllama();
     const offAi = aiMount(root, (kind) => { if (kind === 'ready') checkOllama(); });
-    return () => { alive = false; offAi(); };
+    const cleanup = () => { alive = false; offAi(); };
+    cleanup.canLeave = confirmDiscard;
+    return cleanup;
   },
 };

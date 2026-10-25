@@ -1,6 +1,6 @@
 // Piezas de marcado compartidas por las páginas del hub.
 import { icon } from '../shared/icons.js';
-import { esc, t } from './util.js';
+import { esc, t, fold } from './util.js';
 
 export function pageHeader(title, { sub = '', actions = '', badge = '', titleHtml = '' } = {}) {
   return `<div class="ph"><div class="ph-t"><h1 class="ptitle">${titleHtml || esc(title)}${badge}</h1>${sub ? `<p class="psub">${sub}</p>` : ''}</div>
@@ -52,10 +52,12 @@ export function heroBanner({ titleHtml, body = '', cta = '', ctaAct = '', closeA
 export const waveDeco = () => `<div class="wave">${Array.from({ length: 11 }, (_, i) => `<i style="--i:${i}"></i>`).join('')}</div>`;
 
 /** Etiqueta con el nombre del tono de estilo. */
-export const toneName = (tone) => ({ formal: t('Formal.'), casual: t('Casual'), veryCasual: t('muy casual'), excited: t('¡Entusiasta!') }[tone] || tone);
+// «Casual» no es castellano llano (Rosario, 24-oct-2026: «¿Casual? ¿Qué es eso?»): «Cercano».
+export const toneName = (tone) => ({ formal: t('Formal'), casual: t('Cercano'), veryCasual: t('Muy cercano'), excited: t('Con exclamaciones') }[tone] || tone);
 
+// Con la palabra «Buscar» escrita: la lupa sola pasaba por adorno.
 export const searchBtn = (act = 'toggle-search') =>
-  `<button class="icon-btn" data-act="${act}" aria-label="${esc(t('Buscar'))}" title="${esc(t('Buscar'))}">${icon('search', 18)}</button>`;
+  `<button class="btn btn-ghost btn-sm search-btn" data-act="${act}">${icon('search', 16)}${esc(t('Buscar'))}</button>`;
 
 export function searchBar({ placeholder, value = '', act = 'clear-search' }) {
   return `<div class="searchbar"><span class="sb-ic">${icon('search', 17)}</span>
@@ -63,10 +65,28 @@ export function searchBar({ placeholder, value = '', act = 'clear-search' }) {
     <button class="icon-btn" data-act="${act}" aria-label="${esc(t('Cerrar búsqueda'))}">${icon('x', 16)}</button></div>`;
 }
 
-/** Resalta la consulta dentro de un texto ya escapado. */
+/** Resalta la consulta: busca sobre el texto sin escapar y escapa trozo a trozo (así no parte «&amp;»).
+ *  Rompedor 23-oct, hub BAJA 9: la búsqueda no distingue tildes ni mayúsculas («cancion» marca «Canción»); se busca en el
+ *  texto plegado (`fold`) y se guarda de qué trozo del original viene cada letra para marcar el original, no el plegado. */
 export function highlight(text, q) {
-  const s = esc(text);
-  if (!q) return s;
-  const re = new RegExp('(' + esc(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ')', 'ig');
-  return s.replace(re, '<mark>$1</mark>');
+  const s = String(text ?? '');
+  const fq = fold(q);
+  if (!fq) return esc(s);
+  let f = '';
+  const ini = [], fin = [];   // por cada carácter plegado: dónde empieza y acaba en el original
+  let i = 0;
+  for (const ch of s) {
+    const g = fold(ch);
+    for (let k = 0; k < g.length; k++) { ini.push(i); fin.push(i + ch.length); }
+    f += g; i += ch.length;
+  }
+  let out = '', pos = 0, at = f.indexOf(fq);
+  while (at >= 0) {
+    const a = ini[at];
+    let b = fin[at + fq.length - 1];
+    while (b < s.length && /\p{M}/u.test(s[b])) b++;   // el acento combinado que sigue a la última letra también se marca
+    if (a >= pos) { out += esc(s.slice(pos, a)) + `<mark>${esc(s.slice(a, b))}</mark>`; pos = b; }
+    at = f.indexOf(fq, at + fq.length);
+  }
+  return out + esc(s.slice(pos));
 }

@@ -1,0 +1,22 @@
+# Compilación de whisper.cpp (whisper-rs-sys). Hace falta el Vulkan SDK (LunarG) y libclang
+# (`pip install libclang` vale) en la máquina que compila; el usuario final solo necesita el
+# controlador de su tarjeta (vulkan-1.dll), y ni eso: sin él Pronto usa Parakeet.
+[env]
+VULKAN_SDK = 'C:/VulkanSDK/1.4.363.0'
+# Ajusta LIBCLANG_PATH a tu instalación de libclang (pip install libclang).
+LIBCLANG_PATH = 'C:/Users/usuario/AppData/Local/Programs/Python/Python312/Lib/site-packages/clang/native'
+# Binario portable: nada de instrucciones propias del procesador que compila (GGML_NATIVE), con
+# AVX2 como base (cualquier PC desde ~2015; Pronto no ofrece Whisper sin AVX2).
+GGML_NATIVE = "OFF"
+GGML_AVX = "ON"
+GGML_AVX2 = "ON"
+GGML_FMA = "ON"
+GGML_F16C = "ON"
+# Runtime de C++ estático (/MT), como el de sherpa-onnx: mezclar /MT y /MD no enlaza (LNK2038).
+CMAKE_POLICY_DEFAULT_CMP0091 = "NEW"
+CMAKE_MSVC_RUNTIME_LIBRARY = "MultiThreaded"
+
+# Ruta corta: el subproyecto de shaders de Vulkan de whisper.cpp no encuentra el compilador si la
+# carpeta de compilación queda demasiado honda (límite de 260 caracteres de Windows).
+[build]
+target-dir = 'C:/dev/pt'

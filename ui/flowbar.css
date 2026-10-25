@@ -2,8 +2,9 @@
    Pronto 2 · Flow bar
    Comportamiento y medidas de Wispr Flow (docs/wispr-ui-spec.md §3),
    aspecto de Pronto «Cristal etéreo» (cristal.dart).
-   La ventana (360x150) es totalmente transparente: aquí solo se pinta la
-   píldora, sus satélites, el tooltip y la tarjeta de aviso.
+   La ventana (360x300) es totalmente transparente: aquí solo se pinta la
+   píldora, sus satélites, el tooltip, la tarjeta de aviso y la vista previa
+   de un Transform (decisión A de Txonso, 23-oct: nada se pega sin Enter).
    ─────────────────────────────────────────────────────────────────────────── */
 
 @font-face { font-family: "Plus Jakarta Sans"; font-weight: 400; font-style: normal; font-display: block;
@@ -61,13 +62,14 @@ button { font: inherit; color: inherit; }
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
 }
 
-/* ── Escenario: la ventana de 360x150, anclada abajo al centro ─────────────── */
+/* ── Escenario: la ventana de 360x300, anclada abajo al centro ─────────────── */
+/* (mide lo mismo que flowbar::SIZE y STAGE_W/STAGE_H de flowbar.js; lo comprueba un test) */
 .stage {
   position: fixed;
   left: 50%;
   bottom: 0;
   width: 360px;
-  height: 150px;
+  height: 300px;
   margin-left: -180px;
   overflow: hidden;
 }
@@ -123,7 +125,8 @@ button { font: inherit; color: inherit; }
   border-color: rgba(167, 139, 250, .38);
   box-shadow: var(--brillo), 0 0 10px rgba(139, 92, 246, .16), var(--sombra);
 }
-.pill[data-s="polished"] {
+.pill[data-s="polished"],
+.pill[data-s="preview"] {
   border-color: rgba(167, 139, 250, .55);
   box-shadow: var(--brillo), 0 0 14px rgba(139, 92, 246, .34), var(--sombra);
 }
@@ -171,6 +174,7 @@ button { font: inherit; color: inherit; }
 .pill[data-s="polishing"]  .row { justify-content: space-between; padding: 0 14px 0 16px; }
 .pill[data-s="polished"]   .ico-spark { display: block; }
 .pill[data-s="polished"]   .label { display: block; }
+.pill[data-s="preview"]    :is(.ico-spark, .label) { display: block; }
 .pill[data-s="done"]       .ico-check { display: block; }
 .pill[data-s="cancelled"]  .ico-x { display: block; }
 .pill[data-s="cancelled"]  .label { display: block; }
@@ -194,7 +198,8 @@ button { font: inherit; color: inherit; }
 .label { font-size: 12px; line-height: 1; font-weight: 700; letter-spacing: .01em; white-space: nowrap; color: var(--tinta); }
 .pill[data-s="cancelled"] .label { color: var(--apagado); }
 .pill[data-s="error"] .label { color: var(--tinta); }
-.pill[data-s="polished"] .row { gap: 6px; }
+.pill[data-s="polished"] .row,
+.pill[data-s="preview"] .row { gap: 6px; }
 
 /* botones dentro de la píldora (manos libres) */
 .btn {
@@ -305,6 +310,13 @@ button { font: inherit; color: inherit; }
 .hot[data-s="ready"] .sat { opacity: 1; transform: none; pointer-events: auto; }
 .sat:hover { background: rgba(34, 27, 50, .95); }
 .sat:hover svg { stroke: var(--violeta-suave); }
+/* candado: más pequeño, a la derecha de Polish y centrado en la altura de la píldora */
+.sat-lock { left: calc(100% + 36px); bottom: 9px; width: 24px; height: 24px; }
+.sat-lock svg { width: 12px; height: 12px; }
+.sat-lock .lk-closed, .sat-lock[aria-pressed="true"] .lk-open { display: none; }
+.sat-lock[aria-pressed="true"] .lk-closed { display: inline; }
+.sat-lock[aria-pressed="true"] { border-color: rgba(167, 139, 250, .55); }
+.sat-lock[aria-pressed="true"] svg { stroke: var(--violeta-suave); }
 
 /* ── Tooltip ───────────────────────────────────────────────────────────────── */
 .tip {
@@ -389,13 +401,68 @@ kbd {
 }
 .card-act:hover { background: rgba(139, 92, 246, .3); border-color: rgba(167, 139, 250, .5); }
 
+/* ── Vista previa de un Transform (decisión A de Txonso, 23-oct) ───────────────
+   El resultado de la IA se lee aquí y solo se pega con Enter; Esc lo descarta.
+   La ventana no toma el foco: Enter y Esc los recoge el gancho de teclado. */
+.preview {
+  position: absolute;
+  left: 50%;
+  bottom: 44px;                /* como la tarjeta: 8 de margen + 30 de píldora + 6 de aire */
+  transform: translateX(-50%);
+  width: 340px;
+  max-height: 248px;
+  padding: 12px 12px 10px;
+  border-radius: 20px;
+  background: var(--cristal);
+  border: 1px solid rgba(167, 139, 250, .38);
+  box-shadow: var(--brillo), 0 0 14px rgba(139, 92, 246, .22), 0 8px 24px rgba(0, 0, 0, .42);
+  display: flex; flex-direction: column; gap: 7px;
+  animation: card-in .3s ease-out both;
+}
+.preview > * { flex: none; }
+.pv-head { display: flex; align-items: center; gap: 7px; padding-left: 2px; }
+.pv-ico { flex: none; width: 14px; height: 14px; fill: rgba(167, 139, 250, .25); stroke: var(--violeta-suave); stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
+.pv-title { font-size: 12.5px; line-height: 16px; font-weight: 700; color: var(--tinta); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pv-warn {
+  display: flex; align-items: flex-start; gap: 7px;
+  padding: 6px 9px; border-radius: 10px;
+  background: rgba(251, 191, 36, .12); border: 1px solid rgba(251, 191, 36, .42);
+  font-size: 12px; line-height: 16px; font-weight: 600; color: #FDE68A;
+  overflow-wrap: anywhere;
+}
+.pv-warn svg { flex: none; width: 14px; height: 14px; margin-top: 1px; fill: none; stroke: #FBBF24; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.pv-text {
+  flex: 0 1 auto; min-height: 34px; overflow-y: auto;
+  padding: 7px 9px; border-radius: 10px;
+  background: rgba(255, 255, 255, .05); border: 1px solid var(--hilo);
+  font-size: 13px; line-height: 18px; font-weight: 400; color: var(--tinta);
+  white-space: pre-wrap; overflow-wrap: anywhere;
+  scrollbar-width: thin; scrollbar-color: rgba(167, 139, 250, .45) transparent;
+}
+.pv-note { font-size: 11.5px; line-height: 15px; font-weight: 600; color: var(--violeta-suave); padding-left: 2px; }
+.pv-foot { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pv-hint { display: inline-flex; align-items: center; gap: 4px; font-size: 11.5px; font-weight: 600; color: var(--apagado); white-space: nowrap; }
+.pv-hint kbd { padding: 2px 5px; font-size: 10.5px; }
+.pv-btns { display: inline-flex; gap: 6px; }
+.pv-btn {
+  width: 26px; height: 26px; padding: 0; border-radius: 50%;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--hilo-fuerte); background: rgba(255, 255, 255, .08); color: var(--tinta);
+  cursor: pointer;
+  transition: all .1s var(--ease);
+}
+.pv-btn svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.pv-btn:hover { background: rgba(255, 255, 255, .16); }
+.pv-go { background: rgba(139, 92, 246, .32); border-color: rgba(167, 139, 250, .55); }
+.pv-go:hover { background: rgba(139, 92, 246, .5); }
+
 button:focus-visible { outline: 2px solid var(--violeta-suave); outline-offset: 2px; }
 
 /* ── Movimiento reducido: ondas estáticas, proporcionales al nivel ─────────── */
 @media (prefers-reduced-motion: reduce) {
   .waves.live .bar { animation: none; }
   .pill, .btn, .sat, .hot { transition-duration: .01s; }
-  .card { animation: none; }
+  .card, .preview { animation: none; }
   .card.out { transition: none; }
   .fill.go { transition: none; width: 100%; opacity: .6; }
   .pill[data-s="polished"] .shine { animation: none; }

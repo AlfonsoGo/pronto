@@ -7,6 +7,7 @@
 
 use crate::models::{Settings, DEFAULT_AI_MODEL};
 use crate::state::AppState;
+use crate::updater::GetError;
 use crate::{commands, ollama};
 use parking_lot::Mutex;
 use serde::Serialize;
@@ -124,13 +125,57 @@ pub fn find_ollama() -> Option<PathBuf> {
     cands.into_iter().find(|p| p.is_file())
 }
 
+/// Host de `url` tal como lo entiende ureq: el parser WHATWG de `url` (el mismo que usa ureq), donde
+/// `\` vale `/`, lo de antes de la última `@` es el usuario y `127.1` es `127.0.0.1`. Sin esquema se
+/// lee como `http://`. `None` si no se puede leer (cuenta como fuera de este PC).
+fn url_host(url: &str) -> Option<String> {
+    // La misma normalización que usa `ollama.rs` (rompedor 23-oct, descargas MEDIA 2).
+    tauri::Url::parse(&ollama::normalize_url(url)).ok()?.host_str().map(str::to_string)
+}
+
 /// ¿`url` apunta a este equipo? Solo entonces tiene sentido instalar o arrancar Ollama.
 fn is_local_url(url: &str) -> bool {
-    let rest = url.trim().split_once("://").map_or(url.trim(), |(_, r)| r);
-    let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
-    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-    let host = if host.starts_with('[') { host.split(']').next().unwrap_or("").trim_start_matches('[') } else { host.split(':').next().unwrap_or("") };
-    matches!(host.to_lowercase().as_str(), "localhost" | "127.0.0.1" | "::1" | "0.0.0.0")
+    url_host(url).is_some_and(|h| crate::updater::is_loopback_host(&h) || h == "0.0.0.0")
+}
+
+/// ¿`url` es loopback (127.0.0.0/8, localhost, ::1)? Si no, lo que se manda a Ollama (dictados y
+/// reuniones) sale del PC (regla 1). 0.0.0.0 no cuenta: como destino no es una dirección de este PC
+/// garantizada, y escuchar en ella abre Ollama a la red. Se decide con el host que usará ureq, no
+/// partiendo la cadena a mano (rompedor 22-oct-c, descargas BAJA 4: una `\` antes de la `@` engañaba al aviso).
+pub fn is_loopback_url(url: &str) -> bool {
+    url_host(url).is_some_and(|h| crate::updater::is_loopback_host(&h))
+}
+
+/// Mensaje de la dirección de Ollama rechazada (se enseña tal cual en el hub).
+fn remote_refused(url: &str) -> String {
+    let shown: String = url.trim().chars().take(80).collect();
+    format!("Pronto solo usa Ollama en este PC (localhost o 127.0.0.1). La dirección «{shown}» no es de este equipo y tus dictados y reuniones tendrían que salir del PC para llegar a ella.")
+}
+
+/// Normaliza y valida la dirección de Ollama al guardar los ajustes: además de entenderse
+/// (`ollama::checked_url`), tiene que ser de este PC. Decisión de Txonso, 23-oct-2026 (regla 1): antes
+/// una dirección de otro equipo solo se avisaba; ahora se rechaza y no se guarda. `Err` = texto claro
+/// para el usuario.
+pub fn checked_local_url(url: &str) -> Result<String, String> {
+    let n = ollama::checked_url(url)?;
+    if is_loopback_url(&n) { Ok(n) } else { Err(remote_refused(url)) }
+}
+
+/// Al arrancar: si los ajustes guardados traen una dirección de Ollama que no es de este PC (de una
+/// versión anterior, que la dejaba), se vuelve a la de fábrica. Devuelve el host que había, para
+/// avisar al usuario una vez (al guardarse la de fábrica no vuelve a salir). Vacía → la de fábrica
+/// sin avisar.
+pub fn force_local(settings: &mut Settings) -> Option<String> {
+    if settings.ollama_url.trim().is_empty() {
+        settings.ollama_url = Settings::default().ollama_url;
+        return None;
+    }
+    if is_loopback_url(&settings.ollama_url) {
+        return None;
+    }
+    let was = url_host(&settings.ollama_url).unwrap_or_else(|| "?".into());
+    settings.ollama_url = Settings::default().ollama_url;
+    Some(was)
 }
 
 pub fn status(s: &Settings) -> AiSetupStatus {
@@ -160,11 +205,26 @@ pub fn status(s: &Settings) -> AiSetupStatus {
 
 // ------------------------------------------------------------ descarga del instalador
 
-/// Baja `url` a `dest` (sigue redirecciones: ollama.com -> GitHub) emitiendo los bytes recibidos.
-fn download_installer(agent: &ureq::Agent, url: &str, dest: &Path, cancel: &AtomicBool, emit: Emit) -> Result<u64, Stop> {
-    let resp = agent.get(url).call().map_err(|e| match e {
-        ureq::Error::Status(code, _) => format!("El servidor de Ollama respondió {code} al descargar el instalador."),
-        e => format!("No se pudo conectar para descargar Ollama: {e}"),
+/// Cada salto de la descarga del instalador: https a ollama.com o a GitHub (adonde redirige), los de
+/// PRD §5.2. En las pruebas, también este PC por http.
+fn setup_hop(u: &tauri::Url) -> bool {
+    let host = u.host_str().unwrap_or("");
+    (u.scheme() == "https" && (host == "ollama.com" || crate::updater::is_github_host(host))) || crate::updater::is_loopback_host(host)
+}
+
+/// Plazo total de la descarga del instalador de Ollama (más de 1 GB).
+const SETUP_DEADLINE: Duration = Duration::from_secs(90 * 60);
+
+/// Baja `url` a `dest` emitiendo los bytes recibidos. Las redirecciones (ollama.com -> GitHub) se
+/// siguen a mano y se validan en cada salto (`setup_hop`): ureq 2 entra en pánico con una `Location`
+/// sin host y sigue a cualquier host.
+fn download_installer(url: &str, dest: &Path, cancel: &AtomicBool, emit: Emit) -> Result<u64, Stop> {
+    let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(15)).timeout_read(Duration::from_secs(30)).redirects(0).build();
+    // Plazo para las cabeceras y plazo total (rompedor 23-oct, descargas MEDIA 1: huecos de aisetup).
+    let resp = crate::updater::get_following_timed(&agent, url, crate::updater::HEADERS_DEADLINE, SETUP_DEADLINE, setup_hop).map_err(|e| match e {
+        GetError::Status(code) => format!("El servidor de Ollama respondió {code} al descargar el instalador."),
+        GetError::Transport(e) => format!("No se pudo conectar para descargar Ollama: {e}"),
+        GetError::Redirect(e) => format!("No se descarga Ollama: {e}."),
     })?;
     let total: u64 = resp.header("Content-Length").and_then(|v| v.trim().parse().ok()).unwrap_or(0);
     let mut reader = resp.into_reader();
@@ -297,6 +357,31 @@ fn run_installer(exe: &Path, timeout: Duration, emit: Emit) -> Result<(), Stop> 
     }
 }
 
+/// Si Ollama está instalado en este equipo pero no responde (no se arrancó con Windows, o se
+/// cerró), lo arranca oculto y espera hasta `timeout` a que responda. Devuelve si responde.
+pub fn ensure_running(url: &str, timeout: Duration) -> bool {
+    if ollama::status(url).reachable {
+        return true;
+    }
+    if !is_local_url(url) {
+        return false;
+    }
+    let Some(exe) = find_ollama() else { return false };
+    if let Err(e) = start_ollama(&exe) {
+        crate::errlog::error("aisetup", &e);
+        return false;
+    }
+    let started = Instant::now();
+    while started.elapsed() < timeout {
+        std::thread::sleep(Duration::from_millis(500));
+        if ollama::status(url).reachable {
+            eprintln!("[aisetup] Ollama arrancado en {:.1} s", started.elapsed().as_secs_f32());
+            return true;
+        }
+    }
+    false
+}
+
 /// Lanza Ollama oculto y sin esperarlo: su aplicación de bandeja si existe (la que arranca el servidor,
 /// como tras una instalación normal) o `ollama serve`.
 fn start_ollama(exe: &Path) -> Result<(), String> {
@@ -397,7 +482,8 @@ fn pull_message(status: &str) -> &'static str {
 
 /// `POST /api/pull` en streaming; emite los bytes completados/totales de todas las capas.
 fn pull_model(url: &str, model: &str, cancel: &AtomicBool, emit: Emit) -> Result<(), Stop> {
-    let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(5)).timeout_read(Duration::from_secs(120)).build();
+    // Sin redirecciones: Ollama no las usa, y ureq 2 convertiría el POST en GET hacia cualquier host.
+    let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(5)).timeout_read(Duration::from_secs(120)).redirects(0).build();
     let endpoint = format!("{}/api/pull", url.trim().trim_end_matches('/'));
     let resp = agent.post(&endpoint).send_json(json!({ "model": model, "stream": true })).map_err(|e| match e {
         ureq::Error::Status(code, r) => match r.into_json::<Value>().ok().and_then(|v| v["error"].as_str().map(String::from)) {
@@ -406,6 +492,9 @@ fn pull_model(url: &str, model: &str, cancel: &AtomicBool, emit: Emit) -> Result
         },
         e => format!("No se pudo contactar con Ollama para descargar el modelo: {e}"),
     })?;
+    if (300..400).contains(&resp.status()) {
+        return Err(format!("Ollama respondió con una redirección ({}); no se sigue.", resp.status()).into());
+    }
     let mut tracker = PullTracker::default();
     let (mut last_emit, mut success) = (Instant::now() - EMIT_EVERY, false);
     emit(prog("pull-model", 0, 0, pull_message("pulling manifest")));
@@ -467,9 +556,8 @@ fn install_ollama(cancel: &AtomicBool, emit: Emit) -> Result<PathBuf, Stop> {
     fs::create_dir_all(&dir).map_err(|e| format!("No se pudo crear la carpeta temporal: {e}"))?;
     let result = (|| {
         let setup = dir.join("OllamaSetup.exe");
-        let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(15)).timeout_read(Duration::from_secs(30)).build();
         emit(prog("download-ollama", 0, 0, "Descargando Ollama…"));
-        let size = download_installer(&agent, SETUP_URL, &setup, cancel, emit)?;
+        let size = download_installer(SETUP_URL, &setup, cancel, emit)?;
         if size < MIN_SETUP_BYTES {
             return Err(Stop::Failed("El instalador de Ollama descargado es demasiado pequeño; no se ejecuta.".into()));
         }
@@ -526,7 +614,10 @@ pub fn start(app: &AppHandle, st: &Arc<AppState>) -> Result<(), String> {
         .spawn(move || {
             let _guard = guard;
             let settings = st.settings.read().clone();
-            let outcome = setup(&settings, &CANCEL, &mut |p| publish(&app, p)).and_then(|()| {
+            // Un pánico (p. ej. en ureq) no deja la activación a medias sin avisar.
+            let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| setup(&settings, &CANCEL, &mut |p| publish(&app, p))))
+                .unwrap_or_else(|_| Err(Stop::Failed("Fallo interno al activar la IA local. Inténtalo de nuevo.".into())))
+                .and_then(|()| {
                 // Ollama listo y modelo bajado: deja el modelo en los ajustes que no lo tuvieran.
                 // «Pulir cada dictado» (`aiPolish`) no se toca.
                 let models = ollama::status(&settings.ollama_url).models;
@@ -543,7 +634,7 @@ pub fn start(app: &AppHandle, st: &Arc<AppState>) -> Result<(), String> {
                 Ok(()) => publish(&app, prog("done", 0, 0, "IA local lista")),
                 Err(Stop::Cancelled) => publish(&app, prog("cancelled", 0, 0, "Cancelado")),
                 Err(Stop::Failed(e)) => {
-                    eprintln!("[aisetup] {e}");
+                    crate::errlog::error("aisetup", &e);
                     publish(&app, prog("error", 0, 0, &e));
                 }
             }
@@ -645,9 +736,60 @@ mod tests {
         for u in ["http://localhost:11434", "http://127.0.0.1:11434/", "localhost", "http://[::1]:11434", "HTTP://LocalHost:1"] {
             assert!(is_local_url(u), "{u}");
         }
-        for u in ["http://192.168.1.5:11434", "http://mi-servidor:11434", "https://ollama.example.com", "http://localhost.evil.com"] {
+        for u in ["http://192.168.1.5:11434", "http://mi-servidor:11434", "https://ollama.example.com", "http://localhost.evil.com", "http://evil.example\\@127.0.0.1:11434", "http://evil.example\\@0.0.0.0:11434"] {
             assert!(!is_local_url(u), "{u}");
         }
+        assert!(is_local_url("http://0.0.0.0:11434"), "0.0.0.0 vale para arrancar Ollama aquí");
+    }
+
+    /// La descarga de `OllamaSetup.exe` sigue las redirecciones a mano: a este PC (pruebas) sí; a una
+    /// URL sin host, a otro esquema o a un host que no es ollama.com ni GitHub, error y no pánico.
+    #[test]
+    fn descarga_del_instalador_y_redirecciones() {
+        let dir = tmp("dl-redir");
+        let redir = |to: &str| format!("HTTP/1.1 302 Found\r\nLocation: {to}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        let routes: Vec<(&'static str, String)> = vec![
+            ("/a", redir("/setup.exe")),
+            ("/file", redir("file:///C:/Windows/win.ini")),
+            ("/data", redir("data:,MZ")),
+            ("/fuera", redir("http://evil.example/OllamaSetup.exe")),
+            ("/https-ajeno", redir("https://evil.example/OllamaSetup.exe")),
+            ("/bucle", redir("/bucle")),
+        ];
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let url = format!("http://{}", listener.local_addr().unwrap());
+        std::thread::spawn(move || {
+            for conn in listener.incoming().flatten() {
+                let mut reader = BufReader::new(conn.try_clone().unwrap());
+                let mut line = String::new();
+                let _ = reader.read_line(&mut line);
+                loop {
+                    let mut h = String::new();
+                    if reader.read_line(&mut h).is_err() || h.trim().is_empty() {
+                        break;
+                    }
+                }
+                let path = line.split_whitespace().nth(1).unwrap_or("/").to_string();
+                let mut conn = conn;
+                let resp = match routes.iter().find(|(p, _)| *p == path) {
+                    Some((_, r)) => r.clone(),
+                    None if path == "/setup.exe" => "HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nMZok".to_string(),
+                    None => "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n".to_string(),
+                };
+                let _ = conn.write_all(resp.as_bytes());
+            }
+        });
+        assert_eq!(download_installer(&format!("{url}/a"), &dir.join("ok.exe"), &not_cancelled(), &mut |_| {}), Ok(4));
+        for (ruta, esperado) in [("/file", "no es http"), ("/data", "no es http"), ("/fuera", "no permitido"), ("/https-ajeno", "no permitido"), ("/bucle", "redirecciones")] {
+            let Err(Stop::Failed(e)) = download_installer(&format!("{url}{ruta}"), &dir.join("x.exe"), &not_cancelled(), &mut |_| {}) else { panic!("{ruta}: debía fallar") };
+            assert!(e.contains(esperado), "{ruta}: {e}");
+        }
+        // Los saltos de verdad: ollama.com y GitHub por https; nada más.
+        let ok = |u: &str| setup_hop(&tauri::Url::parse(u).unwrap());
+        assert!(ok("https://ollama.com/download/OllamaSetup.exe") && ok("https://github.com/ollama/ollama/releases/latest/download/OllamaSetup.exe"));
+        assert!(ok("https://objects.githubusercontent.com/x") && ok("https://release-assets.githubusercontent.com/x"));
+        assert!(!ok("http://ollama.com/x") && !ok("https://ollama.com.evil.example/x") && !ok("https://evil.example/x"));
+        let _ = fs::remove_dir_all(dir);
     }
 
     #[test]
@@ -725,10 +867,9 @@ mod tests {
         let dir = tmp("dl");
         let data: Vec<u8> = (0..600_000u32).map(|i| (i % 251) as u8).collect();
         let (url, _, _) = serve(vec![("/setup.exe", data.clone())]);
-        let agent = ureq::AgentBuilder::new().build();
         let mut events = Vec::new();
         let dest = dir.join("setup.exe");
-        let got = download_installer(&agent, &format!("{url}/setup.exe"), &dest, &not_cancelled(), &mut |p| events.push(p)).unwrap();
+        let got = download_installer(&format!("{url}/setup.exe"), &dest, &not_cancelled(), &mut |p| events.push(p)).unwrap();
         assert_eq!(got, data.len() as u64);
         assert_eq!(fs::read(&dest).unwrap(), data);
         let last = events.last().unwrap();
@@ -736,10 +877,10 @@ mod tests {
         assert!(events.windows(2).all(|w| w[0].received <= w[1].received));
 
         // Cancelado de antemano: no deja el fichero a medias sin avisar.
-        let r = download_installer(&agent, &format!("{url}/setup.exe"), &dir.join("c.exe"), &AtomicBool::new(true), &mut |_| {});
+        let r = download_installer(&format!("{url}/setup.exe"), &dir.join("c.exe"), &AtomicBool::new(true), &mut |_| {});
         assert_eq!(r, Err(Stop::Cancelled));
         // 404.
-        let Err(Stop::Failed(e)) = download_installer(&agent, &format!("{url}/no"), &dir.join("d.exe"), &not_cancelled(), &mut |_| {}) else { panic!() };
+        let Err(Stop::Failed(e)) = download_installer(&format!("{url}/no"), &dir.join("d.exe"), &not_cancelled(), &mut |_| {}) else { panic!() };
         assert!(e.contains("404"), "{e}");
         let _ = fs::remove_dir_all(dir);
     }
@@ -798,9 +939,8 @@ mod tests {
     fn firma_real_del_instalador_descargado() {
         let dir = tmp("real-dl");
         let dest = dir.join("OllamaSetup.exe");
-        let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(15)).timeout_read(Duration::from_secs(30)).build();
         let mut last = 0u64;
-        let size = download_installer(&agent, SETUP_URL, &dest, &not_cancelled(), &mut |p| {
+        let size = download_installer(SETUP_URL, &dest, &not_cancelled(), &mut |p| {
             if p.received / (100 << 20) != last / (100 << 20) {
                 println!("{} MB de {}", p.received >> 20, p.total >> 20);
             }
@@ -851,5 +991,100 @@ mod tests {
         let r = ureq::request("DELETE", &format!("{url}/api/delete")).send_json(json!({ "model": model }));
         println!("delete: {:?}", r.map(|r| r.status()));
         assert!(!has_model(&ollama::status(url).models, &model));
+    }
+}
+
+/// Regla 1 de CLAUDE.md (privacidad). La lanza `tests/no-se-negocia/01-privacidad.test.mjs` con
+/// `cargo test nsn_privacidad`.
+#[cfg(test)]
+mod nsn_privacidad {
+    use super::*;
+
+    #[test]
+    fn nsn_privacidad_ollama_por_defecto_en_loopback() {
+        let url = Settings::default().ollama_url;
+        assert!(is_local_url(&url), "el Ollama de fábrica no es local: {url}");
+        let host = url.split_once("://").map_or(url.as_str(), |(_, r)| r).split(['/', ':']).next().unwrap_or("").to_lowercase();
+        assert!(matches!(host.as_str(), "localhost" | "127.0.0.1"), "host de fábrica de Ollama: {host}");
+    }
+
+    #[test]
+    fn nsn_privacidad_ollama_solo_es_de_este_pc_si_es_loopback() {
+        for u in ["http://localhost:11434", "http://127.0.0.1:11434/", "http://[::1]:11434", "HTTP://LocalHost:1"] {
+            assert!(is_loopback_url(u), "{u}");
+        }
+        // 0.0.0.0 vale para arrancar Ollama aquí, pero no es loopback: se rechaza.
+        for u in ["http://0.0.0.0:11434", "http://192.168.1.5:11434", "http://mi-servidor:11434", "https://ollama.example.com", "http://localhost.evil.com", "http://127.0.0.1@evil.com"] {
+            assert!(!is_loopback_url(u), "{u}");
+        }
+        // Rompedor 22-oct-c, descargas BAJA 4: ureq (WHATWG) lee `\` como `/`, así que el host es lo de
+        // antes de la barra invertida, no lo de después de la `@`. La regla tiene que ver ese host.
+        for u in ["http://evil.example\\@127.0.0.1:11434", "http://evil.example:80\\@localhost:11434", "http://evil.example\\@[::1]:11434", "no es una url", ""] {
+            assert!(!is_loopback_url(u), "{u}");
+        }
+        assert!(is_loopback_url("http://127.0.0.1:11434\\@evil.example:9"), "ureq va a 127.0.0.1");
+    }
+
+    /// Decisión de Txonso, 23-oct-2026: una dirección de Ollama fuera de este PC ya no se avisa, se
+    /// rechaza con un error claro y los ajustes no la guardan (`commands::apply_settings` llama a
+    /// `checked_local_url` y devuelve su `Err` antes de tocar nada).
+    #[test]
+    fn nsn_privacidad_ollama_fuera_de_este_pc_se_rechaza_y_no_se_guarda() {
+        for u in [
+            "http://192.168.1.50:11434", "192.168.1.50:11434", "http://ollama.example.com", "https://ollama.example.com:443", "http://0.0.0.0:11434",
+            "http://mi-servidor:11434", "http://localhost.evil.com", "http://127.0.0.1@evil.com", "http://evil.example\\@localhost:11434",
+            "http://[2001:db8::1]:11434", "http://10.0.0.5",
+        ] {
+            let e = checked_local_url(u).expect_err(u);
+            assert!(e.starts_with("Pronto solo usa Ollama en este PC (localhost o 127.0.0.1)"), "{u}: {e}");
+        }
+        // Lo que ni se entiende también se rechaza (con el error de siempre de `checked_url`).
+        for u in ["no es una url", "ftp://localhost:11434", "javascript:alert(1)", "http://"] {
+            assert!(checked_local_url(u).is_err(), "{u}");
+        }
+        // Las de este PC se aceptan y se normalizan (sin esquema → http://).
+        for (u, ok) in [
+            ("http://localhost:11434", "http://localhost:11434"), ("localhost:11434", "http://localhost:11434"), (" http://127.0.0.1:11434 ", "http://127.0.0.1:11434"),
+            ("http://[::1]:11434", "http://[::1]:11434"), ("HTTP://LocalHost:1", "HTTP://LocalHost:1"),
+        ] {
+            assert_eq!(checked_local_url(u).as_deref(), Ok(ok), "{u}");
+        }
+        // La de fábrica es siempre aceptable.
+        let fabrica = Settings::default().ollama_url;
+        assert_eq!(checked_local_url(&fabrica), Ok(fabrica));
+    }
+
+    /// Ajustes guardados por una versión anterior con Ollama en otro equipo: al arrancar vuelven a la
+    /// de fábrica (y se avisa una vez, porque después ya es la de fábrica).
+    #[test]
+    fn nsn_privacidad_ollama_remota_guardada_vuelve_a_la_de_fabrica_al_arrancar() {
+        let fabrica = Settings::default().ollama_url;
+        for u in ["http://192.168.1.50:11434", "https://ollama.example.com", "http://0.0.0.0:11434", "http://evil.example\\@localhost:11434", "no es una url"] {
+            let mut s = Settings { ollama_url: u.into(), ..Settings::default() };
+            let was = force_local(&mut s);
+            assert!(was.is_some(), "{u}: debía avisar");
+            assert_eq!(s.ollama_url, fabrica, "{u}");
+            assert!(is_loopback_url(&s.ollama_url));
+            assert_eq!(force_local(&mut s), None, "{u}: la segunda vez ya no avisa");
+        }
+        assert_eq!(force_local(&mut Settings { ollama_url: "http://192.168.1.50:11434".into(), ..Settings::default() }).as_deref(), Some("192.168.1.50"));
+        // Las de este PC no se tocan (ni se normalizan).
+        for u in ["http://localhost:11434", "http://127.0.0.1:11434", "http://[::1]:11434", "http://127.0.0.1:9999"] {
+            let mut s = Settings { ollama_url: u.into(), ..Settings::default() };
+            assert_eq!(force_local(&mut s), None, "{u}");
+            assert_eq!(s.ollama_url, u);
+        }
+        // Vacía: la de fábrica, sin aviso.
+        let mut s = Settings { ollama_url: "  ".into(), ..Settings::default() };
+        assert_eq!(force_local(&mut s), None);
+        assert_eq!(s.ollama_url, fabrica);
+    }
+
+    #[test]
+    fn nsn_privacidad_el_actualizador_solo_baja_de_github() {
+        assert!(crate::updater::url_allowed("https://github.com/AlfonsoGo/pronto/releases/download/v2.2.0/Pronto-Setup.exe", false));
+        for u in ["https://example.com/Pronto-Setup.exe", "https://github.com.evil.com/x.exe", "https://github.com@evil.com/x.exe", "http://github.com/x.exe", "https://huggingface.co/x.exe"] {
+            assert!(!crate::updater::url_allowed(u, false), "{u}");
+        }
     }
 }

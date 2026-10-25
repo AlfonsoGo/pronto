@@ -2,22 +2,37 @@
 //!
 //! Trabaja con audio mono a 16 kHz en tramos de 20 ms. El umbral se adapta al ruido de fondo
 //! (media móvil de la energía de los tramos sin voz), la voz se abre tras 40 ms por encima del
-//! umbral, se cierra tras ~700 ms de silencio y ningún segmento pasa de 20 s. Es una función
-//! pura de las muestras recibidas, así que se prueba con señales sintéticas.
+//! umbral y se cierra tras un silencio. Dos ajustes (`SegConfig`): `LIVE` para la vista previa en
+//! vivo (cierra a los 700 ms, trozos de ≤ 20 s) y `FINAL` para la fase 2 (cierra a los 1,2 s,
+//! trozos de ≤ 30 s: una intervención entera). Si un trozo llega al máximo se corta por el tramo
+//! más silencioso de sus últimos 3 s, no a mitad de palabra. Es una función pura de las muestras
+//! recibidas, así que se prueba con señales sintéticas.
 
 pub const RATE: usize = 16_000;
 /// Tramo de análisis: 20 ms.
 const FRAME: usize = RATE / 50;
-/// Silencio que cierra un segmento.
-const CLOSE_FRAMES: usize = 35; // 700 ms
 /// Tramos seguidos por encima del umbral para abrir un segmento.
 const OPEN_FRAMES: usize = 2;
 /// Audio previo que se conserva al abrir (para no comerse el arranque de la palabra).
 const PRE_ROLL_FRAMES: usize = 10; // 200 ms
 /// Cola de silencio que se conserva al cerrar.
 const TAIL_FRAMES: usize = 10;
-/// Duración máxima de un segmento.
-pub const MAX_SEGMENT_FRAMES: usize = 1000; // 20 s
+/// Ventana (al final de un trozo que llega al máximo) donde se busca el punto de corte.
+const CUT_SEARCH_FRAMES: usize = 150; // 3 s
+
+/// Cuándo se cierra un segmento.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SegConfig {
+    /// Silencio (en tramos de 20 ms) que cierra un segmento.
+    pub close_frames: usize,
+    /// Duración máxima de un segmento (en tramos).
+    pub max_frames: usize,
+}
+
+/// Vista previa en vivo: respuesta rápida, trozos cortos.
+pub const LIVE: SegConfig = SegConfig { close_frames: 35, max_frames: 1000 }; // 700 ms, 20 s
+/// Transcripción final (fase 2): las pausas dentro de una frase no la parten.
+pub const FINAL: SegConfig = SegConfig { close_frames: 60, max_frames: 1500 }; // 1,2 s, 30 s
 /// Mínimo de tramos con voz para que el segmento valga la pena (descarta chasquidos).
 const MIN_VOICED_FRAMES: usize = 8; // 160 ms
 /// Tramos de calibración inicial del ruido de fondo (300 ms).
@@ -51,6 +66,7 @@ impl AudioSegment {
 }
 
 pub struct Segmenter {
+    cfg: SegConfig,
     /// Muestras recibidas hasta ahora (la línea de tiempo).
     pos: u64,
     pending: Vec<f32>,
@@ -85,7 +101,12 @@ fn rms(frame: &[f32]) -> f32 {
 impl Segmenter {
     /// `start_ms`: instante (en la línea de tiempo de la reunión) al que corresponde la primera muestra.
     pub fn new(start_ms: i64) -> Self {
+        Self::with_config(start_ms, LIVE)
+    }
+
+    pub fn with_config(start_ms: i64, cfg: SegConfig) -> Self {
         Self {
+            cfg,
             pos: (start_ms.max(0) as u64) * RATE as u64 / 1000,
             pending: Vec::new(),
             noise: 0.002,
@@ -185,10 +206,45 @@ impl Segmenter {
         }
         self.cur.extend_from_slice(&frame);
         let cur_frames = self.cur.len() / FRAME;
-        if self.quiet_run >= CLOSE_FRAMES || cur_frames >= MAX_SEGMENT_FRAMES {
+        if self.quiet_run >= self.cfg.close_frames {
             return self.close(self.quiet_run);
         }
+        if cur_frames >= self.cfg.max_frames {
+            return self.cut_long();
+        }
         None
+    }
+
+    /// Un segmento llegó al máximo hablando: sale hasta el tramo más silencioso de sus últimos 3 s
+    /// (en empate, el más tardío) y lo que queda detrás sigue abierto como segmento nuevo.
+    fn cut_long(&mut self) -> Option<AudioSegment> {
+        let frames = self.cur.len() / FRAME;
+        let from = frames.saturating_sub(CUT_SEARCH_FRAMES).max(frames / 2);
+        let (mut cut, mut best) = (frames, f32::MAX);
+        for i in from..frames {
+            let e = rms(&self.cur[i * FRAME..(i + 1) * FRAME]);
+            if e <= best {
+                best = e;
+                cut = i + 1;
+            }
+        }
+        let rest = self.cur.split_off(cut * FRAME);
+        // La energía de voz del resto pasa al segmento que sigue abierto.
+        let off = self.off_threshold();
+        let (rest_voiced, rest_sq) = rest.chunks(FRAME).map(rms).filter(|&l| l > off).fold((0usize, 0f32), |(n, s), l| (n + 1, s + l * l));
+        let voiced = self.voiced.saturating_sub(rest_voiced);
+        let voiced_sq = (self.voiced_sq - rest_sq).max(0.0);
+        let samples = std::mem::replace(&mut self.cur, rest);
+        let start = self.cur_start;
+        self.cur_start += samples.len() as u64;
+        self.voiced = rest_voiced;
+        self.voiced_sq = rest_sq;
+        self.quiet_run = self.quiet_run.min(self.cur.len() / FRAME);
+        if voiced < MIN_VOICED_FRAMES {
+            return None;
+        }
+        let threshold = self.on_threshold();
+        Some(AudioSegment { start_ms: Self::ms(start), end_ms: Self::ms(start + samples.len() as u64), samples, voiced_rms: (voiced_sq / voiced.max(1) as f32).sqrt(), threshold })
     }
 
     /// Cierra el segmento abierto recortando el exceso de silencio final.
@@ -292,6 +348,30 @@ mod tests {
         assert!(segs.iter().all(|s| s.end_ms - s.start_ms <= 20_000 + 20));
         // Sin huecos grandes entre trozos consecutivos de una misma intervención.
         assert!((segs[1].start_ms - segs[0].end_ms).abs() <= 40);
+    }
+
+    #[test]
+    fn el_corte_por_maximo_cae_en_la_pausa() {
+        // 25 s hablando con un respiro de 100 ms a los 18,5 s: el corte va ahí, no a los 20 s.
+        let segs = run(&[hiss(500, 0.001), tone(18_000, 0.2), hiss(100, 0.001), tone(7_000, 0.2), hiss(1500, 0.001)]);
+        assert_eq!(segs.len(), 2, "{:?}", segs.iter().map(|s| (s.start_ms, s.end_ms)).collect::<Vec<_>>());
+        assert!((segs[0].end_ms - 18_560).abs() <= 80, "{}", segs[0].end_ms);
+        assert_eq!(segs[1].start_ms, segs[0].end_ms);
+        assert!(!segs[0].is_weak() && !segs[1].is_weak());
+    }
+
+    #[test]
+    fn la_fase_final_no_parte_por_pausas_de_un_segundo() {
+        let parts = [hiss(500, 0.001), tone(2000, 0.2), hiss(900, 0.001), tone(2000, 0.2), hiss(2500, 0.001)];
+        assert_eq!(run(&parts).len(), 2);
+        let mut s = Segmenter::with_config(0, FINAL);
+        let mut out = Vec::new();
+        for p in &parts {
+            out.extend(s.push(p));
+        }
+        out.extend(s.flush());
+        assert_eq!(out.len(), 1);
+        assert!(out[0].end_ms - out[0].start_ms > 4800);
     }
 
     #[test]

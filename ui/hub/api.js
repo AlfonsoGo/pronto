@@ -26,6 +26,7 @@ export const state = {
   dictation: { state: 'idle' },
   stats: null,
   // Actualizaciones (Contrato v7). `dismissed` = versión a la que se dijo «Más tarde» (solo hasta el próximo arranque).
+  app: { version: '', test: false },
   update: { currentVersion: '', state: 'idle', checking: false, checkedAt: null, info: null, doneBytes: 0, totalBytes: 0, percent: 0, error: null, dismissed: null },
 };
 const subs = new Set();

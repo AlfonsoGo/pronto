@@ -1,4 +1,4 @@
-# Reconstruye el instalador de Pronto 2 (Windows) de forma reproducible.
+﻿# Reconstruye el instalador de Pronto 2 (Windows) de forma reproducible.
 #   1) cargo build --release en src-tauri (salvo -SkipBuild)
 #   2) reune en installer\stage SOLO lo necesario (pronto.exe + DLL que pida en ejecucion)
 #   3) comprueba las dependencias reales del exe (tabla de importaciones)
@@ -8,7 +8,7 @@
 # Uso:
 #   powershell -ExecutionPolicy Bypass -File installer\build_installer.ps1
 #   ... -SkipBuild                       (usa el pronto.exe que ya haya en target\release)
-#   ... -TargetDir C:\ruta\target        (carpeta target de cargo; por defecto src-tauri\target)
+#   ... -TargetDir C:\ruta\target        (carpeta target de cargo; por defecto %USERPROFILE%\dev\pt)
 #   ... -TestSandbox -TestDir C:\ruta    (variante de PRUEBA: otro AppId/nombre/carpeta)
 #   ... -OutDir C:\ruta                  (carpeta de salida; por defecto installer\dist)
 #
@@ -51,7 +51,8 @@ $iscc = Find-Iscc
 if (-not $iscc) { throw "No encuentro ISCC.exe (Inno Setup). Instalalo o ponlo en el PATH." }
 Write-Host "ISCC: $iscc" -ForegroundColor DarkGray
 
-if (-not $TargetDir) { $TargetDir = Join-Path $tauri 'target' }
+# Por defecto, la de src-tauri\.cargo\config.toml (ruta corta: la necesita whisper.cpp con Vulkan).
+if (-not $TargetDir) { $TargetDir = Join-Path $env:USERPROFILE 'dev\pt' }
 $relDir = Join-Path $TargetDir 'release'
 
 # --- 1) Compilar ---

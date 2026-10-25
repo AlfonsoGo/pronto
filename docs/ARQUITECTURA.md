@@ -340,8 +340,11 @@ guardada se migran a `cleanupLevel`).
 
 ## Audio guardado
 
-Cada dictado guarda su WAV 16 kHz mono en `%APPDATA%\Pronto2\audio\{id}.wav`; se purga a los
+Cada dictado guarda su WAV 16 kHz mono en `%APPDATA%\Pronto2\audio\{id}-{fecha}.wav`; se purga a los
 `keepAudioDays`. Sirve para «Reintentar transcripción» y «Reproducir» [spec §2.3].
+`{fecha}` son las cifras de `created_at` (reuniones: de `started_at`): una base nueva que reutilice los id no
+pisa el audio de otra, y nunca se sobrescribe un WAV (si existe, se aparta a `audio\apartado-<fecha-hora>\`).
+Los de antes de la 2.2.x (`{id}.wav`) se leen solo si su fecha de modificación cuadra con la del dictado.
 
 ## Interfaz: reglas para los dos agentes de UI
 
@@ -371,8 +374,9 @@ Implementación del «Contrato v2» en `src-tauri/`. Todo lo no citado aquí sig
 - Un toque sin segundo toque emite `error` con `kind:"tap"` y `message:"No lo toques. Mantén pulsado
   {atajo}."` (el atajo sale de los ajustes, p. ej. «Win + Alt»).
 - Nuevos `kind`: además de `tap`, `nomic`, `noaudio`, `paste`, `ollama`, se usa **`select`** («Selecciona
-  texto primero» / transform demasiado largo). `noaudio` también salta si el pico del audio es < 0,0005
-  (micrófono silenciado) sin llegar a transcribir.
+  texto primero» / transform demasiado largo). `noaudio` salta si el pico del audio es < 0,0005
+  (micrófono silenciado) sin llegar a transcribir; **`empty`** («No se ha oído nada») si llegó audio pero
+  la transcripción sale vacía.
 - Tope de 20 min y aviso a los 19 (re-emite `listening`/`handsfree` con `message` y manda un
   `dictation://notice`). El búfer de audio se limita a 20 min.
 - El hook añade una red de seguridad: si se pierde el «up» de un modificador, `HoldUp` se emite con el
@@ -408,7 +412,7 @@ Implementación del «Contrato v2» en `src-tauri/`. Todo lo no citado aquí sig
 - `PRAGMA user_version`: v1 = esquema original, v2 = columnas `has_audio`, `transform`, `fix_*`,
   `starred`, `source` y tabla `transforms` (con «Polish» y «Prompt Engineer», `hotkeyIndex` 1 y 2). Las
   migraciones son transaccionales y probadas con una base v1 con datos.
-- Audio: `%APPDATA%\Pronto2\audio\{id}.wav` (PCM16 mono 16 kHz). `retry_history` re-transcribe y aplica la
+- Audio: `%APPDATA%\Pronto2\audio\{id}-{fecha}.wav` (PCM16 mono 16 kHz). `retry_history` re-transcribe y aplica la
   tubería actual (categoría de app deducida del nombre guardado) sin pegar. Se borran los WAV al eliminar
   historial y al caducar (`keepAudioDays`, al arrancar, al guardar ajustes y tras cada dictado).
 - Un transform ejecutado añade una fila de historial con `transform` = nombre, `rawText` = selección original, 0 ms y 0
@@ -593,7 +597,7 @@ decisión pura). `audio.rs` gana `open_source` y `WavStream`; `ollama.rs`, `gene
 - Una sola inferencia a la vez en `Engine` (mutex). `transcribe` (dictado) tiene prioridad:
   `transcribe_background` cede el turno mientras haya un dictado esperando. La reunión no se detiene
   por un dictado, pero un trozo ya en marcha no se interrumpe (el dictado espera como mucho lo que dure ese trozo, ≤ 20 s de audio).
-- `meetingKeepAudio` guarda `audio\meeting_{id}_me.wav` y `_them.wav` (PCM16 16 kHz, escritura en streaming);
+- `meetingKeepAudio` guarda `audio\meeting_{id}-{fecha}_me.wav` y `_them.wav` (PCM16 16 kHz, escritura en streaming);
   se borran con `delete_meeting`.
 - Durante una reunión el dictado **no silencia** el audio del sistema (`muteMusic`), porque el loopback
   quedaría mudo.
@@ -940,7 +944,10 @@ hasta ~20 s a que `pronto.exe` quede libre.
    conservan).
 9. **Compilaciones de desarrollo** (`...\target\debug|release\pronto.exe`): buscan y avisan, pero no se
    autoinstalan (instalarían la versión de GitHub en la carpeta del instalador y reabrirían un exe que no se ha
-   tocado). `PRONTO_UPDATE_ALLOW_DEV=1` lo permite (solo pruebas).
+   tocado). Se reconocen por la ruta o por `deps\` y `.fingerprint\` al lado (vale con otro `target-dir`).
+   Una compilación de depuración no se autoinstala nunca; en una de `release`, `PRONTO_UPDATE_ALLOW_DEV=1`
+   lo permite (solo pruebas). Justo antes de lanzar el ayudante y salir se vuelve a comprobar que no se
+   esté dictando ni grabando una reunión.
 
 ## Comandos
 
@@ -1015,7 +1022,7 @@ elemento de la bandeja y el botón de Configuración siguen disponibles.
 |---|---|
 | `PRONTO_FAKE_VERSION=2.0.0` | este ejecutable se comporta como esa versión (para ver el aviso contra la release real) |
 | `PRONTO_UPDATE_API=http://127.0.0.1:PUERTO/latest` | otra URL para `releases/latest`; con ella también se aceptan descargas `http://127.0.0.1` |
-| `PRONTO_UPDATE_ALLOW_DEV=1` | permite autoinstalar desde `target\debug\|release` |
+| `PRONTO_UPDATE_ALLOW_DEV=1` | permite autoinstalar desde `target\release` (en depuración, nunca) |
 
 ## Pruebas
 
@@ -1038,3 +1045,284 @@ que imita `releases/latest` (tag `v9.9.9`, digest y tamaño reales del instalado
 `WEBVIEW2_USER_DATA_FOLDER` propio y `--remote-debugging-port` para llamar a `update_check` y `update_install`
 desde la webview del hub. Resultado: aviso en la tarjeta, descarga verificada, cierre limpio, instalación silenciosa
 sobre la carpeta de pruebas, y un único `pronto.exe` reabierto.
+
+# Contrato v8 · barra fija en un monitor
+
+Pedido por Txonso el 13-oct-2026: fijar la Flow bar en un monitor (candado en la propia barra) para que no
+moleste al compartir pantalla o al trabajar en el sitio donde aparece.
+
+## Ajustes nuevos (`Settings`, camelCase, opcionales; los ajustes viejos cargan con `null`)
+- `flowBarMonitor: string | null`: nombre de dispositivo Win32 (`"\\.\DISPLAY2"`). `null` = sigue al cursor.
+  Si ese monitor no está conectado, la barra sigue al cursor sin borrar el ajuste y vuelve sola (~2 s) al
+  reconectarlo.
+- `flowBarMonitorRect: { left, top, right, bottom } | null`: rectángulo físico del monitor al fijarlo, para
+  reencontrarlo si Windows renumera. Lo pone el backend (`save_settings` lo recalcula al cambiar `flowBarMonitor`).
+- Orden para reencontrarlo (`flowbar::resolve_pin`): nombre + rectángulo, solo rectángulo, solo nombre.
+
+## Comandos
+- `pin_flowbar({ pinned: bool }) -> Settings`: `true` fija la barra en el monitor donde está; `false` la suelta.
+  Guarda, recoloca y emite `settings://changed`.
+- `list_monitors() -> MonitorInfo[]` `{ device, number, name, primary, width, height, current }` (nombre comercial
+  del EDID, px físicos; `current` = la barra está ahí).
+
+## Colocación
+`flowbar::place` → monitor fijado y conectado; si no, el del cursor al empezar a dictar. El sondeo de 30 Hz
+recoloca la barra fijada cada ~2 s si se ha movido (reconexión, resolución, escala), con `SWP_NOACTIVATE`.
+UI: satélite candado de 24 px junto a Polish (aparece con el hover, violeta si está cerrado) y fila «Monitor de
+la barra» en Ajustes → Sistema, sincronizadas por `settings://changed`.
+
+# Contrato v9 · diccionario por voz
+
+Pedido por Txonso el 13-oct-2026: «poner la palabra, grabar cómo se pronuncia y que lo grabe el sistema».
+Parakeet (greedy_search) no admite vocabulario: el diccionario aprende qué escribe Pronto al oír la palabra y lo
+corrige. Módulo `pronounce.rs`; tabla `word_variants` (migración v6).
+
+## Grabar (`pronounce_record { word, replacement? } -> Pronunciation`)
+Micrófono de `settings.micName`, mono 16 kHz. Para sola tras 900 ms de silencio después de ≥200 ms de voz SEGUIDA (umbral =
+ruido de los primeros 300 ms + 0,15, mínimo 0,22 de `rms_to_level`) o a los 5 s; los ruidos sueltos (clic,
+respiración) ya no la paran antes de hablar (15-oct-2026). Antes de transcribir sube el volumen de una grabación
+floja hasta pico 0,5 (×20 como mucho); `pronounce_stop { cancel? }` la
+para o la descarta. Una a la vez; se rechaza si el motor no está listo o hay un dictado o una reunión en curso; si
+empieza un dictado, se descarta. Transcribe con `Engine::transcribe`. No guarda nada.
+`Pronunciation { heard, variant, status: "new"|"ok"|"covered", common, durationMs }`: `ok` = ya la entiende,
+`covered` = ya la corrige un reemplazo o el ajuste de mayúsculas/tildes, `new` = se guarda como variante.
+
+## Variantes y tubería
+- `word_variants(id, word_id → words.id, heard, created_at)` + índice. `foreign_keys` no está activo:
+  `delete_word` borra sus variantes en la misma transacción. `Word.variants: WordVariant[] { id, heard }`.
+- Comandos: `add_word`/`update_word` aceptan `variants?: string[]` (en `update_word` deja exactamente esa lista);
+  `add_word_variant { wordId, heard }`; `delete_word_variant { id }`.
+- Eventos: `pronounce://level { level }` (~30/s) y `pronounce://state { state: recording|transcribing|idle }`.
+- `text::dictionary_inner` (dictado y reuniones), de más larga a más corta, palabra completa, sin mayúsculas:
+  par a mano `word → replacement`; variante → `replacement` o `word`; palabra suelta → ajusta mayúsculas y tildes
+  (pone tildes, no las quita; nunca palabras corrientes); pasada final «suena igual» con clave fonética española
+  (claves ≥4 letras, nunca palabras corrientes ni claves ambiguas). Solo cuentan como arreglo si cambian el texto.
+
+# Contrato v10 · reuniones en dos fases
+
+Pedido por Txonso el 13-oct-2026: grabar el audio en dos hilos en paralelo y después transcribir y entender la
+reunión con Ollama. Módulo `notes.rs` (fase 2 sin `AppHandle`).
+
+## Fase 1 · captura (durante la reunión)
+Un hilo por fuente (mic = «Tú», loopback = «Ellos») escribe SIEMPRE el audio a
+`%APPDATA%\Pronto2\audio\meeting_{id}-{fecha}_me.wav` y `meeting_{id}-{fecha}_them.wav` (PCM16 mono 16 kHz), alineados al inicio
+(huecos rellenos con silencio, `GAP_FILL_SAMPLES`). La cabecera se reescribe cada 5 s y al cerrar;
+`audio::WavReader` lee hasta el final sin fiarse de ella. La transcripción en vivo (`segment::LIVE`, 700 ms /
+20 s) es solo vista previa (`meeting://segment`) y plan B si el audio falla.
+
+## Fase 2 · comprensión (al parar o con `retry_summary`; hilo `pronto-notes`, una por reunión a la vez)
+1. Si `transcript_final = 0` y hay WAV: transcribe cada pista entera (`segment::FINAL`, 1,2 s de silencio, trozos
+   ≤30 s cortados en el punto más silencioso), limpieza + diccionario, sin basura. Mezcla cronológica quitando el
+   eco (trozo del micro que coincide en tiempo y en ≥50 % de palabras con el sistema). `replace_segments` sustituye
+   la vista previa y pone `transcript_final = 1`; si `meetingKeepAudio` es false, los WAV se borran entonces. Si
+   falla, quedan la vista previa y el audio para reintentar.
+2. Ollama en dos pasadas (`notes::understand`): notas por bloques de ~5.000 caracteres y síntesis final. JSON con
+   reintento y salida de emergencia. Se contrasta con la transcripción: fuera ejemplos del prompt, «no hay…»,
+   responsables y fechas no dichos y puntos sin apoyo; lo que la síntesis olvida vuelve desde los bloques.
+El dictado sigue teniendo prioridad (`transcribe_background`). Una reunión en fase 2 no se puede borrar ni relanzar.
+
+## Eventos y tipos
+- `meeting://progress { meetingId, stage: transcribing|understanding|done, percent }`; `meeting://state` y
+  `meeting://summary` como antes.
+- `MeetingDetail` añade `keyPoints`, `nextSteps`, `openQuestions: string[]` y `transcriptFinal: boolean`;
+  `ActionItem` añade `due: string | null`. Base de datos v7: columnas `key_points`, `next_steps`, `open_questions`,
+  `transcript_final` en `meetings` y `due` en `meeting_actions`.
+
+## Coste
+32 KB/s por pista (~230 MB por hora con las dos, borrados al terminar si no se guarda el audio). Fase 2 ≈ 16–18×
+tiempo real por pista (~7 min para 1 h de reunión) + ~3 s por bloque con qwen3:1.7b.
+Prueba real: `PRONTO_MEETING_DIR=<carpeta con me.wav y them.wav> cargo test fase_2_real -- --ignored --nocapture`.
+
+# Contrato v11 · huella de voz
+
+Pedido por Txonso el 14-oct-2026: «que tú puedas decir la palabra y lo que significa, para que si detecta lo
+mismo la próxima vez, el mismo audio, sepa qué significa». El diccionario reconoce la palabra por cómo SUENA su
+voz, no por el texto que escribe Parakeet. Módulo `voiceprint.rs`; tabla `word_samples` (migración v8).
+
+## Grabar
+`pronounce_record` (v9) guarda además la grabación recortada a la voz como muestra pendiente
+(`%APPDATA%\Pronto2\voz\pendiente-{ms}.wav`, 16 kHz mono; recorte al bloque con más energía, 0,2-2,5 s).
+`Pronunciation` añade `sample: string | null` y `sampleMs`. Las pendientes sin palabra se borran a las 24 h.
+
+## Datos y comandos
+- `word_samples(id, word_id → words.id, file, duration_ms, created_at)`; al enganchar, el fichero pasa a
+  `w{wordId}-{ms}.wav`. `delete_word` borra filas y ficheros. `Word.samples: { id, durationMs, createdAt }[]`.
+- `add_word { …, newSamples? }`, `update_word { …, keepSamples?, newSamples? }`, `add_word_sample { wordId,
+  sample }`, `delete_word_sample { id }`, `get_word_sample_audio { id? | pending? } -> WAV base64 | null`.
+
+## Tubería
+Dictado y `retry_history`: `Engine::transcribe_timed` → `voiceprint::correct` → `text::process` (el historial
+guarda en `rawText` lo que oyó Parakeet). Reuniones: fase 2, cada trozo. Rasgos MFCC c1-c13 de 40 bandas log-mel
+(25/10 ms, FFT propia) + deltas, CMN con la media del dictado. DTW de subsecuencia simétrica (Sakoe-Chiba P=1)
+sobre el dictado entero. Se cambia un tramo solo si: coste < 6,3 (1 muestra) / 6,4 (2+); cubre ≥ 50 % de cada
+palabra cambiada; 1-3 palabras, no todas corrientes ni de otra entrada; el texto no es ya la palabra; ninguna otra
+entrada casa a menos de 0,35. Conservador a propósito: prefiere no corregir a corregir mal.
+
+## Interfaz
+Editor y «Grabar pronunciación»: bloque «Tu voz · n de 3» con ▶ y × por grabación; en la lista, insignia 🎙.
+
+## Medidas (15-oct-2026)
+Coste: 50 palabras × 3 muestras sobre 13 s ≈ 35 ms. Voz real de Txonso (muestras recortadas de frases, 174
+dictados): precisión 100 %, recall 10-11 %. Voz sintética con muestras sueltas: 21/24 reconocidas, 0 falsos
+positivos en 44 frases. Baterías `--ignored`: `bateria_voz_real`, `bateria_voz_sintetica`, `coste_50_palabras`.
+
+# Contrato v12 · Meets
+
+Pedido por Txonso el 16-oct-2026. «Notas de reunión» pasa a llamarse **Meets** en la interfaz (es/en); los
+nombres internos no cambian.
+
+## Fase 1 · solo captura
+Un hilo por pista (mic = «Tú», loopback = «Ellos») escribe su WAV alineado (`meeting_{id}-{fecha}_{me|them}.wav`). Durante
+el Meet NO se transcribe nada: la interfaz enseña tiempo y nivel. Ya no existen `meeting://segment` ni la vista
+previa. Si una pista no se puede grabar (al empezar o a mitad), aviso y se sigue con la otra.
+
+## Fase 2 (al parar o con `retry_summary`) · `meeting://progress { meetingId, stage, percent, step, steps: 4 }`
+1. `transcribing`: cada pista con `segment::FINAL` + `transcribe_background_timed` (huella de voz por rangos) →
+   palabras con inicio y fin. Eco palabra a palabra (±300 ms y sonido parecido a una del sistema; rachas de hasta 3
+   palabras mal oídas entre eco si la palabra del sistema no tenía ya su eco). Turnos por pausas de 0,7 s.
+   Encadenado por tiempo real: un turno con sustancia (≥3 palabras o ≥1 s) que entra a mitad parte el del otro y el
+   resto queda `overlap`. Se juntan turnos seguidos de la misma persona a menos de 1,6 s.
+2. `polishing` (una vez por reunión, con Ollama): turnos defectuosos (idioma cambiado, palabra imposible,
+   repetición, frase cortada, ritmo, tiempos raros, inicio pisado), como mucho el 25 % (mínimo 8), con el turno
+   anterior y el siguiente de contexto. Se acepta solo si: largo ×0,6-1,3, sin cifras ni nombres nuevos, ≤1-2
+   palabras nuevas y sin perder más del 40 %. El original queda en `rawText`.
+3. `labeling`: reglas + modelo en bloques de 40 (`pregunta | respuesta | propuesta | decision | tarea | otro`,
+   `replyTo`).
+4. `understanding`: notas por bloques y síntesis que dice quién dijo qué. `questions` y `saidByMe`/`saidByThem`
+   salen de las etiquetas, no del modelo. Arreglos deterministas: responsable = quien se comprometió en primera
+   persona; compromisos olvidados entran como tareas con plazo; fuera decisiones y tareas sacadas de preguntas.
+   Modelo: `notes_model` (qwen3.6 > qwen2.5:7b > …), cargado antes con plazo de 900 s.
+Transcripción a 4 hilos y un solo reconocedor (más hilos o un segundo reconocedor no compensaron, medido).
+
+## Tipos y datos (base v9)
+`Segment += { rawText, kind, overlap, replyTo }`; `Question = { text, askedBy: "me"|"them", atMs, answered,
+answer }`; `MeetingDetail += { questions, saidByMe, saidByThem }`. Columnas `meeting_segments.raw_text, kind,
+overlap, reply_to`; `meetings.questions, said_me, said_them, polish_done`. Las reuniones viejas cargan vacías.
+
+## Medidas (16-oct-2026, voces TTS)
+0 turnos fuera de orden; 0 de 349 palabras atribuidas al otro en las conversaciones cortas y 2 de 1048 en la de
+10,5 min; ninguna palabra propia borrada como eco. Transcripción 7-13 s por minuto de reunión; qwen3.6 ≈ 25 s por
+minuto para pulir, etiquetar y resumir, más ~45 s de carga (≈35 min para una hora, en segundo plano).
+Batería: `PRONTO_MEETS_DIR=… cargo test --release bateria_meets -- --ignored --nocapture`.
+
+# Contrato v12.1 · modelo de Meets
+
+Pedido por Txonso el 17-oct-2026 (las notas tardaban demasiado). Solo cambia qué modelo de Ollama hace pulido,
+etiquetas y notas. `ollama::notes_model`: si el usuario eligió a mano un modelo distinto del de fábrica, ese; si
+no, el primero instalado de `NOTES_MODELS`: `gemma4:12b-it-qat` > `qwen3.6` > `qwen2.5:7b` > `qwen3:8b` >
+`qwen3:4b` > `Qwen3-4B-GGUF:Q4_K_M`. Un solo modelo para todo (repartir no compensa, medido).
+
+Medido en RTX 4070 Ti de 12 GB: gemma4:12b-it-qat (7,2 GB, 100 % GPU) iguala en calidad a qwen3.6 y tarda
+11,8-12,3 s por minuto de reunión frente a 14,4-15,0 (13,8 frente a 21,7 con la CPU ocupada); qwen3.6 (23 GB) corre
+un 58 % en CPU. Descartados gemma4:26b-a4b (pierde decisiones, duplica tareas) y qwen2.5:7b (el doble de rápido
+pero se deja tareas y preguntas). Todos generan ~40 tok/s: manda el número de tokens escritos.
+Batería: `PRONTO_MEETS_DIR=… [PRONTO_MEETS_ONLY=b] [PRONTO_OLLAMA_MODEL=…] [PRONTO_OLLAMA_FAST_MODEL=…] cargo
+test --release bateria_meets -- --ignored --nocapture`.
+
+# Contrato v12.2 · etiquetas compactas
+
+Pedido por Txonso el 17-oct-2026. Solo cambian la fase `labeling` y tres arreglos de `understanding`; ni tipos ni base.
+- Formato (`notes/turns.rs`): una línea por turno `n letra [a]` (p pregunta, r respuesta + nº de la pregunta, pr
+  propuesta, d decisión, t tarea, o otro): ~7 tokens por turno frente a ~25 del JSON (-83 %). Sin `format: json`,
+  `num_predict` 1024 (`meeting::LABEL_MAX_TOKENS`). `parse_compact` tolerante; respaldo al JSON de v12 y a las reglas.
+- Solape: bloques de 40 turnos con `LABEL_CONTEXT` = 6 turnos antes y después marcados «no lo etiquetes»; cada turno se
+  etiqueta una vez y una respuesta puede apuntar a una pregunta del bloque anterior.
+- `fix_speakers`: un compromiso se da por listado solo si comparte la ACCIÓN (`same_action`, raíz del verbo), no un
+  nombre común; «Se lo pregunto…» ya no se confunde con «Enviar el presupuesto». `questions_with_status` + `evasive`:
+  una pregunta con respuesta real no vuelve a quedar «sin resolver».
+- Medidas (gemma4:12b-it-qat, conversación de 10,5 min): etiquetas 62-65 s → 11-12 s; fase 2 sin carga del modelo
+  11,1-11,7 → 7,4-7,7 s por minuto de reunión; tareas con responsable y plazo 6-7/8 → 8/8 y 7/8.
+
+# Contrato v12.3 · comprensión de la conversación entera
+
+Pedido por Txonso el 17-oct-2026 tras dos Meets reales («las funciones van bien, pero hay que intentar que comprenda
+mejor la reunión»). Solo cambia la fase `understanding`; ni tipos públicos ni base.
+- `summary::conversation_lines` sustituye a `prompt_lines`: fuera los asentimientos («Mm-hmm», «Sí, sí», y lo de ≤ 2
+  palabras solapado) y las intervenciones seguidas de la misma persona en una línea (< 10 s sin nadie en medio); un
+  trozo corto que acaba en punto lleva «…». Sin etiquetas de tipo en el prompt (en charla informal confundían).
+- Pasada única (`summary::full_prompt`) si la conversación unida cabe en `notes::FULL_CHARS` = 16.000 caracteres
+  (~20 min; entra con la respuesta en `NUM_CTX` 8192). Si no, las dos pasadas de siempre (`by_blocks`).
+- Claves nuevas en las dos rutas: `aportes_usuario`, `aportes_otro` (lo que contó cada parte, redactado; un párrafo
+  se parte en frases) e `intercambios` (`{pregunta, pregunto, respuesta|null}`).
+- Contraste: un aporte sin nada exclusivo de su parte y con ≥ 2 rasgos exclusivos de la otra cambia de lista; sin
+  aportes del modelo, `turns::said_points`. Cada pregunta del modelo se apoya en lo hablado, casa con un turno (de
+  ahí minuto y, si casa mejor con la otra parte, quién preguntó) y se descarta si solo repite la pregunta recibida
+  (`echoed_question`) o si ni ella ni su turno suenan a pregunta. Respuesta inventada fuera; evasiva = sin resolver.
+  Si el modelo da la clave `intercambios` (aunque vacía) manda ella; las etiquetas solo sin ella.
+- Temas sin contraste de palabras (son etiquetas). «Yo lo que te iba a decir» ya no cuenta como compromiso.
+- Medidas (gemma4:12b-it-qat): Meets reales 16 y 17 (2-3 min) 11-14 s de comprensión; reuniones de trabajo a y b
+  20 s. b: 2 → 4 preguntas con respuesta; sin preguntas ni tareas falsas en la charla informal.
+  Batería: `PRONTO_NOTES_JSON=f1.json;f2.json [PRONTO_FULL_CHARS=0] [PRONTO_RAW=1] cargo test --release bateria_notas
+  -- --ignored --nocapture` (ficheros `{"segments": [...]}`).
+
+# Contrato v13 · Whisper como segundo motor de voz (Pronto 2.2)
+
+Pedido por Txonso el 17-oct-2026 («más lento pero más eficaz… que funcione en casi todos los PCs»).
+- Motor: OpenAI Whisper large-v3-turbo q5_0 (`ggml-large-v3-turbo-q5_0.bin`, 574 MB, SHA-256 de Hugging Face) vía
+  whisper.cpp (`whisper-rs` 0.16, feature `vulkan`): GPU NVIDIA, AMD o Intel. Módulo `whisper.rs`.
+- `asr.rs`: `Recognizer::{Parakeet, Whisper}` y `Choice` (`settings.asrEngine` = `parakeet` | `whisper` + idioma). Con
+  Whisper elegido pero sin modelo, sin GPU Vulkan con ≥ 3 GB (`whisper::availability`) o sin AVX2, carga Parakeet:
+  nunca se queda sin dictado. `EngineStatus.active` dice qué motor está cargado. Trozos de 28 s (ventana de 30 s).
+- Whisper: greedy, temperatura 0, `no_context`, sin segmentos con prob. de silencio > 0,6, calentamiento al cargar
+  (Vulkan compila sus shaders ~20-40 s la primera vez), texto previo = frase puntuada de ejemplo + hasta 40 palabras
+  del diccionario (`state::vocabulary`, destacadas primero; sin él a veces no puntúa). `drop_hallucinations` quita
+  frases de subtítulos («Subtítulos realizados por…») y bucles («qué pasa» ×9).
+- Tiempos por token con DTW (cabezas de large-v3-turbo; sin flash attention): sin DTW, 29 de 263 palabras de Meets
+  al otro hablante por eco. `turns::remove_echo_tails` quita la frase corta (≤ 3 palabras) con la que empieza un
+  turno del micro si repite lo último del otro («… de noviembre.» → «Noviembre. Genial…»): 29 → 0 en la reunión a.
+- Ajustes → General → Motor de voz: selector, descarga (`whisper_download_start`, evento `whisper://progress`) y
+  qué motor está en uso. Comando `asr_options` (GPU, VRAM, disponible y por qué no, modelo presente).
+- Compilación: `src-tauri/.cargo/config.toml` (Vulkan SDK, libclang de `pip install libclang`, `GGML_NATIVE=OFF` con
+  AVX2, runtime estático `/MT` como sherpa-onnx, carpeta `target` corta `%USERPROFILE%\dev\pt` por el límite de
+  rutas). `build.rs`: `vulkan-1.dll` con carga diferida; `whisper::gpu` la busca antes de tocar Vulkan.
+- Medidas (RTX 4070 Ti): dictado 2 s → 0,15 s, 8 s → 0,4 s, 30 s → 1,2 s (Parakeet CPU: 0,4 / 0,7 / 3,4 s). Meets:
+  5,5 s por minuto por pista (Parakeet 9,4-10,5). WER (pistas TTS, faster-whisper): turbo 4,4 % frente a 7,0 %.
+  En CPU no sirve (minutos por dictado). Detalle en `docs/asr-comparativa.md`.
+  Pruebas: `PRONTO_WAVS=a.wav;b.wav cargo test --release whisper_real -- --ignored --nocapture` y
+  `PRONTO_ASR=whisper PRONTO_MEETS_DIR=… cargo test --release bateria_meets -- --ignored --nocapture`.
+- v13.1 (17-oct, noche): pestaña **Configuración → Motor** con Parakeet y cinco Whisper (`whisper::MODELS`:
+  large-v3-turbo 574 MB/3 GB VRAM, large-v3 1,1 GB/4 GB, medium 539 MB/2 GB, small 190 MB/1 GB, base 60 MB/1 GB),
+  cada uno con tamaño, CPU/GPU, errores medidos, velocidad y «Usar» / «Descargar» / «No cabe en este PC».
+  Ajuste nuevo `whisperModel`; `asr_options` devuelve la lista; `whisper_download_start(id)`, una descarga a la vez.
+  DTW con las cabezas de cada modelo. Al cambiar de motor el anterior sigue dictando hasta que el nuevo está listo.
+  `aisetup::ensure_running`: si Ollama está instalado pero parado, las notas de Meets lo arrancan (hasta 30 s).
+
+# Contrato v14 · Dictado rápido con Whisper (24-oct-2026, sin publicar)
+
+Pedido de Txonso: más velocidad sin perder calidad. Medidas en `specs/velocidad/2026-10-23.md`.
+- `whisper::Whisper` tiene dos contextos del mismo modelo: `fast` (atención flash, sin DTW) para el dictado y
+  `precise` (DTW) para `Engine::transcribe_background_timed` (fase 2 de Meets) y `Engine::transcribe_timed_precise`.
+  `precise` se precarga en el hilo de carga, después de dar el motor por listo (`on_ok`: ya se puede dictar), si
+  caben los dos (`room_for_two`: VRAM ≥ `pair_vram_gb` × 0,95, lo medido por modelo + 1,5 GB; turbo 3,8 GB,
+  `specs/velocidad/2026-10-24.md`); si no, la primera vez que se pide (antes, `verify()` del `.bin`). Si no se puede
+  cargar, se usan los tiempos aproximados de `fast` (regla 4). El estado del latido sigue la misma cuenta.
+- `state::transcribe_processed_as`: si `Engine::rough_timings()` y `voiceprint::hears` oye una palabra con
+  muestras (solo mira el audio, antes de transcribir), el dictado va directo por `transcribe_timed_precise` (la
+  huella necesita los tiempos de DTW): una sola pasada. En «Reintentar transcripción», por
+  `transcribe_timed_polite_precise` (`Kind::RetryPrecise`: cede a los dictados entre trozos). Si esa pasada falla
+  o sale vacía, se transcribe por el camino rápido y no se corrige con la huella (regla 5).
+- `Engine::keep_warm` → `Warmth`: latido de la GPU (`Whisper::pulse`, estado aparte) cada 200 ms mientras se
+  graba, con tope de 2 min; `Controller::finish_recording` lo suelta antes de transcribir.
+- `src-tauri/vendor/whisper-rs-sys` (con `[patch.crates-io]`): whisper.cpp no repite el encoder tras la detección
+  de idioma con «auto» (`PRONTO.md`). Carpeta de compilación corta obligatoria (MAX_PATH): con
+  `CARGO_TARGET_DIR=C:/Users/usuario/dev/pt-v` falla; `pt` o `v` sí.
+  `whisper::tests::vendor_whisper_sin_cambios_ajenos` fija la huella SHA-256 del árbol vendor (sin `PRONTO.md` ni
+  `.cargo-ok`, saltos de línea normalizados) y que Cargo.lock lo tome de la ruta: con `[patch]` por ruta Cargo no
+  guarda checksum. Al actualizar el vendor a propósito, se cambia la constante.
+
+# Contrato v14.1 · Whisper solo en español o inglés (24-oct-2026, sin publicar)
+
+Pedido de Txonso: con medium y el idioma automático le salía en portugués; quiere que Whisper (todos los tamaños)
+elija solo entre español e inglés, con español cuando dude. Medidas en `specs/velocidad/2026-10-24.md` §3.
+- Ajuste `language` sin cambios (`auto` | `es` | `en`). `whisper::whisper_language`: `auto` (o vacío, o cualquier
+  valor raro) se pasa a whisper.cpp como la lista `es,en`; un código de dos letras, tal cual; `libre` (solo bancos)
+  = la detección de Whisper entre sus 99 idiomas. Parakeet no cambia.
+- Segundo parche `[Pronto]` en `whisper_full_with_state`: si el idioma lleva comas, se detecta como con `auto`
+  (mismo encoder reutilizado, sin pasada extra) y se elige el más probable de la lista; uno que no sea el primero
+  solo gana con probabilidad ≥ 0,85 (inglés real: 0,89-0,99; un «Sí» o español con acento: 0,72-0,82).
+- `vendor/whisper-rs-sys/build.rs`: el crate copiaba whisper.cpp a `OUT_DIR` una sola vez y solo vigilaba
+  `wrapper.h`, así que un cambio en el parche no llegaba al binario. Ahora vigila `whisper.cpp/{src,include,ggml}` y
+  copia los ficheros que difieran (`sync_changed`).
+- Pruebas: `whisper::tests::automatico_es_espanol_o_ingles` y el banco `banco_idioma`
+  (`PRONTO_WAVS=…; PRONTO_IDIOMA_ESPERADO=es|en cargo test --release banco_idioma -- --ignored --nocapture --test-threads=1`).
+

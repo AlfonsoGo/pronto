@@ -1,10 +1,11 @@
 /* ───────────────────────────────────────────────────────────────────────────
-   Pronto 2 · Flow bar  (ventana «flowbar», 360x150, transparente)
+   Pronto 2 · Flow bar  (ventana «flowbar», 360x300, transparente)
    Eventos: dictation://state · dictation://level · dictation://notice
             settings://changed · flowbar://hover (opcional)
+            transform://preview (vista previa de un Transform: nada se pega sin Enter)
    Comandos: start_dictation · stop_dictation · cancel_dictation
              set_flowbar_hitbox · flowbar_context_menu · get_settings
-             list_transforms · run_transform
+             list_transforms · run_transform · pin_flowbar
    Sin window.__TAURI__ (navegador) corre un mock; con ?demo añade un panel
    de depuración fuera de la píldora.
    ─────────────────────────────────────────────────────────────────────────── */
@@ -17,7 +18,7 @@
   const DEMO = MOCK && params.has('demo');
 
   // ── Constantes de la spec (§3.2, §3.3) ────────────────────────────────────
-  const STAGE_W = 360, STAGE_H = 150;
+  const STAGE_W = 360, STAGE_H = 300;     // = flowbar::SIZE (lo comprueba un test de flowbar.rs)
   const MARGIN_B = 8;                       // margen inferior de la píldora
   const SIZE = {                            // [ancho, alto] en px CSS
     rest: [40, 8],
@@ -27,6 +28,7 @@
     processing: [98, 30],
     polishing: [136, 30],
     polished: [96, 30],
+    preview: [118, 30],                     // vista previa de un Transform (esperando Enter / Esc)
     done: [50, 30],
     cancelled: [96, 30],
     error: [91, 30],
@@ -35,7 +37,7 @@
     notesdone: [116, 30],
   };
   const STATES = new Set(['idle', 'listening', 'handsfree', 'processing', 'polishing',
-                          'polished', 'done', 'cancelled', 'error']);
+                          'polished', 'done', 'cancelled', 'error', 'preview']);
   const BAR_COUNT = 10;
   const GAIN = 5;                           // audio-scale = max(1, nivel * 5)
   const LEVEL_BOOST = 4;                  // el RMS del micro llega bajo (~0.05-0.25): se eleva antes de aplicar la ganancia
@@ -43,7 +45,8 @@
   const AUTO_BACK = { done: 1100, cancelled: 1500, polished: 1900 };   // ms hasta volver a reposo
   const CARD_MS = 4000;
   const NOTES_MS = 2600;                    // «Notas listas» en la píldora
-  const SUMMARY_MAX_MS = 90000;             // seguro: «Generando notas…» no se queda para siempre                     // las tarjetas se cierran solas
+  const SUMMARY_MAX_MS = 90000;
+  const PREVIEW_MAX_EXTRA = 5000;           // seguro: la vista previa se cierra aunque no llegue el «cancelled» del plazo             // seguro: «Generando notas…» no se queda para siempre                     // las tarjetas se cierran solas
   const HOLD = DEMO && params.has('hold');   // demo: no cierra solo (para capturas)
   const HIT_REST = 12, HIT_NORMAL = 6;      // margen del rectángulo pulsable
 
@@ -55,7 +58,9 @@
     hotkeyHandsFree: { ctrl: false, alt: true, shift: false, win: true, key: 'Space' },
     showFlowBar: true,
     flowBarHiddenUntil: null,
+    flowBarMonitor: params.has('pinned') ? '\\\\.\\DISPLAY2' : null,      // ?pinned: candado cerrado
     language: 'auto',
+    appLanguage: params.get('lang') === 'en' ? 'en' : 'es',
   };
   const mockMeeting = { active: false, start: 0 };
   const bridge = MOCK ? {
@@ -64,6 +69,11 @@
       if (cmd === 'get_settings') return JSON.parse(JSON.stringify(mockSettings));
       if (cmd === 'meeting_status') return { active: mockMeeting.active, elapsedMs: mockMeeting.active ? Date.now() - mockMeeting.start : 0 };
       if (cmd === 'list_transforms') return [{ id: 1, name: 'Polish', prompt: '', builtin: true, hotkeyIndex: 1 }];
+      if (cmd === 'pin_flowbar') {
+        mockSettings.flowBarMonitor = args && args.pinned ? '\\\\.\\DISPLAY1' : null;
+        mockEmit('settings://changed', JSON.parse(JSON.stringify(mockSettings)));
+        return JSON.parse(JSON.stringify(mockSettings));
+      }
       return null;
     },
     listen: async (name, cb) => {
@@ -84,7 +94,9 @@
         spinnerEl = $('spinner'), labelEl = $('label'), fillEl = $('fill'), tip = $('tip'),
         card = $('card'), cardTitle = $('card-title'), cardBody = $('card-body'),
         cardAct = $('card-act'), cardIco = $('card-ico'), liveEl = $('live'),
-        hitDbg = $('hitdbg'), btnStop = $('btn-stop'), satNotes = $('sat-notes');
+        hitDbg = $('hitdbg'), btnStop = $('btn-stop'), satNotes = $('sat-notes'), satLock = $('sat-lock'),
+        pvEl = $('preview'), pvTitle = $('pv-title'), pvWarn = $('pv-warn'), pvWarnText = $('pv-warn-text'),
+        pvText = $('pv-text'), pvNote = $('pv-note'), pvHint = $('pv-hint'), pvPaste = $('pv-paste'), pvDiscard = $('pv-discard');
 
   for (let i = 0; i < BAR_COUNT; i++) {
     const b = document.createElement('i');
@@ -108,6 +120,8 @@
   let backTimer = 0, hoverTimer = 0, cardTimer = 0, hiddenTimer = 0, cardHideTimer = 0;
   let cardOn = false, cardAction = null, cardKind = '';
   let tipEl = null;
+  // Vista previa de un Transform: último `transform://preview` y si se está enseñando
+  let pvData = null, pvOn = false;
   // Notetaker
   let meetingActive = false, meetingStart = 0, meetingLevel = 0, trans = '', transTimer = 0, clockTimer = 0;
 
@@ -154,11 +168,12 @@
   // prioridad: dictado > aviso transitorio de notas > reunión en curso > reposo/hover
   const key = () => (ui !== 'idle' ? ui : trans ? trans : meetingActive ? 'meeting' : (hover ? 'ready' : 'rest'));
   const isRest = () => { const k = key(); return k === 'rest' || k === 'ready'; };
-  const LABELS = { polishing: 'Polish', polished: 'Listo', cancelled: 'Cancelado', error: 'Error',
+  const LABELS = { polishing: 'Polish', polished: 'Listo', preview: 'Vista previa', cancelled: 'Cancelado', error: 'Error',
     summarizing: 'Generando notas…', notesdone: 'Notas listas' };
   const ARIA = {
-    rest: 'Pronto: reposo', meeting: 'Tomando notas de la reunión', summarizing: 'Generando notas', notesdone: 'Notas listas', ready: 'Dictar', listening: 'Escuchando', handsfree: 'Dictado en manos libres',
+    rest: 'Pronto: reposo', meeting: 'Meets: grabando la reunión', summarizing: 'Generando notas', notesdone: 'Notas listas', ready: 'Dictar', listening: 'Escuchando', handsfree: 'Dictado en manos libres',
     processing: 'Transcribiendo', polishing: 'Puliendo el texto', polished: 'Listo', done: 'Pegado',
+    preview: 'Vista previa del resultado: Enter para pegar, Esc para descartar',
     cancelled: 'Cancelado', error: 'Error',
   };
 
@@ -174,8 +189,9 @@
     labelEl.textContent = LABELS[k] || '';
     pill.setAttribute('aria-label', ARIA[k] || 'Dictar');
     wavesEl.classList.toggle('live', live());
-    btnStop.dataset.tip = k === 'meeting' ? 'Detener notas' : 'Finalizar y pegar';
+    btnStop.dataset.tip = k === 'meeting' ? 'Detener el Meet' : 'Finalizar y pegar';
     btnStop.setAttribute('aria-label', btnStop.dataset.tip);
+    syncLock();
     syncClock();
     ensureLoop();
     refreshTip();
@@ -213,13 +229,17 @@
     ui = st;
     if (st === 'polishing') startProgress(); else stopProgress();
     if (st === 'listening' || st === 'handsfree') { if (st === 'listening') level = 0; hideCard(true); }
+    if (st === 'preview') { hideCard(true); showPreview(); } else hidePreview();
+    if (st === 'preview' && !HOLD) backTimer = setTimeout(() => { ui = 'idle'; hidePreview(); render(); },
+      ((pvData && pvData.timeoutMs) || 60000) + PREVIEW_MAX_EXTRA);
     if (st !== 'error' && st !== 'idle' && cardKind === 'error') hideCard(true);
     if (st === 'error') showCard(Object.assign({ kind: 'error' }, errorCard(p)));
     if (AUTO_BACK[st] && !HOLD) backTimer = setTimeout(() => { ui = 'idle'; render(); }, AUTO_BACK[st]);
     if (st === 'error' && !HOLD) backTimer = setTimeout(() => { ui = 'idle'; render(); }, CARD_MS);
     const msg = { listening: 'Escuchando', handsfree: 'Manos libres: pulsa el atajo para finalizar y pegar',
       processing: 'Transcribiendo', polishing: 'Puliendo el texto', polished: 'Listo, texto pulido',
-      done: 'Texto pegado', cancelled: 'Cancelado', error: (p.message || 'Error de dictado') }[st];
+      done: 'Texto pegado', cancelled: 'Cancelado', error: (p.message || 'Error de dictado'),
+      preview: previewAnnouncement() }[st];
     announce(msg || '');
     render();
     ensureLoop();
@@ -232,13 +252,69 @@
       case 'tap': return mk(`No lo toques. Mantén pulsado ${holdKeys().join(' + ')}.`,
                             'Mantén pulsado mientras hablas y suelta para ver el texto.');
       case 'nomic': return mk('No se detectó ningún micrófono', msg);
-      case 'noaudio': return mk('¿Tienes el micrófono silenciado?', msg || 'No se recibió audio.');
+      case 'noaudio': return mk('¿Tienes el micrófono silenciado?', msg || 'No se recibió audio.');   // pico casi 0
+      case 'empty': return mk('No se ha oído nada', msg);                                              // llegó audio, sin texto
       case 'paste': return mk('No se pudo pegar', msg);
       case 'ollama': return mk('Polish no está disponible', msg);
+      case 'ia': return mk('No se pegó la respuesta de la IA', msg);   // guarda de la regla 7 (Transforms)
       case 'select': return mk('Selecciona texto primero', msg);
       default: return mk(msg || 'Algo salió mal', '');
     }
   }
+
+  // ── Vista previa de un Transform (decisión A de Txonso, 23-oct) ──────────
+  // El resultado de la IA se enseña aquí y SOLO se pega con Enter (o «Pegar»); Esc (o «Descartar»)
+  // lo descarta y el backend devuelve el portapapeles. Enter/Esc los recoge el gancho de teclado:
+  // esta ventana no toma el foco, la app destino lo conserva para el pegado. Todo con textContent.
+  const PV_TXT = {
+    es: { title: (n) => (n ? n + ' · ' : '') + 'revisa antes de pegar', paste: 'Pegar (Enter)', discard: 'Descartar (Esc)',
+          hint: [['Enter'], ' para pegar · ', ['Esc'], ' para descartar'], announce: 'Vista previa lista. Enter para pegar, Esc para descartar.' },
+    en: { title: (n) => (n ? n + ' · ' : '') + 'review before pasting', paste: 'Paste (Enter)', discard: 'Discard (Esc)',
+          hint: [['Enter'], ' to paste · ', ['Esc'], ' to discard'], announce: 'Preview ready. Enter to paste, Esc to discard.' },
+  };
+  const pvTxt = () => PV_TXT[settings && settings.appLanguage === 'en' ? 'en' : 'es'];
+  function previewAnnouncement() {
+    const w = pvData && pvData.warning ? ' ' + pvData.warning : '';
+    return pvTxt().announce + w;
+  }
+  function fillPreview() {
+    const tx = pvTxt(), d = pvData || {};
+    pvTitle.textContent = tx.title(d.name ? String(d.name) : '');
+    pvText.textContent = d.text ? String(d.text) : '';
+    pvWarnText.textContent = d.warning ? String(d.warning) : '';
+    pvWarn.hidden = !d.warning;
+    pvNote.textContent = d.notice ? String(d.notice) : '';
+    pvNote.hidden = !d.notice;
+    pvHint.replaceChildren(...tx.hint.map((h) => (Array.isArray(h) ? keysNode(h) : txt(h))));
+    pvPaste.setAttribute('aria-label', tx.paste);       // botones de icono: ✓ pegar, ✕ descartar
+    pvDiscard.setAttribute('aria-label', tx.discard);
+  }
+  function showPreview() {
+    fillPreview();
+    pvOn = true;
+    pvEl.hidden = false;
+    pvText.scrollTop = 0;
+    pvEl.style.animation = 'none'; void pvEl.offsetWidth; pvEl.style.animation = '';
+    scheduleHitbox();
+  }
+  function hidePreview() {
+    if (!pvOn) return;
+    pvOn = false;
+    pvEl.hidden = true;
+    scheduleHitbox();
+  }
+  function onPreview(p) {
+    if (!p) return;
+    pvData = p;
+    if (pvOn) {                                   // p. ej. «vuelve a la ventana…» con la vista previa abierta
+      fillPreview();
+      if (p.notice) announce(String(p.notice));
+      scheduleHitbox();
+    }
+  }
+  pvPaste.addEventListener('click', (e) => { e.stopPropagation(); safe('stop_dictation'); });
+  pvDiscard.addEventListener('click', (e) => { e.stopPropagation(); safe('cancel_dictation'); });
+  if ('ResizeObserver' in window) new ResizeObserver(scheduleHitbox).observe(pvEl);
 
   // ── Tarjeta de aviso ──────────────────────────────────────────────────────
   const ACTIONS = {
@@ -246,7 +322,7 @@
     copy_last: ['Copiar', 'copy_last'],
     open_settings: ['Configuración', 'open_settings'],
     open_hub: ['Abrir Pronto', 'open_hub'],
-    start_meeting: ['Tomar notas', 'start_meeting'],
+    start_meeting: ['Grabar', 'start_meeting'],
     stop_meeting: ['Detener', 'stop_meeting'],
     open_notetaker: ['Ver', 'open_hub', { page: 'notetaker' }],
   };
@@ -262,7 +338,7 @@
       const id = Number(str.slice('open_meeting:'.length));
       return ['Ver', 'open_hub', Number.isFinite(id) ? { page: 'notetaker', id } : { page: 'notetaker' }];
     }
-    return ACTIONS[str] || [str, null];
+    return Object.hasOwn(ACTIONS, str) ? ACTIONS[str] : null; // acción desconocida: sin botón
   }
   const isMeetingAction = (a) => a && (a[1] === 'stop_meeting' || (a[1] === 'open_hub' && a[2] && a[2].page === 'notetaker'));
 
@@ -313,7 +389,7 @@
     if (t === 'dyn') {
       if (key() === 'ready') return [txt('Dictar'), keysNode(holdKeys())];
       if (ui === 'handsfree') return [txt('Pulsa'), keysNode(holdKeys()), txt('para finalizar y pegar')];
-      if (key() === 'meeting') return [txt('Tomando notas'), keysNode([fmtElapsed()])];
+      if (key() === 'meeting') return [txt('Meets · grabando'), keysNode([fmtElapsed()])];
       return null;
     }
     return t ? [txt(t)] : null;
@@ -385,6 +461,28 @@
     }
   });
 
+  // ── Candado: fijar la barra en este monitor ───────────────────────────────
+  // Cerrado = `flowBarMonitor` tiene un monitor (aunque ahora no esté conectado: el ajuste se
+  // conserva y la barra sigue al cursor hasta que vuelva). Lo resuelve el backend.
+  const LOCK_TXT = {
+    es: { pin: 'Fijar la barra en este monitor', unpin: 'Soltar la barra', fail: 'No se pudo fijar la barra' },
+    en: { pin: 'Pin the bar to this monitor', unpin: 'Unpin the bar', fail: 'Could not pin the bar' },
+  };
+  const lockTxt = () => LOCK_TXT[settings && settings.appLanguage === 'en' ? 'en' : 'es'];
+  const pinned = () => !!(settings && settings.flowBarMonitor);
+  function syncLock() {
+    const on = pinned(), tx = lockTxt();
+    satLock.setAttribute('aria-pressed', on ? 'true' : 'false');
+    satLock.dataset.tip = on ? tx.unpin : tx.pin;
+    satLock.setAttribute('aria-label', satLock.dataset.tip);
+  }
+  satLock.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const s = await safe('pin_flowbar', { pinned: !pinned() });
+    if (s) applySettings(s);
+    else showCard({ kind: 'error', title: lockTxt().fail, body: '' });
+  });
+
   // ── Click-through: rectángulo pulsable ────────────────────────────────────
   let hitRaf = 0, lastHit = '';
   function scheduleHitbox() { if (!hitRaf) hitRaf = setTimeout(sendHitbox, 0); }   // no rAF: se pausa en ventanas ocultas
@@ -403,10 +501,16 @@
         rects.push(grow([sx, sy, sx + 30, sy + 30], m));
         const nx = x - 6 - 30;                      // satélite Tomar notas (a la izquierda)
         rects.push(grow([nx, sy, nx + 30, sy + 30], m));
+        const lx = sx + 30 + 6, ly = sy + 3;        // candado (24x24, a la derecha de Polish)
+        rects.push(grow([lx, ly, lx + 24, ly + 24], m));
       }
     }
     if (cardOn && !card.hidden) {
       const r = card.getBoundingClientRect(), s = stage.getBoundingClientRect();
+      rects.push(grow([r.left - s.left, r.top - s.top, r.right - s.left, r.bottom - s.top], HIT_NORMAL));
+    }
+    if (pvOn && !pvEl.hidden) {                    // vista previa: botones y rueda para leerla entera
+      const r = pvEl.getBoundingClientRect(), s = stage.getBoundingClientRect();
       rects.push(grow([r.left - s.left, r.top - s.top, r.right - s.left, r.bottom - s.top], HIT_NORMAL));
     }
     if (!rects.length) return null;
@@ -432,6 +536,7 @@
     if (!s) return;
     settings = s;
     armHiddenTimer();
+    if (pvOn) fillPreview();
     render();
   }
   safe('get_settings').then(applySettings);
@@ -454,7 +559,7 @@
         meetingActive = true; meetingStart = Date.now(); meetingLevel = 0;
         setTrans('');
         if (cardOn && cardAction && cardAction[1] === 'start_meeting') hideCard(true);
-        announce('Tomando notas de la reunión');
+        announce('Meets: grabando la reunión');
         render();
         syncMeeting();                           // el backend manda el tiempo real transcurrido
         break;
@@ -479,7 +584,7 @@
         meetingActive = false;
         setTrans('');
         showCard({ kind: 'error', title: 'No se pudieron generar las notas', body: p.message || '' });
-        announce(p.message || 'Error en las notas de la reunión');
+        announce(p.message || 'Error en las notas del Meet');
         render();
         break;
       default:                                    // idle
@@ -493,7 +598,12 @@
   const on = (name, fn) => bridge.listen(name, (e) => fn(e && e.payload)).catch((err) => console.warn('[flowbar] listen', name, err));
   on('dictation://state', onState);
   on('dictation://level', (p) => { if (p && typeof p.level === 'number') level = p.level; });
-  on('dictation://notice', (p) => { if (p && p.title) showCard({ kind: 'notice', title: p.title, body: p.body, action: p.action }); });
+  on('dictation://notice', (p) => {
+    if (!p || !p.title) return;
+    if (pvOn) { onPreview(Object.assign({}, pvData, { notice: p.body ? p.title + ' · ' + p.body : p.title })); return; }
+    showCard({ kind: 'notice', title: p.title, body: p.body, action: p.action });
+  });
+  on('transform://preview', onPreview);
   on('meeting://state', onMeeting);
   on('meeting://level', (p) => { if (p) meetingLevel = Math.max(Number(p.mic) || 0, Number(p.system) || 0); });
   on('settings://changed', applySettings);
@@ -521,12 +631,12 @@
     panel.className = 'dbg';
     panel.innerHTML = '<h4>Estado</h4><div class="g" id="d-states"></div>' +
       '<h4>Avisos y errores</h4><div class="g" id="d-notices"></div>' +
-      '<h4>Reunión (Notetaker)</h4><div class="g" id="d-meet"></div>' +
+      '<h4>Meets</h4><div class="g" id="d-meet"></div>' +
       '<h4>Voz</h4><label>Nivel <input id="d-level" type="range" min="0" max="1" step="0.01" value="0.35"><span class="val" id="d-lv">0.35</span></label>' +
       '<label><input id="d-sim" type="checkbox"> Voz simulada (30 Hz)</label>' +
       '<h4>Fondo de prueba</h4><div class="g" id="d-bg"></div>' +
       '<h4>Ajustes</h4><label><input id="d-show" type="checkbox" checked> showFlowBar</label>' +
-      '<label><input id="d-frame" type="checkbox" checked> Ver ventana 360x150 y hitbox</label>';
+      '<label><input id="d-frame" type="checkbox" checked> Ver ventana 360x300 y hitbox</label>';
     document.body.appendChild(panel);
     if (params.get('nopanel')) panel.style.display = 'none';
 
@@ -538,10 +648,17 @@
     ['idle', 'listening', 'handsfree', 'processing', 'polishing', 'polished', 'done', 'cancelled']
       .forEach((s) => mk('d-states', s, () => send(s)));
     mk('d-states', 'error', () => send('error', { message: 'Algo ha fallado al transcribir.' }));
+    const sendPv = (extra) => { mockEmit('transform://preview', Object.assign({ name: 'Formal', timeoutMs: 60000,
+      text: 'Estimada Ana:\n\nLe envío el informe del trimestre y quedamos el lunes para revisarlo con calma. ' +
+            'Si le parece bien, podemos aprovechar para cerrar el presupuesto de marketing y el calendario de entregas.\n\nUn saludo.' }, extra)); send('preview'); };
+    mk('d-states', 'preview', () => sendPv({}));
+    mk('d-states', 'preview + aviso', () => sendPv({ warning: 'Ojo: la IA añadió enlaces que no estaban en el texto seleccionado.' }));
+    mk('d-states', 'preview <b>', () => sendPv({ text: '<b>no es HTML</b> <img src=x onerror=alert(1)> ' + 'texto largo '.repeat(80) }));
     mk('d-notices', 'Aviso', () => mockEmit('dictation://notice', { title: 'Texto copiado', body: 'Tu última transcripción está en el portapapeles.' }));
     mk('d-notices', 'Aviso + acción', () => mockEmit('dictation://notice', { title: 'No se pudo pegar', body: 'Haz clic en un cuadro de texto y pega con Ctrl + V.', action: 'paste_last' }));
     mk('d-notices', 'Error: tap', () => send('error', { kind: 'tap', message: 'No lo toques. Mantén pulsado Win + Alt.' }));
     mk('d-notices', 'Error: sin audio', () => send('error', { kind: 'noaudio', message: 'No hemos recibido audio de «Micrófono (Realtek)».' }));
+    mk('d-notices', 'Error: vacío', () => send('error', { kind: 'empty', message: 'No se ha oído nada' }));
     mk('d-notices', 'Error: sin micro', () => send('error', { kind: 'nomic', message: 'Conecta un micrófono o elige otro en Configuración.' }));
     mk('d-notices', 'Error: pegar', () => send('error', { kind: 'paste', message: 'Haz clic en un cuadro de texto y pulsa Ctrl + V para pegar.' }));
     const sendM = (state, extra) => {
@@ -555,9 +672,9 @@
     mk('d-meet', 'done', () => sendM('done', { message: 'Reunión de equipo · 3 tareas' }));
     mk('d-meet', 'error', () => sendM('error', { message: 'Ollama no responde en localhost:11434.' }));
     mk('d-meet', 'idle', () => sendM('idle'));
-    mk('d-meet', 'Aviso: Tomando notas', () => { sendM('recording'); mockEmit('dictation://notice', { title: 'Tomando notas de Zoom', body: 'Se pararán solas al colgar.', action: 'stop_meeting' }); });
+    mk('d-meet', 'Aviso: Tomando notas', () => { sendM('recording'); mockEmit('dictation://notice', { title: 'Meets: grabando Zoom', body: 'Se para solo al colgar.', action: 'stop_meeting' }); });
     mk('d-meet', 'Aviso: Notas listas', () => { sendM('done'); mockEmit('dictation://notice', { title: 'Notas listas', body: 'Reunión de equipo · lunes', action: 'open_meeting:42' }); });
-    mk('d-meet', 'Aviso: ¿Tomar notas?', () => mockEmit('dictation://notice', { title: '¿Tomar notas de esta reunión?', body: 'Zoom', action: 'start_meeting' }));
+    mk('d-meet', 'Aviso: ¿Tomar notas?', () => mockEmit('dictation://notice', { title: '¿Grabar esta reunión en Meets?', body: 'Zoom', action: 'start_meeting' }));
     ['claro', 'oscuro', 'color', 'mixto'].forEach((b) => mk('d-bg', b, () => { document.body.dataset.bg = b; }));
 
     const lvl = $('d-level');
@@ -582,7 +699,8 @@
     if (ms0) setTimeout(() => sendM(ms0, params.get('elapsed') ? { elapsedMs: Number(params.get('elapsed')) } : (ms0 === 'done' ? { message: 'Reunión de equipo · 3 tareas' } : undefined)), 60);
     if (params.get('level')) { setLv(params.get('level')); mockEmit('meeting://level', { mic: Number(params.get('level')), system: 0 }); }
     if (params.get('sim')) { $('d-sim').checked = true; $('d-sim').dispatchEvent(new Event('change')); }
-    if (st0) setTimeout(() => {
+    if (st0 === 'preview') setTimeout(() => sendPv(params.get('warn') ? { warning: 'Ojo: la IA añadió importes que no estaban en el texto seleccionado.' } : {}), 80);
+    else if (st0) setTimeout(() => {
       const kind = params.get('kind');
       send(st0, kind ? { kind, message: params.get('msg') || 'Mensaje de ejemplo.' } : (st0 === 'error' ? { message: 'Algo ha fallado.' } : {}));
     }, 80);
