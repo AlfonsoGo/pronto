@@ -25,7 +25,7 @@ Lee antes `specs/mac/DECISIONES.md` (D1-D12). Resumen de las normas:
    haz la función pura sin cfg y pruébala en Windows.
 7. **Comprueba** con `node scripts/mac/check.mjs` (tipa todo para `aarch64-apple-darwin` desde Windows,
    también los tests) y con `cargo check --tests` normal en Windows (`CARGO_TARGET_DIR` = la ruta
-   corta `C:\Users\Txonso\dev\w-mac-win`). Otras personas trabajan a la vez en otros archivos: fíjate solo
+   corta de una carpeta corta, p. ej. `C:\dev\w`). Otras personas trabajan a la vez en otros archivos: fíjate solo
    en los errores de TUS archivos. No ejecutes `cargo test` completo (lo hace quien dirige).
 8. **No toques** archivos de otras áreas, `Cargo.toml`, `main.rs`, `mac/mod.rs`, `text.rs`, `polish.rs`,
    `state.rs` (salvo una línea imprescindible, y dilo). No hagas commits. No uses git stash.
