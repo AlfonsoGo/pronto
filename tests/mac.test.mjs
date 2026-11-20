@@ -83,11 +83,14 @@ test('mac 4: la página de permisos del Mac es accesible y el marco es el de mac
         for (const x of v) fallos.push(`[${tema} ${q}] ${x}`);
       }
     }
-    // Sin ?mac (Windows) no hay página de permisos en el menú y se ven los botones de ventana.
+    // Sin ?mac (Windows) no hay página de permisos en el menú y se ven los botones de ventana. En un Mac
+    // de verdad el navegador ya se presenta como Mac: esa parte solo se mira fuera del Mac.
+    if (process.platform !== 'darwin') {
     await cargar(page, `${hub.base}/hub.html?page=home`);
     const win = await page.evaluate(() => ({ menu: !!document.querySelector('.sb [data-nav="permisos"]'), wc: getComputedStyle(document.querySelector('.wc')).display }));
     if (win.menu) fallos.push('Windows: sale «Permisos del Mac» en el menú');
     if (win.wc === 'none') fallos.push('Windows: no se ven los botones de ventana');
+    }
   } finally {
     await hub.cerrar();
   }

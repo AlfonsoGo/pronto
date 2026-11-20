@@ -22,6 +22,8 @@ test('02 integridad: 0 filas perdidas en migración y copia; copia restaurable',
   for (const t of ['migracion_conserva_cada_fila', 'copia_diaria_restaurable', 'abrir_nunca_vacia_una_base_con_datos', 'wal_ajeno_no_tapa_la_base_buena', 'copia_diaria_no_rota_las_buenas_con_una_base_menguada',
     'wal_ajeno_con_datos_se_aparta', 'borrado_legitimo_no_aparta_su_wal', 'shm_bloqueado_no_mueve_nada', 'base_antigua_queda_con_base_id',
     'wal_ajeno_sin_identidad_se_aparta', 'wal_de_version_anterior_se_respeta_con_respaldo', 'copia_restaurada_dos_veces']) {
+    // El -shm bloqueado por otro proceso (share mode) solo existe en Windows; en Mac ese test no se compila.
+    if (t === 'shm_bloqueado_no_mueve_nada' && process.platform !== 'win32') continue;
     assert.match(r.salida, new RegExp(`nsn_integridad_${t} \\.\\.\\. ok`), `no se ejecutó nsn_integridad_${t}`);
   }
 });

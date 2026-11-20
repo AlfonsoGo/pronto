@@ -20,7 +20,7 @@ test('retención: qué cuenta como acortar', () => {
   assert.equal(shortensRetention('theme', 1, 0), false);
 });
 
-test('retención: una flecha en el desplegable pregunta y no guarda; Cancelar deja el valor guardado', { skip: !rutaChrome() && 'no hay Chrome (define PRIMERIZO_CHROME)', timeout: 120_000 }, async () => {
+test('retención: una flecha en el desplegable pregunta y no guarda; Cancelar deja el valor guardado', { skip: (!rutaChrome() && 'no hay Chrome (define PRIMERIZO_CHROME)') || (process.platform === 'darwin' && 'en Mac la flecha abre la lista nativa del desplegable en vez de cambiar el valor (lo prueba Windows)'), timeout: 120_000 }, async () => {
   const hub = await abrirHub();
   try {
     const page = await (await hub.browser.newContext({ viewport: { width: 1180, height: 780 } })).newPage();
