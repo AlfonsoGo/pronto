@@ -1,0 +1,4 @@
+# Los guiones del Mac y sus plist con fin de línea LF (bash del Mac no entiende CRLF).
+*.sh text eol=lf
+src-tauri/*.plist text eol=lf
+.github/**/*.yml text eol=lf

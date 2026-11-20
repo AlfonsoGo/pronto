@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Textos que enseña macOS al pedir cada permiso. Sin el del micrófono, macOS cierra Pronto al dictar. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Pronto escucha el micrófono solo mientras dictas o grabas una reunión. La voz se convierte en texto en tu Mac y nunca sale de él.</string>
+	<key>NSAudioCaptureUsageDescription</key>
+	<string>En las reuniones, Pronto graba lo que suena en tu Mac para escribir lo que dicen los demás. Se procesa en tu Mac y nunca sale de él.</string>
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Pronto abre Ajustes del Sistema en el sitio de cada permiso.</string>
+	<!-- Vive en la barra de menús; el icono del Dock solo sale con el panel abierto. -->
+	<key>LSUIElement</key>
+	<false/>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>es</string>
+	<key>NSHumanReadableCopyright</key>
+	<string>BeltranLabs · Licencia en el repositorio AlfonsoGo/pronto</string>
+</dict>
+</plist>

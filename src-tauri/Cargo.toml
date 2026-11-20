@@ -17,13 +17,28 @@ rusqlite = { version = "0.40.2", features = ["bundled", "functions"] }
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.152"
 sherpa-onnx = "1.13.8"
-# Whisper (Contrato v13) por whisper.cpp con GPU Vulkan; opciones de compilación en .cargo/config.toml.
-whisper-rs = { version = "0.16.0", features = ["vulkan"] }
 sha2 = "0.10"
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+# `macos-private-api`: Flow bar transparente en Mac (no hace nada en Windows).
+tauri = { version = "2", features = ["tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-single-instance = "2"
 ureq = { version = "2", default-features = false, features = ["json", "tls"] }
+
+[target.'cfg(windows)'.dependencies]
+# Whisper (Contrato v13) por whisper.cpp con GPU Vulkan; opciones de compilación en .cargo/config.toml.
+whisper-rs = { version = "0.16.0", features = ["vulkan"] }
 windows = { version = "0.62.2", features = ["Win32_Devices_Display", "Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_HiDpi", "Win32_System_Threading", "Win32_System_LibraryLoader", "Win32_System_ProcessStatus", "Win32_System_Registry", "Win32_System_Com", "Win32_System_DataExchange", "Win32_System_Memory", "Win32_Media_Audio", "Win32_Media_Audio_Endpoints", "Win32_Graphics_Gdi", "Win32_Security_WinTrust", "Win32_Security_Cryptography", "Win32_Security_Cryptography_Catalog", "Win32_Security_Cryptography_Sip"] }
+
+# macOS: whisper.cpp con Metal (GPU de los chips M). Lo propio del Mac vive en src/mac/.
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { version = "0.16.0", features = ["metal"] }
+block2 = "0.6"
+objc2 = "0.6"
+objc2-app-kit = "0.3"
+objc2-application-services = "0.3"
+objc2-core-audio = "0.3"
+objc2-core-foundation = "0.3"
+objc2-core-graphics = "0.3"
+objc2-foundation = "0.3"
 
 [build-dependencies]
 tauri-build = "2"

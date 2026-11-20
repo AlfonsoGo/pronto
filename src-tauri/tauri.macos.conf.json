@@ -1,0 +1,60 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "app": {
+    "macOSPrivateApi": true,
+    "windows": [
+      {
+        "label": "hub",
+        "title": "Pronto",
+        "url": "hub.html",
+        "width": 1180,
+        "height": 780,
+        "minWidth": 900,
+        "minHeight": 600,
+        "decorations": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "trafficLightPosition": { "x": 16, "y": 20 },
+        "transparent": false,
+        "center": true,
+        "visible": false,
+        "create": false
+      },
+      {
+        "label": "flowbar",
+        "title": "Pronto Flow bar",
+        "url": "flowbar.html",
+        "width": 360,
+        "height": 150,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": true,
+        "skipTaskbar": true,
+        "resizable": false,
+        "focus": false,
+        "shadow": false,
+        "visible": true,
+        "create": false,
+        "focusable": false
+      }
+    ]
+  },
+  "bundle": {
+    "targets": ["app", "dmg"],
+    "category": "public.app-category.productivity",
+    "copyright": "BeltranLabs",
+    "icon": ["icons/icon.icns", "icons/icon.png"],
+    "macOS": {
+      "minimumSystemVersion": "14.0",
+      "infoPlist": "Info.plist",
+      "entitlements": "Entitlements.plist",
+      "hardenedRuntime": false,
+      "dmg": {
+        "windowSize": { "width": 600, "height": 380 },
+        "appPosition": { "x": 160, "y": 190 },
+        "applicationFolderPosition": { "x": 440, "y": 190 }
+      }
+    }
+  }
+}
