@@ -722,7 +722,9 @@ fn rompedor_actualizador_goteo_sin_plazo() {
 /// `fetch_latest` contra respuestas hostiles: JSON de 5 MB, servidor mudo, tags y nombres raros.
 #[test]
 fn rompedor_actualizador_respuestas_hostiles() {
-    use crate::updater::{fetch_latest, parse_release, parse_version, url_allowed};
+    use crate::updater::{fetch_latest, parse_version, url_allowed};
+    // Estos JSON traen el `.exe` de Windows: se elige como en Windows también al probar en Mac.
+    let parse_release = |j: &str| crate::updater::parse_release_for(j, crate::updater::Os::Windows);
     // Servidor mudo: acepta y no contesta.
     let mudo = servir(|s, _| {
         std::thread::sleep(Duration::from_secs(40));

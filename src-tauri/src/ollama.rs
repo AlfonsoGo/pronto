@@ -511,16 +511,35 @@ fn generate_core(url: &str, model: &str, prompt: &str, opts: &GenOpts, reset_cir
     }
 }
 
+/// Códigos del sistema de «plazo vencido»: Windows 10060 (WSAETIMEDOUT), Linux 110 (ETIMEDOUT) y, en
+/// macOS, 60 (ETIMEDOUT) y 35 (EAGAIN: así sale el plazo de lectura de un socket en Mac). Sin el de Mac,
+/// una generación atascada no contaba como «atascada» y cada dictado volvía a esperar el plazo entero
+/// (CI de Mac, 20-nov-2026, `rompedor_pulido_ollama_vivo_generacion_atascada`; regla 4).
+fn timeout_errno(code: Option<i32>) -> bool {
+    match code {
+        Some(10060 | 110) => true,
+        Some(60 | 35) => cfg!(target_os = "macos"),
+        _ => false,
+    }
+}
+
+fn timeout_text(text: &str) -> bool {
+    text.contains("timed out")
+        || text.contains("os error 10060")
+        || text.contains("os error 110")
+        || (cfg!(target_os = "macos") && (text.contains("os error 60") || text.contains("os error 35") || text.contains("temporarily unavailable")))
+}
+
 /// ¿Este `io::Error` (o lo que envuelve, p. ej. el `serde_json::Error` de `into_json`) es un plazo vencido?
 fn io_is_timeout(e: &std::io::Error) -> bool {
     let kind_is = |k: std::io::ErrorKind| matches!(k, std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock);
-    if kind_is(e.kind()) || matches!(e.raw_os_error(), Some(10060 | 110)) {
+    if kind_is(e.kind()) || timeout_errno(e.raw_os_error()) {
         return true;
     }
     let mut source: Option<&(dyn std::error::Error + 'static)> = e.get_ref().map(|r| r as &(dyn std::error::Error + 'static));
     while let Some(err) = source {
         if let Some(io) = err.downcast_ref::<std::io::Error>() {
-            if kind_is(io.kind()) || matches!(io.raw_os_error(), Some(10060 | 110)) {
+            if kind_is(io.kind()) || timeout_errno(io.raw_os_error()) {
                 return true;
             }
         }
@@ -532,7 +551,7 @@ fn io_is_timeout(e: &std::io::Error) -> bool {
         source = err.source();
     }
     let text = e.to_string().to_lowercase();
-    text.contains("timed out") || text.contains("os error 10060") || text.contains("os error 110")
+    timeout_text(&text)
 }
 
 /// ¿El fallo de red es el plazo vencido? Con el texto en inglés de ureq no basta: el del sistema sale
@@ -542,14 +561,14 @@ fn is_timeout(t: &ureq::Transport) -> bool {
     let mut source: Option<&(dyn std::error::Error + 'static)> = std::error::Error::source(t);
     while let Some(e) = source {
         if let Some(io) = e.downcast_ref::<std::io::Error>() {
-            if matches!(io.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) || matches!(io.raw_os_error(), Some(10060 | 110)) {
+            if matches!(io.kind(), std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock) || timeout_errno(io.raw_os_error()) {
                 return true;
             }
         }
         source = e.source();
     }
     let text = t.to_string().to_lowercase();
-    text.contains("timed out") || text.contains("os error 10060") || text.contains("os error 110")
+    timeout_text(&text)
 }
 
 /// Quita los bloques `<think>…</think>` con que los modelos «razonadores» (qwen3…) anteponen su

@@ -929,6 +929,19 @@ fn stray_meta_id(page: &[u8], usable: usize) -> Option<String> {
 
 // ------------------------------------------------------------ guarda del -wal ajeno (13-oct)
 
+/// Candado de apertura de la base (`pronto2.db.abrir`, un fichero vacío que se queda). Si no se puede
+/// coger (carpeta de solo lectura…), se abre igual: es una protección extra, no un requisito.
+fn candado_apertura(path: &std::path::Path) -> Option<std::fs::File> {
+    let f = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(sidecar(path, ".abrir")).ok()?;
+    match f.lock() {
+        Ok(()) => Some(f),
+        Err(e) => {
+            crate::errlog::error("db", format!("no se pudo coger el candado de apertura: {e}"));
+            None
+        }
+    }
+}
+
 fn sidecar(path: &std::path::Path, suffix: &str) -> PathBuf {
     PathBuf::from(format!("{}{suffix}", path.display()))
 }
@@ -1408,6 +1421,15 @@ impl Db {
     /// SQLite da `Err` y no se toca. Y la guarda del `-wal` ajeno (`guard_foreign_wal`). Una base sin
     /// `base_id` en el fichero principal (de antes o nueva) sale con él escrito y volcado en él.
     pub fn open_at(path: &std::path::Path) -> Result<Self> {
+        // Un solo «abrir» a la vez por base, también entre procesos: si dos arranques llegan juntos a
+        // una base nueva, el segundo veía el fichero recién creado (0 bytes) y lo apartaba mientras el
+        // primero lo migraba. Windows lo impedía de rebote (no deja mover un fichero abierto); macOS sí
+        // lo deja, y la base quedaba rota (CI de Mac, 20-nov-2026, `rompedor_dos_arranques…`).
+        let _candado = candado_apertura(path);
+        Self::open_at_sin_candado(path)
+    }
+
+    fn open_at_sin_candado(path: &std::path::Path) -> Result<Self> {
         let mut avisos = Vec::new();
         if std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.len() == 0) {
             // Con un -wal al lado también: SQLite BORRA el -wal de una base de 0 páginas al abrirla, y
@@ -2493,7 +2515,7 @@ mod tests {
     fn ajustes_por_defecto_y_guardado() {
         let db = Db::open_memory().unwrap();
         let s = db.load_settings();
-        assert!(s.hotkey_hold.win);
+        assert_eq!(s.hotkey_hold, crate::models::default_hold_hotkey()); // Win+Alt en Windows, fn en Mac
         assert_eq!(s.cleanup_level, CleanupLevel::Medium);
         let mut s = Settings::default();
         s.sounds = false;

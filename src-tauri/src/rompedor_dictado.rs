@@ -401,6 +401,7 @@ fn rompedor_dictado_historial_un_millon() {
 /// programa aparte en una carpeta temporal y lo compila con `rustc`: se ejecuta el código real, sin
 /// tocar el portapapeles.
 #[test]
+#[cfg(windows)] // compila el portapapeles Win32 de inject.rs
 fn rompedor_dictado_portapapeles_formatos() {
     let src = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/src/inject.rs")).unwrap();
     let a = src.find("// Formatos estándar").expect("inicio");
