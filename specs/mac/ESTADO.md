@@ -45,7 +45,7 @@ comprobado al compilar para Mac desde Windows; probarlo en un Mac de verdad es `
 | F33 | Pulido de cada dictado con IA local | hecho | Común: el mismo código en Windows y Mac. |
 | F34 | Guarda contra invenciones (cifras, enlaces, cuentas) | hecho | Común: el mismo código en Windows y Mac. |
 | F35 | Deshacer el pulido (texto crudo conservado) | hecho | Común: el mismo código en Windows y Mac. |
-| F36 | Transforms Polish (Alt+Shift+P) y Prompt Engineer con confirmacion Enter | hecho | ⌥⇧P; la vista previa se confirma con Enter, que el gancho Mac traga solo con la vista previa abierta. |
+| F36 | Transforms Polish (Alt+Shift+P) y Prompt Engineer con confirmacion Enter | hecho | ⌥⇧P; la vista previa se confirma con Enter, que el gancho Mac traga solo con la vista previa abierta y con la misma app delante (en Mac se compara la app, no la ventana). |
 | F37 | Flow bar: pildora flotante sin foco sobre la barra de tareas | hecho | Ventana Tauri transparente encima de todo, en todos los Escritorios y a pantalla completa (`mac/flowbar.rs`). No es un NSPanel: si se pulsa, Pronto devuelve el foco a la app antes de pegar (D8). |
 | F38 | Estados de la pildora (escuchando, transcribiendo, puliendo) | hecho | Común: el mismo código en Windows y Mac. |
 | F39 | Fijar la barra a un monitor y seguir al cursor | hecho | Monitores por CoreGraphics/NSScreen; la barra sigue al cursor. |

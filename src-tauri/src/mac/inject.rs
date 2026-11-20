@@ -124,6 +124,11 @@ fn wait_fn_released(max: Duration) {
 /// Inyecta eventos marcados como propios, en orden. Los códigos son los virtuales de Windows
 /// (`0x5B` = Cmd, `0x56` = V…), traducidos con `teclas_mac`.
 pub fn send_key_events(keys: &[KeyEvent]) {
+    // Sin Accesibilidad, macOS descarta las teclas sin avisar: se apunta (el dictado ya está en el historial).
+    // SAFETY: sin precondiciones.
+    if !unsafe { objc2_application_services::AXIsProcessTrusted() } {
+        crate::errlog::error("inject", "falta el permiso de Accesibilidad: macOS no deja pulsar teclas por ti");
+    }
     wait_fn_released(Duration::from_millis(600));
     let source = CGEventSource::new(CGEventSourceStateID::Private);
     let mut held: Vec<u32> = Vec::new();
@@ -198,6 +203,8 @@ fn window_title(pid: i32) -> Option<String> {
     // SAFETY: elemento válido.
     let _ = unsafe { app.set_messaging_timeout(0.15) };
     let window = ax_attribute(&app, "AXFocusedWindow")?.downcast::<AXUIElement>().ok()?;
+    // SAFETY: elemento válido. El plazo corto también para la ventana.
+    let _ = unsafe { window.set_messaging_timeout(0.15) };
     let title = ax_attribute(&window, "AXTitle")?.downcast::<CFString>().ok()?;
     Some(title.to_string())
 }
@@ -242,6 +249,13 @@ pub fn app_info_of(pid: isize) -> AppInfo {
 
 /// Si Pronto está delante (la persona pulsó la Flow bar), devuelve el foco a la app donde empezó el
 /// dictado y espera a que llegue (hasta 400 ms). Si no, no hace nada.
+/// Pegar falla si falta Accesibilidad (macOS tira las teclas en silencio): así el flujo lo trata
+/// como pegado fallido y avisa, con el dictado guardado (regla 5).
+pub(crate) fn can_paste() -> Result<(), String> {
+    // SAFETY: sin precondiciones.
+    if unsafe { objc2_application_services::AXIsProcessTrusted() } { Ok(()) } else { Err("falta el permiso de Accesibilidad (Pronto → Permisos del Mac)".into()) }
+}
+
 pub(crate) fn ensure_target_front() {
     let target = LAST_TARGET.load(Ordering::SeqCst);
     if target <= 0 || foreground_window() as i32 != own_pid() {

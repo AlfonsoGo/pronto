@@ -468,7 +468,10 @@ pub fn paste_text(text: &str) -> Result<(), String> {
     }
     // Mac: si la persona pulsó la Flow bar, Pronto quedó delante; se devuelve el foco a su app.
     #[cfg(target_os = "macos")]
-    crate::mac::inject::ensure_target_front();
+    {
+        crate::mac::inject::can_paste()?;
+        crate::mac::inject::ensure_target_front();
+    }
     send_keys(&[(SHORTCUT_MOD, false), (0x56, false), (0x56, true), (SHORTCUT_MOD, true)]);
 
     let chars = text.chars().count();

@@ -75,6 +75,9 @@ jobs:
           security set-keychain-settings -lut 3600 "$KC"
           security unlock-keychain -p "$KCPASS" "$KC"
           security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign
+          # Certificado propio: se marca de confianza para firmar código en este llavero.
+          openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -passin "pass:$MAC_CERT_PASSWORD" -nokeys -legacy -out "$RUNNER_TEMP/cert.pem" 2>/dev/null             || openssl pkcs12 -in "$RUNNER_TEMP/cert.p12" -passin "pass:$MAC_CERT_PASSWORD" -nokeys -out "$RUNNER_TEMP/cert.pem"
+          security add-trusted-cert -r trustRoot -p codeSign -k "$KC" "$RUNNER_TEMP/cert.pem"
           security set-key-partition-list -S apple-tool:,apple: -s -k "$KCPASS" "$KC" >/dev/null
           security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
           rm -f "$RUNNER_TEMP/cert.p12"
