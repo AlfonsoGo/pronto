@@ -276,7 +276,9 @@ pub fn parse_release_for(json: &str, os: Os) -> Result<Option<Release>, String> 
 
 /// Nombre de fichero seguro para guardar el instalador en `%TEMP%`.
 fn safe_file_name(name: &str) -> String {
-    let base = Path::new(name).file_name().and_then(|n| n.to_str()).unwrap_or("");
+    // Sin carpetas ni unidad: corta por `/`, `\` y `:` igual en los dos sistemas (en Mac `Path::file_name`
+    // no corta por `\` ni por «a:»; salió en el Mac de GitHub, 20-nov-2026).
+    let base = name.rsplit(['/', '\\', ':']).next().unwrap_or("");
     let clean: String = base.chars().filter(|c| !matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') && !c.is_control()).collect();
     if clean.to_ascii_lowercase().ends_with(".exe") && clean.len() > 4 { clean } else { "Pronto-Setup.exe".into() }
 }

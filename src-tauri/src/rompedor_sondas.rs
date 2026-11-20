@@ -1749,6 +1749,10 @@ fn rompedor_retencion_flecha_intermedia_borra() {
 /// cortacircuitos (`ollama.rs` `circuit::watch`) pregunta a `/api/tags` a los 5 s y, como contesta, lo cierra.
 #[test]
 fn rompedor_pulido_ollama_vivo_generacion_atascada() {
+    // En fila con las demás pruebas del cortacircuitos y con sus tiempos de fábrica: otra que los acorta en
+    // paralelo cerraba el circuito antes de tiempo (salió en el Mac de GitHub, 20-nov-2026).
+    let _serie = crate::ollama::circuit::lock_for_tests();
+    crate::ollama::circuit::set_timing_for_tests(Duration::from_secs(60), Duration::from_secs(5));
     let l = TcpListener::bind("127.0.0.1:0").unwrap();
     let url = format!("http://{}", l.local_addr().unwrap());
     let generate = Arc::new(AtomicUsize::new(0));
