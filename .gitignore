@@ -23,3 +23,6 @@ node_modules/
 rompedor-backup/
 e2e/results/*.png
 e2e/rompedor/capturas/
+
+# Certificado de firma del Mac (scripts/mac/crear-certificado.sh): nunca al repositorio
+certificado-pronto/

@@ -1,0 +1,104 @@
+# Pronto 2 para Mac: construye Pronto.app y el .dmg en un Mac de GitHub (gratis en repos públicos).
+#
+# - A mano (pestaña Actions → «Pronto para Mac» → Run workflow): pasa las pruebas y deja el .dmg como
+#   artefacto descargable de esa ejecución (caduca a los 30 días).
+# - Al publicar una release en GitHub (lo hace Txonso con su «sube»): además sube el .dmg a esa release,
+#   junto al .exe de Windows. El actualizador del Mac lo encuentra por el nombre (…-mac-arm64.dmg).
+#
+# Firma (decisión D6 de specs/mac/DECISIONES.md): si existen los secretos MAC_CERT_P12 (certificado
+# autofirmado en base64, de scripts/mac/crear-certificado.sh) y MAC_CERT_PASSWORD, la app se firma
+# con él: así macOS conserva los permisos al actualizar. Sin ellos, firma ad-hoc. Nunca se notariza
+# (eso pide Apple Developer, 99 $/año: docs/mac/REPARTIR.md).
+name: Pronto para Mac
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  mac:
+    runs-on: macos-15
+    timeout-minutes: 90
+    env:
+      CARGO_TARGET_DIR: ${{ github.workspace }}/src-tauri/target
+      GGML_NATIVE: "OFF"
+      GGML_AVX: "OFF"
+      GGML_AVX2: "OFF"
+      GGML_FMA: "OFF"
+      GGML_F16C: "OFF"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Herramientas
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          command -v cmake || brew install cmake
+          echo "LIBCLANG_PATH=$(xcode-select -p)/Toolchains/XcodeDefault.xctoolchain/usr/lib" >> "$GITHUB_ENV"
+          sw_vers; uname -m; rustc --version; node --version
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            src-tauri/target
+          key: mac-${{ hashFiles('src-tauri/Cargo.lock') }}
+
+      - name: Pruebas (npm test)
+        run: |
+          npm ci --no-audit --no-fund
+          npm test
+
+      - name: Certificado (si hay secretos)
+        env:
+          MAC_CERT_P12: ${{ secrets.MAC_CERT_P12 }}
+          MAC_CERT_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+        run: |
+          if [ -z "$MAC_CERT_P12" ]; then
+            echo "Sin certificado: firma ad-hoc."
+            echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
+            exit 0
+          fi
+          KC="$RUNNER_TEMP/pronto.keychain-db"
+          KCPASS="$(openssl rand -hex 16)"
+          echo "$MAC_CERT_P12" | base64 --decode > "$RUNNER_TEMP/cert.p12"
+          security create-keychain -p "$KCPASS" "$KC"
+          security set-keychain-settings -lut 3600 "$KC"
+          security unlock-keychain -p "$KCPASS" "$KC"
+          security import "$RUNNER_TEMP/cert.p12" -k "$KC" -P "$MAC_CERT_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$KCPASS" "$KC" >/dev/null
+          security list-keychains -d user -s "$KC" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/cert.p12"
+          echo "APPLE_SIGNING_IDENTITY=Pronto (BeltranLabs)" >> "$GITHUB_ENV"
+
+      - name: Construir Pronto.app y el .dmg
+        run: |
+          npx --yes @tauri-apps/cli@2 build --bundles app,dmg \
+            --config "{\"bundle\":{\"macOS\":{\"signingIdentity\":\"$APPLE_SIGNING_IDENTITY\"}}}"
+          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          mkdir -p salida
+          cp "$CARGO_TARGET_DIR"/release/bundle/dmg/*.dmg "salida/Pronto-$VERSION-mac-arm64.dmg"
+          codesign --verify --deep --strict "$CARGO_TARGET_DIR"/release/bundle/macos/Pronto.app
+          codesign -d -r- "$CARGO_TARGET_DIR"/release/bundle/macos/Pronto.app
+          shasum -a 256 salida/*.dmg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Pronto-mac-arm64
+          path: salida/*.dmg
+          retention-days: 30
+
+      - name: Subir el .dmg a la release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" salida/*.dmg --clobber
