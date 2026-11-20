@@ -13,6 +13,10 @@ name: Pronto para Mac
 
 on:
   workflow_dispatch:
+  # Ramas de trabajo del Mac: cada subida construye el .dmg (GitHub solo deja lanzar a mano
+  # los flujos que ya están en la rama principal).
+  push:
+    branches: ['claude/mac-*']
   release:
     types: [published]
 
