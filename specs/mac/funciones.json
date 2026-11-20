@@ -1,0 +1,902 @@
+[
+ {
+  "id": "F01",
+  "fr": "FR-01",
+  "nombre": "Dictado manteniendo el atajo (grabar y pegar al soltar)",
+  "toca_sistema": [
+   "atajo",
+   "pegado",
+   "audio",
+   "app_activa"
+  ],
+  "modulos": [
+   "hotkey.rs",
+   "inject.rs",
+   "state.rs",
+   "audio.rs"
+  ]
+ },
+ {
+  "id": "F02",
+  "fr": "FR-01",
+  "nombre": "Toque corto y segundo toque para manos libres",
+  "toca_sistema": [
+   "atajo"
+  ],
+  "modulos": [
+   "hotkey.rs",
+   "state.rs"
+  ]
+ },
+ {
+  "id": "F03",
+  "fr": "FR-01",
+  "nombre": "Modo manos libres con atajo propio y boton de parar",
+  "toca_sistema": [
+   "atajo",
+   "pegado"
+  ],
+  "modulos": [
+   "hotkey.rs",
+   "state.rs",
+   "flowbar.rs"
+  ]
+ },
+ {
+  "id": "F04",
+  "fr": "FR-01",
+  "nombre": "Esc cancela la grabacion sin pegar",
+  "toca_sistema": [
+   "atajo"
+  ],
+  "modulos": [
+   "hotkey.rs",
+   "state.rs"
+  ]
+ },
+ {
+  "id": "F05",
+  "fr": "FR-01",
+  "nombre": "Descarte de grabaciones cortas y aviso de microfono silenciado",
+  "toca_sistema": [
+   "audio"
+  ],
+  "modulos": [
+   "state.rs",
+   "audio.rs"
+  ]
+ },
+ {
+  "id": "F06",
+  "fr": "FR-01",
+  "nombre": "Limite de 20 min por dictado con aviso a los 19",
+  "toca_sistema": [
+   "ninguno"
+  ],
+  "modulos": [
+   "state.rs"
+  ]
+ },
+ {
+  "id": "F07",
+  "fr": "FR-01",
+  "nombre": "Pegado en la app activa con restauracion del portapapeles",
+  "toca_sistema": [
+   "pegado",
+   "app_activa"
+  ],
+  "modulos": [
+   "inject.rs",
+   "state.rs"
+  ]
+ },
+ {
+  "id": "F08",
+  "fr": "FR-01",
+  "nombre": "Dictado guardado en historial antes de pegar y reintento si falla el pegado",
+  "toca_sistema": [
+   "pegado"
+  ],
+  "modulos": [
+   "state.rs",
+   "inject.rs",
+   "db.rs"
+  ]
+ },
+ {
+  "id": "F09",
+  "fr": "FR-01",
+  "nombre": "Pegar el ultimo dictado con Alt+Shift+Z",
+  "toca_sistema": [
+   "atajo",
+   "pegado"
+  ],
+  "modulos": [
+   "hotkey.rs",
+   "inject.rs",
+   "state.rs"
+  ]
+ },
+ {
+  "id": "F10",
+  "fr": "FR-01",
+  "nombre": "Aviso de falta de modelo de voz",
+  "toca_sistema": [
+   "ninguno"
+  ],
+  "modulos": [
+   "state.rs",
+   "models.rs"
+  ]
+ },
+ {
+  "id": "F11",
+  "fr": "FR-01",
+  "nombre": "Seleccion de microfono y atajo configurables",
+  "toca_sistema": [
+   "atajo",
+   "audio"
+  ],
+  "modulos": [
+   "audio.rs",
+   "hotkey.rs",
+   "commands.rs"
+  ]
+ },
+ {
+  "id": "F12",
+  "fr": "FR-02",
+  "nombre": "Limpieza de muletillas en 4 niveles",
+  "toca_sistema": [
+   "ninguno"
+  ],
+  "modulos": [
+   "text.rs",
+   "state.rs"
+  ]
+ },
+ {
+  "id": "F13",
+  "fr": "FR-02",
+  "nombre": "Diccionario con reemplazo de palabras",
+  "toca_sistema": [
+   "ninguno"
+  ],
+  "modulos": [
+   "text.rs",
+   "db.rs"
+  ]
+ },
+ {
+  "id": "F14",
+  "fr": "FR-02",
+  "nombre": "Coincidencia fonetica del diccionario",
+  "toca_sistema": [
+   "ninguno"
+  ],
+  "modulos": [
+   "text.rs",
+   "lexico_es.txt"
+  ]
+ },
+ {
+  "id": "F15",
+  "fr": "FR-02",
+  "nombre": "Atajos de texto (snippets)",
+  "toca_sistema": [
+   "ninguno"
+  ],
+  "modulos": [
+   "text.rs",
+   "db.rs"
+  ]
+ },
+ {
+  "id": "F16",
+  "fr": "FR-02",
+  "nombre": "Estilo de escritura segun la app con foco",
+  "toca_sistema": [
+   "app_activa"
+  ],
+  "modulos": [
+   "text.rs",
+   "state.rs",
+   "inject.rs"
+  ]
+ },
+ {
+  "id": "F17",
+  "fr": "FR-02",
+  "nombre": "Tonos Formal, Casual, Muy casual y Entusiasta",
+  "toca_sistema": [
+   "ninguno"
+  ],
+  "modulos": [
+   "text.rs",
+   "models.rs"
+  ]
+ },
+ {
+  "id": "F18",
+  "fr": "FR-02",
+  "nombre": "Orden de voz pulsa enter",
+  "toca_sistema": [
+   "pegado"
+  ],
+  "modulos": [
+   "text.rs",
+   "inject.rs"
+  ]
+ },
+ {
+  "id": "F19",
+  "fr": "FR-03",
+  "nombre": "Diccionario por voz (grabar la pronunciacion de una palabra)",
+  "toca_sistema": [
+   "audio"
+  ],
+  "modulos": [
+   "pronounce.rs",
+   "commands.rs",
+   "db.rs"
+  ]
+ },
+ {
+  "id": "F20",
+  "fr": "FR-03",
+  "nombre": "Variantes y muestras de pronunciacion por palabra",
+  "toca_sistema": [
+   "ninguno"
+  ],
+  "modulos": [
+   "pronounce.rs",
+   "db.rs"
+  ]
+ },
+ {
+  "id": "F21",
+  "fr": "FR-03",
+  "nombre": "Reconocimiento por huella de voz (DTW)",
+  "toca_sistema": [
+   "ninguno"
+  ],
+  "modulos": [
+   "voiceprint.rs",
+   "text.rs"
+  ]
+ },
+ {
+  "id": "F22",
+  "fr": "FR-03",
+  "nombre": "Borrado automatico de muestras pendientes",
+  "toca_sistema": [
+   "ninguno"
+  ],
+  "modulos": [
+   "pronounce.rs",
+   "db.rs"
+  ]
+ },
+ {
+  "id": "F23",
+  "fr": "FR-04",
+  "nombre": "Motor de voz Parakeet de fabrica",
+  "toca_sistema": [
+   "gpu"
+  ],
+  "modulos": [
+   "asr.rs",
+   "models.rs"
+  ]
+ },
+ {
+  "id": "F24",
+  "fr": "FR-04",
+  "nombre": "Descarga de modelos con verificacion SHA-256",
+  "toca_sistema": [
+   "rutas"
+  ],
+  "modulos": [
+   "modeldl.rs",
+   "models.rs"
+  ]
+ },
+ {
+  "id": "F25",
+  "fr": "FR-04",
+  "nombre": "Catalogo de motores Whisper con filtro de CPU y VRAM",
+  "toca_sistema": [
+   "gpu"
+  ],
+  "modulos": [
+   "whisper.rs",
+   "models.rs",
+   "commands.rs"
+  ]
+ },
+ {
+  "id": "F26",
+  "fr": "FR-04",
+  "nombre": "Cambiar de motor (Usar y recarga)",
+  "toca_sistema": [
+   "gpu"
+  ],
+  "modulos": [
+   "asr.rs",
+   "whisper.rs",
+   "commands.rs"
+  ]
+ },
+ {
+  "id": "F27",
+  "fr": "FR-04",
+  "nombre": "Deteccion de modelos ya presentes en disco",
+  "toca_sistema": [
+   "rutas"
+  ],
+  "modulos": [
+   "modeldl.rs",
+   "models.rs"
+  ]
+ },
+ {
+  "id": "F28",
+  "fr": "FR-04",
+  "nombre": "Reconocimiento con diccionario como texto previo",
+  "toca_sistema": [
+   "ninguno"
+  ],
+  "modulos": [
+   "whisper.rs",
+   "asr.rs"
+  ]
+ },
+ {
+  "id": "F29",
+  "fr": "FR-05",
+  "nombre": "Activar la IA local (Ollama) en un boton",
+  "toca_sistema": [
+   "ollama",
+   "instalador"
+  ],
+  "modulos": [
+   "aisetup.rs",
+   "ollama.rs"
+  ]
+ },
+ {
+  "id": "F30",
+  "fr": "FR-05",
+  "nombre": "Verificacion de firma del instalador de Ollama",
+  "toca_sistema": [
+   "instalador"
+  ],
+  "modulos": [
+   "aisetup.rs"
+  ]
+ },
+ {
+  "id": "F31",
+  "fr": "FR-05",
+  "nombre": "Ollama solo en este equipo (loopback) y arranque oculto",
+  "toca_sistema": [
+   "ollama"
+  ],
+  "modulos": [
+   "ollama.rs",
+   "aisetup.rs"
+  ]
+ },
+ {
+  "id": "F32",
+  "fr": "FR-05",
+  "nombre": "Cortacircuitos del pulido si Ollama falla",
+  "toca_sistema": [
+   "ollama"
+  ],
+  "modulos": [
+   "polish.rs",
+   "ollama.rs"
+  ]
+ },
+ {
+  "id": "F33",
+  "fr": "FR-05",
+  "nombre": "Pulido de cada dictado con IA local",
+  "toca_sistema": [
+   "ollama"
+  ],
+  "modulos": [
+   "polish.rs",
+   "ollama.rs",
+   "state.rs"
+  ]
+ },
+ {
+  "id": "F34",
+  "fr": "FR-05",
+  "nombre": "Guarda contra invenciones (cifras, enlaces, cuentas)",
+  "toca_sistema": [
+   "ninguno"
+  ],
+  "modulos": [
+   "polish.rs"
+  ]
+ },
+ {
+  "id": "F35",
+  "fr": "FR-05",
+  "nombre": "Deshacer el pulido (texto crudo conservado)",
+  "toca_sistema": [
+   "ninguno"
+  ],
+  "modulos": [
+   "state.rs",
+   "db.rs"
+  ]
+ },
+ {
+  "id": "F36",
+  "fr": "FR-05",
+  "nombre": "Transforms Polish (Alt+Shift+P) y Prompt Engineer con confirmacion Enter",
+  "toca_sistema": [
+   "atajo",
+   "pegado",
+   "ollama"
+  ],
+  "modulos": [
+   "polish.rs",
+   "hotkey.rs",
+   "state.rs",
+   "inject.rs"
+  ]
+ },
+ {
+  "id": "F37",
+  "fr": "FR-06",
+  "nombre": "Flow bar: pildora flotante sin foco sobre la barra de tareas",
+  "toca_sistema": [
+   "ventanas"
+  ],
+  "modulos": [
+   "flowbar.rs",
+   "anclaje.rs"
+  ]
+ },
+ {
+  "id": "F38",
+  "fr": "FR-06",
+  "nombre": "Estados de la pildora (escuchando, transcribiendo, puliendo)",
+  "toca_sistema": [
+   "ventanas"
+  ],
+  "modulos": [
+   "flowbar.rs",
+   "state.rs"
+  ]
+ },
+ {
+  "id": "F39",
+  "fr": "FR-06",
+  "nombre": "Fijar la barra a un monitor y seguir al cursor",
+  "toca_sistema": [
+   "ventanas"
+  ],
+  "modulos": [
+   "flowbar.rs",
+   "anclaje.rs",
+   "commands.rs"
+  ]
+ },
+ {
+  "id": "F40",
+  "fr": "FR-06",
+  "nombre": "Menu contextual de la barra (ocultar 1 hora, microfono, configuracion)",
+  "toca_sistema": [
+   "ventanas",
+   "audio"
+  ],
+  "modulos": [
+   "flowbar.rs",
+   "tray.rs",
+   "commands.rs"
+  ]
+ },
+ {
+  "id": "F41",
+  "fr": "FR-06",
+  "nombre": "Avisos de la barra como tarjeta",
+  "toca_sistema": [
+   "ventanas"
+  ],
+  "modulos": [
+   "flowbar.rs",
+   "state.rs"
+  ]
+ },
+ {
+  "id": "F42",
+  "fr": "FR-07",
+  "nombre": "Deteccion automatica de Zoom, Teams y Meet por uso del microfono",
+  "toca_sistema": [
+   "app_activa",
+   "audio"
+  ],
+  "modulos": [
+   "detect.rs",
+   "auto.rs"
+  ]
+ },
+ {
+  "id": "F43",
+  "fr": "FR-07",
+  "nombre": "Modos de reunion automatica (auto, preguntar, manual)",
+  "toca_sistema": [
+   "app_activa"
+  ],
+  "modulos": [
+   "auto.rs",
+   "detect.rs",
+   "commands.rs"
+  ]
+ },
+ {
+  "id": "F44",
+  "fr": "FR-07",
+  "nombre": "Parada automatica de la reunion al dejar de usar el microfono",
+  "toca_sistema": [
+   "app_activa"
+  ],
+  "modulos": [
+   "auto.rs",
+   "detect.rs",
+   "meeting.rs"
+  ]
+ },
+ {
+  "id": "F45",
+  "fr": "FR-07",
+  "nombre": "Grabacion de reunion por dos pistas (microfono y audio del sistema)",
+  "toca_sistema": [
+   "audio"
+  ],
+  "modulos": [
+   "meeting.rs",
+   "audio.rs"
+  ]
+ },
+ {
+  "id": "F46",
+  "fr": "FR-07",
+  "nombre": "Atajo Win+Alt+M para iniciar o parar una reunion a mano",
+  "toca_sistema": [
+   "atajo"
+  ],
+  "modulos": [
+   "hotkey.rs",
+   "meeting.rs"
+  ]
+ },
+ {
+  "id": "F47",
+  "fr": "FR-07",
+  "nombre": "Transcripcion final con quien dijo que (Tu / Ellos)",
+  "toca_sistema": [
+   "gpu"
+  ],
+  "modulos": [
+   "notes/turns.rs",
+   "segment.rs",
+   "meeting.rs",
+   "voiceprint.rs"
+  ]
+ },
+ {
+  "id": "F48",
+  "fr": "FR-07",
+  "nombre": "Notas de reunion: resumen, tareas, decisiones y citas",
+  "toca_sistema": [
+   "ollama"
+  ],
+  "modulos": [
+   "notes.rs",
+   "summary.rs",
+   "meetingdb.rs"
+  ]
+ },
+ {
+  "id": "F49",
+  "fr": "FR-07",
+  "nombre": "Reintentar el procesado de una reunion",
+  "toca_sistema": [
+   "ninguno"
+  ],
+  "modulos": [
+   "meeting.rs",
+   "commands.rs"
+  ]
+ },
+ {
+  "id": "F50",
+  "fr": "FR-07",
+  "nombre": "Preguntar sobre tus reuniones con IA local",
+  "toca_sistema": [
+   "ollama"
+  ],
+  "modulos": [
+   "notes.rs",
+   "ollama.rs",
+   "meetingdb.rs"
+  ]
+ },
+ {
+  "id": "F51",
+  "fr": "FR-07",
+  "nombre": "Audio de reunion opcional y borrado seguro",
+  "toca_sistema": [
+   "rutas"
+  ],
+  "modulos": [
+   "meeting.rs",
+   "meetingdb.rs"
+  ]
+ },
+ {
+  "id": "F52",
+  "fr": "FR-08",
+  "nombre": "Historial de dictados agrupado por dia con busqueda",
+  "toca_sistema": [
+   "ninguno"
+  ],
+  "modulos": [
+   "db.rs",
+   "commands.rs"
+  ]
+ },
+ {
+  "id": "F53",
+  "fr": "FR-08",
+  "nombre": "Copiar, reproducir y eliminar dictados",
+  "toca_sistema": [
+   "audio"
+  ],
+  "modulos": [
+   "commands.rs",
+   "db.rs"
+  ]
+ },
+ {
+  "id": "F54",
+  "fr": "FR-08",
+  "nombre": "Audio guardado de cada dictado",
+  "toca_sistema": [
+   "rutas",
+   "audio"
+  ],
+  "modulos": [
+   "db.rs",
+   "state.rs",
+   "audio.rs"
+  ]
+ },
+ {
+  "id": "F55",
+  "fr": "FR-08",
+  "nombre": "Reintentar transcripcion de un dictado",
+  "toca_sistema": [
+   "audio"
+  ],
+  "modulos": [
+   "commands.rs",
+   "state.rs",
+   "asr.rs"
+  ]
+ },
+ {
+  "id": "F56",
+  "fr": "FR-08",
+  "nombre": "Retencion del historial y del audio con proteccion al acortar",
+  "toca_sistema": [
+   "ninguno"
+  ],
+  "modulos": [
+   "db.rs",
+   "commands.rs",
+   "main.rs"
+  ]
+ },
+ {
+  "id": "F57",
+  "fr": "FR-08",
+  "nombre": "Estadisticas (palabras, ppm, racha)",
+  "toca_sistema": [
+   "ninguno"
+  ],
+  "modulos": [
+   "db.rs",
+   "commands.rs"
+  ]
+ },
+ {
+  "id": "F58",
+  "fr": "FR-08",
+  "nombre": "Bloc de notas con guardado automatico",
+  "toca_sistema": [
+   "ninguno"
+  ],
+  "modulos": [
+   "db.rs",
+   "commands.rs"
+  ]
+ },
+ {
+  "id": "F59",
+  "fr": "FR-09",
+  "nombre": "Aviso de version nueva y actualizacion con un clic",
+  "toca_sistema": [
+   "actualizador"
+  ],
+  "modulos": [
+   "updater.rs",
+   "commands.rs",
+   "tray.rs"
+  ]
+ },
+ {
+  "id": "F60",
+  "fr": "FR-09",
+  "nombre": "Actualizador automatico con comprobacion de tamano y firma",
+  "toca_sistema": [
+   "actualizador",
+   "rutas"
+  ],
+  "modulos": [
+   "updater.rs",
+   "update_helper.ps1"
+  ]
+ },
+ {
+  "id": "F61",
+  "fr": "FR-09",
+  "nombre": "Aviso si la ultima actualizacion fallo",
+  "toca_sistema": [
+   "actualizador"
+  ],
+  "modulos": [
+   "updater.rs",
+   "main.rs"
+  ]
+ },
+ {
+  "id": "F62",
+  "fr": "FR-09",
+  "nombre": "Instalador sin administrador con el mismo AppId",
+  "toca_sistema": [
+   "instalador"
+  ],
+  "modulos": [
+   "updater.rs",
+   "update_helper.ps1"
+  ]
+ },
+ {
+  "id": "F63",
+  "fr": "FR-10",
+  "nombre": "Base de datos unica local y migraciones versionadas",
+  "toca_sistema": [
+   "rutas"
+  ],
+  "modulos": [
+   "db.rs",
+   "meetingdb.rs"
+  ]
+ },
+ {
+  "id": "F64",
+  "fr": "FR-10",
+  "nombre": "Copia diaria de la base (7 copias)",
+  "toca_sistema": [
+   "rutas"
+  ],
+  "modulos": [
+   "db.rs",
+   "main.rs"
+  ]
+ },
+ {
+  "id": "F65",
+  "fr": "FR-10",
+  "nombre": "Migracion de ajustes antiguos",
+  "toca_sistema": [
+   "ninguno"
+  ],
+  "modulos": [
+   "db.rs"
+  ]
+ },
+ {
+  "id": "F66",
+  "fr": "FR-10",
+  "nombre": "Una sola instancia que enseña el hub abierto",
+  "toca_sistema": [
+   "ventanas",
+   "arranque"
+  ],
+  "modulos": [
+   "main.rs",
+   "tray.rs"
+  ]
+ },
+ {
+  "id": "F67",
+  "fr": "FR-10",
+  "nombre": "Iniciar con el sistema",
+  "toca_sistema": [
+   "arranque"
+  ],
+  "modulos": [
+   "autostart.rs",
+   "commands.rs"
+  ]
+ },
+ {
+  "id": "F68",
+  "fr": "FR-10",
+  "nombre": "Icono de bandeja; cerrar el hub no cierra Pronto",
+  "toca_sistema": [
+   "bandeja",
+   "ventanas"
+  ],
+  "modulos": [
+   "tray.rs",
+   "main.rs"
+  ]
+ },
+ {
+  "id": "F69",
+  "fr": "FR-10",
+  "nombre": "Purga de audio e historial antiguos al arrancar",
+  "toca_sistema": [
+   "rutas"
+  ],
+  "modulos": [
+   "db.rs",
+   "main.rs"
+  ]
+ },
+ {
+  "id": "F70",
+  "fr": "FR-10",
+  "nombre": "Registro de errores local (sin datos del usuario)",
+  "toca_sistema": [
+   "rutas"
+  ],
+  "modulos": [
+   "errlog.rs"
+  ]
+ },
+ {
+  "id": "F71",
+  "fr": "FR-17",
+  "nombre": "Panel claro con menu lateral, configuracion y modo claro/oscuro",
+  "toca_sistema": [
+   "ventanas"
+  ],
+  "modulos": [
+   "commands.rs",
+   "main.rs"
+  ]
+ },
+ {
+  "id": "F72",
+  "fr": "FR-18",
+  "nombre": "Novedades dentro de la app y tarjeta Lo nuevo",
+  "toca_sistema": [
+   "ninguno"
+  ],
+  "modulos": [
+   "commands.rs",
+   "state.rs"
+  ]
+ }
+]
