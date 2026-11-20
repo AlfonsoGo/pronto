@@ -127,7 +127,8 @@ export function soloDePrueba(dir) {
 
 /** Chrome para Playwright (headless): `PRIMERIZO_CHROME` o el de sistema. */
 export function rutaChrome() {
-  const candidatos = [process.env.PRIMERIZO_CHROME, 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe'];
+  const candidatos = [process.env.PRIMERIZO_CHROME, 'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe', 'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+    '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome']; // Mac (kit del amigo)
   return candidatos.find((c) => c && existsSync(c)) ?? null;
 }
 
