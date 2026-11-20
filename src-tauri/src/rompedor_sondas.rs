@@ -260,6 +260,7 @@ fn rompedor_guardar_con_base_ocupada_espera() {
 
 /// Arranque con la base cogida 1 s por otro proceso (fichero abierto sin compartir, o conexión con
 /// `locking_mode=EXCLUSIVE`): `Db::open` espera y abre.
+#[cfg(windows)]
 #[test]
 fn rompedor_arranque_con_base_cogida_espera() {
     use std::os::windows::fs::OpenOptionsExt;
@@ -1136,6 +1137,7 @@ fn rompedor_b_wal_bueno_con_borrado_legitimo_se_aparta() {
 /// restauración o sincronización, o un programa que los tiene abiertos). `guard_foreign_wal` trata
 /// cualquier error que no sea BUSY/LOCKED al leer «la vista con el -wal» como `(0, 0)`, es decir,
 /// como `-wal` ajeno. Se mira qué variantes apartan un `-wal` bueno (datos recientes fuera).
+#[cfg(windows)]
 #[test]
 fn rompedor_b_wal_bueno_con_ficheros_raros() {
     use std::os::windows::fs::OpenOptionsExt;

@@ -56,28 +56,35 @@ pub struct Hotkey {
     pub ctrl: bool,
     pub alt: bool,
     pub shift: bool,
+    /// Windows: tecla Win. Mac: tecla Cmd (⌘).
     pub win: bool,
+    /// Tecla Fn/Globo (solo Mac). Los ajustes guardados antes de existir valen `false`.
+    pub func: bool,
     pub key: Option<String>,
 }
 
 impl Default for Hotkey {
     fn default() -> Self {
-        Self { ctrl: false, alt: false, shift: false, win: false, key: None }
+        Self { ctrl: false, alt: false, shift: false, win: false, func: false, key: None }
     }
 }
 
 impl Hotkey {
     /// Texto legible para avisos: «Win + Alt + Espacio».
     pub fn describe(&self) -> String {
+        let mac = cfg!(target_os = "macos");
         let mut parts: Vec<String> = Vec::new();
+        if self.func {
+            parts.push("fn".into());
+        }
         if self.ctrl {
-            parts.push("Ctrl".into());
+            parts.push(if mac { "Control" } else { "Ctrl" }.into());
         }
         if self.win {
-            parts.push("Win".into());
+            parts.push(if mac { "Cmd" } else { "Win" }.into());
         }
         if self.alt {
-            parts.push("Alt".into());
+            parts.push(if mac { "Opción" } else { "Alt" }.into());
         }
         if self.shift {
             parts.push("Mayús".into());
@@ -86,6 +93,16 @@ impl Hotkey {
             parts.push(if k.eq_ignore_ascii_case("space") { "Espacio".into() } else { k.to_string() });
         }
         parts.join(" + ")
+    }
+}
+
+/// Atajo de fábrica para dictar manteniendo: Win+Alt en Windows; la tecla Fn/Globo en Mac (como
+/// Wispr Flow). Manos libres y reunión son ese mismo atajo más Espacio o M.
+pub fn default_hold_hotkey() -> Hotkey {
+    if cfg!(target_os = "macos") {
+        Hotkey { func: true, ..Hotkey::default() }
+    } else {
+        Hotkey { win: true, alt: true, ..Hotkey::default() }
     }
 }
 
@@ -180,12 +197,12 @@ impl Default for Settings {
     fn default() -> Self {
         let model_dir = crate::modeldl::default_dir();
         Self {
-            hotkey_hold: Hotkey { win: true, alt: true, ..Hotkey::default() },
-            hotkey_hands_free: Hotkey { win: true, alt: true, key: Some("Space".into()), ..Hotkey::default() },
+            hotkey_hold: default_hold_hotkey(),
+            hotkey_hands_free: Hotkey { key: Some("Space".into()), ..default_hold_hotkey() },
             hotkey_paste_last: Hotkey { alt: true, shift: true, key: Some("Z".into()), ..Hotkey::default() },
             hotkey_copy_last: Hotkey { alt: true, shift: true, key: Some("X".into()), ..Hotkey::default() },
             hotkey_transform: default_transform_hotkey(),
-            hotkey_meeting: Hotkey { win: true, alt: true, key: Some("M".into()), ..Hotkey::default() },
+            hotkey_meeting: Hotkey { key: Some("M".into()), ..default_hold_hotkey() },
             meeting_detect: true,
             meeting_auto: MeetingAuto::Auto,
             meeting_auto_confirmed: false,

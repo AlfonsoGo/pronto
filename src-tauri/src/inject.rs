@@ -1,16 +1,34 @@
 //! Salida del texto: portapapeles + `SendInput` Ctrl+V, y detección de la app con foco.
+//!
+//! macOS (`mac/inject.rs`): NSPasteboard + Cmd+V sintético con `CGEventPost`, y la app activa con
+//! NSWorkspace. La lógica de cuándo guardar, pegar y devolver el portapapeles es común.
 
 use parking_lot::Mutex;
 use std::time::{Duration, Instant};
+#[cfg(windows)]
 use windows::core::{w, PWSTR};
+#[cfg(windows)]
 use windows::Win32::Foundation::{CloseHandle, GlobalFree, HANDLE, HGLOBAL, HWND};
+#[cfg(windows)]
 use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, EnumClipboardFormats, GetClipboardData, OpenClipboard, RegisterClipboardFormatW, SetClipboardData};
+#[cfg(windows)]
 use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalSize, GlobalUnlock, GMEM_MOVEABLE, GMEM_ZEROINIT};
+#[cfg(windows)]
 use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
+#[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_EXTENDEDKEY, KEYEVENTF_KEYUP, VIRTUAL_KEY,
 };
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{GetForegroundWindow, GetWindowTextW, GetWindowThreadProcessId};
+
+#[cfg(target_os = "macos")]
+pub use crate::mac::inject::{app_info_of, foreground_app, foreground_window, send_key_events, send_keys};
+#[cfg(target_os = "macos")]
+use crate::mac::inject::{clipboard_seq, key_down, read_clipboard, write_clipboard, write_text, Clip};
+
+/// Atajo de pegar y copiar: Ctrl en Windows, Cmd (que en la tabla común es la tecla «Win») en Mac.
+const SHORTCUT_MOD: u16 = if cfg!(target_os = "macos") { 0x5B } else { 0x11 };
 
 /// Marca (`dwExtraInfo`) de las teclas que inyectamos, para que el hook las ignore.
 pub const MARKER: usize = 0x5052_4F32; // «PRO2»
@@ -46,12 +64,14 @@ impl AppInfo {
     }
 }
 
+#[cfg(windows)]
 /// Ejecutable y título de la ventana con foco. Nunca falla: devuelve vacíos si no puede.
 pub fn foreground_app() -> AppInfo {
     // SAFETY: GetForegroundWindow no tiene precondiciones.
     app_info_of(unsafe { GetForegroundWindow() })
 }
 
+#[cfg(windows)]
 /// La ventana con foco como número (0 = ninguna). La vista previa de un Transform (decisión A de
 /// Txonso, 23-oct) recuerda dónde se seleccionó el texto y solo pega si esa ventana sigue delante:
 /// pegar en otra (p. ej. una terminal) con un Enter que era para ella sería peor que no pegar.
@@ -60,6 +80,7 @@ pub fn foreground_window() -> isize {
     unsafe { GetForegroundWindow() }.0 as isize
 }
 
+#[cfg(windows)]
 /// Ejecutable y título de una ventana cualquiera (vacíos si no se puede leer).
 pub fn app_info_of(hwnd: HWND) -> AppInfo {
     // SAFETY: llamadas Win32 sin precondiciones; los búferes viven durante la llamada.
@@ -105,6 +126,7 @@ impl KeyEvent {
     }
 }
 
+#[cfg(windows)]
 /// Inyecta eventos marcados como propios, en un solo `SendInput` (el orden queda garantizado).
 pub fn send_key_events(keys: &[KeyEvent]) {
     let inputs: Vec<INPUT> = keys
@@ -132,6 +154,7 @@ pub fn send_key_events(keys: &[KeyEvent]) {
     }
 }
 
+#[cfg(windows)]
 /// Inyecta una secuencia de teclas `(vk, soltar)` marcadas como propias.
 pub fn send_keys(keys: &[(u16, bool)]) {
     let inputs: Vec<INPUT> = keys
@@ -156,6 +179,7 @@ pub fn send_keys(keys: &[(u16, bool)]) {
     }
 }
 
+#[cfg(windows)]
 fn key_down(vk: u32) -> bool {
     // SAFETY: GetAsyncKeyState no tiene precondiciones.
     unsafe { (GetAsyncKeyState(vk as i32) as u16) & 0x8000 != 0 }
@@ -174,20 +198,31 @@ fn wait_modifiers_released(max: Duration) {
 // ------------------------------------------------------------------ portapapeles entero
 
 // Formatos estándar (winuser.h).
+#[cfg(windows)]
 const CF_BITMAP: u32 = 2;
+#[cfg(windows)]
 const CF_METAFILEPICT: u32 = 3;
+#[cfg(windows)]
 const CF_PALETTE: u32 = 9;
+#[cfg(windows)]
 const CF_UNICODETEXT: u32 = 13;
+#[cfg(windows)]
 const CF_ENHMETAFILE: u32 = 14;
+#[cfg(windows)]
 const CF_OWNERDISPLAY: u32 = 0x80;
+#[cfg(windows)]
 const CF_DSPBITMAP: u32 = 0x82;
+#[cfg(windows)]
 const CF_DSPMETAFILEPICT: u32 = 0x83;
+#[cfg(windows)]
 const CF_DSPENHMETAFILE: u32 = 0x8E;
 
+#[cfg(windows)]
 /// Contenido del portapapeles: cada formato con los bytes de su memoria global, en el orden en que
 /// Windows los enumera (del más rico al más pobre).
 type Clip = Vec<(u32, Vec<u8>)>;
 
+#[cfg(windows)]
 /// ¿El formato se guarda copiando su HGLOBAL? No lo son los de handle GDI o de metarchivo (Windows
 /// sintetiza CF_BITMAP y compañía desde CF_DIB, que sí se guarda), ni los privados y de «owner
 /// display», que solo entiende la app que los puso.
@@ -198,6 +233,7 @@ fn copyable_format(f: u32) -> bool {
     )
 }
 
+#[cfg(windows)]
 /// Guarda del portapapeles cada formato copiable (`read` lee sus bytes; `None` = no se pudo).
 fn save_formats(available: impl IntoIterator<Item = u32>, mut read: impl FnMut(u32) -> Option<Vec<u8>>) -> Clip {
     let mut out: Clip = Vec::new();
@@ -211,11 +247,13 @@ fn save_formats(available: impl IntoIterator<Item = u32>, mut read: impl FnMut(u
     out
 }
 
+#[cfg(windows)]
 /// Vuelve a poner cada formato guardado (`write` lo escribe). Devuelve los que no se pudieron.
 fn restore_formats(saved: &[(u32, Vec<u8>)], mut write: impl FnMut(u32, &[u8]) -> bool) -> Vec<u32> {
     saved.iter().filter(|(f, bytes)| !write(*f, bytes)).map(|(f, _)| *f).collect()
 }
 
+#[cfg(windows)]
 /// Lo que Pronto pone en el portapapeles: el texto (UTF-16 con su NUL) y las marcas (`marks`, los
 /// formatos registrados de `exclusion_marks`) con un DWORD 0, para que no entre en el historial
 /// Win+V, no suba al portapapeles en la nube ni lo procesen los monitores (regla 1, M4 / PRNT-39).
@@ -227,6 +265,7 @@ fn text_formats(text: &str, marks: &[u32]) -> Clip {
     clip
 }
 
+#[cfg(windows)]
 /// Formatos registrados de exclusión del historial, la nube y los monitores del portapapeles.
 fn exclusion_marks() -> Vec<u32> {
     // SAFETY: cadenas literales terminadas en NUL.
@@ -240,10 +279,12 @@ fn exclusion_marks() -> Vec<u32> {
     ids.into_iter().filter(|&id| id != 0).collect()
 }
 
+#[cfg(windows)]
 /// Portapapeles abierto; se cierra al soltarlo. Reintenta un poco: otra app puede tenerlo abierto
 /// un instante (igual que arboard).
 struct OpenClip;
 
+#[cfg(windows)]
 impl OpenClip {
     fn new() -> Result<Self, String> {
         for i in 0..10u64 {
@@ -257,6 +298,7 @@ impl OpenClip {
     }
 }
 
+#[cfg(windows)]
 impl Drop for OpenClip {
     fn drop(&mut self) {
         // SAFETY: lo abrimos en `new`.
@@ -264,6 +306,7 @@ impl Drop for OpenClip {
     }
 }
 
+#[cfg(windows)]
 /// Bytes de la memoria global de un formato. SAFETY: con el portapapeles abierto y `f` copiable.
 unsafe fn read_hglobal(f: u32) -> Option<Vec<u8>> {
     let h = unsafe { GetClipboardData(f) }.ok()?;
@@ -282,6 +325,7 @@ unsafe fn read_hglobal(f: u32) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
+#[cfg(windows)]
 /// Pone `bytes` como formato `f` en una memoria global nueva. SAFETY: con el portapapeles abierto y vaciado.
 unsafe fn write_hglobal(f: u32, bytes: &[u8]) -> bool {
     // Un formato de 0 bytes se guarda en un bloque de 1 byte (GlobalAlloc no da 0): a cero, no con
@@ -303,6 +347,7 @@ unsafe fn write_hglobal(f: u32, bytes: &[u8]) -> bool {
     false
 }
 
+#[cfg(windows)]
 /// Todo lo que hay en el portapapeles (`None` si no se pudo abrir: entonces no se restaura nada).
 fn read_clipboard() -> Option<Clip> {
     let _open = OpenClip::new().ok()?;
@@ -320,6 +365,7 @@ fn read_clipboard() -> Option<Clip> {
     Some(save_formats(formats, |f| unsafe { read_hglobal(f) }))
 }
 
+#[cfg(windows)]
 /// Sustituye el portapapeles por `clip` (vacío = lo deja vacío). Devuelve los formatos que no entraron.
 fn write_clipboard(clip: &[(u32, Vec<u8>)]) -> Result<Vec<u32>, String> {
     let _open = OpenClip::new()?;
@@ -329,6 +375,7 @@ fn write_clipboard(clip: &[(u32, Vec<u8>)]) -> Result<Vec<u32>, String> {
     Ok(restore_formats(clip, |f, bytes| unsafe { write_hglobal(f, bytes) }))
 }
 
+#[cfg(windows)]
 /// Pone el texto de Pronto con sus marcas de exclusión.
 fn write_text(text: &str) -> Result<(), String> {
     let failed = write_clipboard(&text_formats(text, &exclusion_marks()))?;
@@ -419,7 +466,10 @@ pub fn paste_text(text: &str) -> Result<(), String> {
             .collect();
         eprintln!("[inject] Ctrl+V -> {} «{}»; teclas abajo: {held:?}", fg.exe, fg.title);
     }
-    send_keys(&[(0x11, false), (0x56, false), (0x56, true), (0x11, true)]);
+    // Mac: si la persona pulsó la Flow bar, Pronto quedó delante; se devuelve el foco a su app.
+    #[cfg(target_os = "macos")]
+    crate::mac::inject::ensure_target_front();
+    send_keys(&[(SHORTCUT_MOD, false), (0x56, false), (0x56, true), (SHORTCUT_MOD, true)]);
 
     let chars = text.chars().count();
     if chars >= KEEP_IN_CLIPBOARD_CHARS {
@@ -456,25 +506,37 @@ mod tests {
     }
 
     // Portapapeles de mentira: lista de (formato, bytes). Los tests no tocan el portapapeles real.
+    #[cfg(windows)]
     const CF_TEXT: u32 = 1;
+    #[cfg(windows)]
     const CF_OEMTEXT: u32 = 7;
+    #[cfg(windows)]
     const CF_DIB: u32 = 8;
+    #[cfg(windows)]
     const CF_HDROP: u32 = 15;
+    #[cfg(windows)]
     const CF_LOCALE: u32 = 16;
+    #[cfg(windows)]
     const CF_DIBV5: u32 = 17;
+    #[cfg(windows)]
     const HTML_FORMAT: u32 = 0xC0F1; // «HTML Format» (registrado: el número cambia por sesión)
+    #[cfg(windows)]
     const SHELL_IDLIST: u32 = 0xC0A2; // «Shell IDList Array», el que pone el Explorador con los ficheros
+    #[cfg(windows)]
     const EXCLUDE_MONITOR: u32 = 0xC1D3; // «ExcludeClipboardContentFromMonitorProcessing» de un gestor de contraseñas
 
+    #[cfg(windows)]
     fn fake(formats: &[u32]) -> Clip {
         formats.iter().map(|&f| (f, format!("datos de {f:#X}").into_bytes())).collect()
     }
 
+    #[cfg(windows)]
     fn save_from(clip: &Clip) -> Clip {
         save_formats(clip.iter().map(|(f, _)| *f), |f| clip.iter().find(|(g, _)| *g == f).map(|(_, b)| b.clone()))
     }
 
     #[test]
+    #[cfg(windows)]
     fn se_guardan_y_restauran_todos_los_formatos_de_memoria() {
         // Ficheros copiados en el Explorador, una página web (HTML) y una contraseña con su marca.
         let user = fake(&[SHELL_IDLIST, CF_HDROP, HTML_FORMAT, CF_UNICODETEXT, CF_LOCALE, CF_TEXT, CF_OEMTEXT, EXCLUDE_MONITOR]);
@@ -490,6 +552,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn los_formatos_de_handle_se_saltan_porque_windows_los_sintetiza() {
         // Una imagen: CF_DIB (memoria) y CF_BITMAP / CF_PALETTE / metarchivos (handles). Windows
         // vuelve a sintetizar los de handle desde CF_DIB.
@@ -502,6 +565,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn un_formato_que_no_se_restaura_se_cuenta() {
         let saved = fake(&[CF_HDROP, CF_UNICODETEXT]);
         assert_eq!(restore_formats(&saved, |f, _| f != CF_HDROP), [CF_HDROP]);
@@ -509,6 +573,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(windows)]
     fn el_texto_de_pronto_no_entra_en_el_historial_ni_en_la_nube() {
         let marks = [0xC101, 0xC102, 0xC103];
         let clip = text_formats("hola ñ", &marks);
@@ -542,11 +607,17 @@ pub fn restore_pending() {
     }
 }
 
+/// Número que cambia cada vez que alguien escribe en el portapapeles.
+#[cfg(windows)]
+fn clipboard_seq() -> u32 {
+    // SAFETY: sin precondiciones.
+    unsafe { windows::Win32::System::DataExchange::GetClipboardSequenceNumber() }
+}
+
 /// Copia la selección actual de la app con foco (Ctrl+C) y devuelve su texto. Guarda antes el
 /// portapapeles del usuario como «original»: lo restaura `paste_text` tras pegar, o
 /// `restore_pending` si el flujo se aborta.
 pub fn capture_selection() -> Result<String, String> {
-    use windows::Win32::System::DataExchange::GetClipboardSequenceNumber;
     let mut cb = arboard::Clipboard::new().map_err(|e| format!("portapapeles no disponible: {e}"))?;
     let seeded = {
         let mut pending = PENDING.lock();
@@ -559,17 +630,15 @@ pub fn capture_selection() -> Result<String, String> {
             false
         }
     };
-    // SAFETY: sin precondiciones.
-    let before = unsafe { GetClipboardSequenceNumber() };
+    let before = clipboard_seq();
     wait_modifiers_released(Duration::from_millis(2000));
-    send_keys(&[(0x11, false), (0x43, false), (0x43, true), (0x11, true)]);
+    send_keys(&[(SHORTCUT_MOD, false), (0x43, false), (0x43, true), (SHORTCUT_MOD, true)]);
 
     // Esperamos a que la app publique la selección: lo sabemos porque cambia el número de secuencia.
     let t0 = Instant::now();
     let mut changed = false;
     while t0.elapsed() < Duration::from_millis(900) {
-        // SAFETY: sin precondiciones.
-        if unsafe { GetClipboardSequenceNumber() } != before {
+        if clipboard_seq() != before {
             changed = true;
             break;
         }

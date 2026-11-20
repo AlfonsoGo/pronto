@@ -140,7 +140,7 @@ impl WhisperModel {
 
     /// ¿Se puede usar en este PC? `Err` dice por qué no.
     pub fn availability(&self) -> Result<(), String> {
-        if !std::arch::is_x86_feature_detected!("avx2") {
+        if !cpu_supported() {
             return Err("El procesador no tiene AVX2".into());
         }
         match gpu() {
@@ -156,6 +156,15 @@ pub const MAX_CHUNK_SECS: usize = 28;
 /// Un segmento con más probabilidad de «no hay voz» que esto se descarta.
 const NO_SPEECH_MAX: f32 = 0.6;
 
+/// ¿Puede la CPU con el whisper.cpp de esta compilación? En Windows se compila para AVX2.
+#[cfg(windows)]
+fn cpu_supported() -> bool {
+    std::arch::is_x86_feature_detected!("avx2")
+}
+
+#[cfg(target_os = "macos")]
+use crate::mac::whisper::cpu_supported;
+
 /// `%APPDATA%\Pronto2\models\whisper`.
 pub fn model_dir() -> PathBuf {
     dirs::data_dir().unwrap_or_default().join("Pronto2").join("models").join("whisper")
@@ -165,6 +174,8 @@ pub fn model_dir() -> PathBuf {
 /// `vulkan-1.dll` va con carga diferida (`build.rs`): se comprueba que exista antes de tocar Vulkan,
 /// para que Pronto arranque igual en un PC sin controlador Vulkan.
 /// Se mira una vez por arranque (enumerar Vulkan tarda).
+/// En Mac, la GPU de Apple Silicon por Metal (`mac/whisper.rs`).
+#[cfg(windows)]
 pub fn gpu() -> Option<(String, u64)> {
     static GPU: std::sync::OnceLock<Option<(String, u64)>> = std::sync::OnceLock::new();
     GPU.get_or_init(|| {
@@ -176,6 +187,10 @@ pub fn gpu() -> Option<(String, u64)> {
     .clone()
 }
 
+#[cfg(target_os = "macos")]
+pub use crate::mac::whisper::gpu;
+
+#[cfg(windows)]
 fn vulkan_present() -> bool {
     use windows::core::w;
     use windows::Win32::Foundation::FreeLibrary;
@@ -762,11 +777,13 @@ mod tests {
 
     /// Memoria de vídeo libre de la GPU de `gpu()` en MB (presupuesto de Vulkan: cuenta todos los
     /// procesos, así que Ollama u otra app que cargue algo a la vez ensucia la medida).
+    #[cfg(windows)]
     fn vram_free_mb() -> f64 {
         whisper_rs::vulkan::list_devices().into_iter().max_by_key(|d| d.vram.total).map_or(0.0, |d| d.vram.free as f64 / 1_048_576.0)
     }
 
     /// Memoria del proceso en MB: (privada, working set).
+    #[cfg(windows)]
     fn ram_mb() -> (f64, f64) {
         use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX};
         use windows::Win32::System::Threading::GetCurrentProcess;
@@ -783,6 +800,7 @@ mod tests {
     /// (ids separados por comas; por defecto los que estén descargados). Audio: el primer WAV de
     /// `PRONTO_WAVS` o, si no hay, 28 s de ruido suave.
     /// `cargo test --release banco_memoria -- --ignored --nocapture --test-threads=1`
+    #[cfg(windows)]
     #[test]
     #[ignore]
     fn banco_memoria() {

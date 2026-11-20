@@ -4,6 +4,9 @@
 //! El callback hace lo mínimo (decidir y mandar un evento por canal): Windows desinstala los
 //! hooks que tardan más de ~300 ms, y la transcripción nunca debe correr aquí. Toda la lógica de
 //! tiempos (debounce, doble toque) vive en el controlador (`state.rs`), no en el hook.
+//!
+//! macOS: el gancho es un `CGEventTap` (`mac/hotkey.rs`) que traduce cada tecla al código virtual de
+//! Windows y llama a [`on_key`]; toda la lógica de abajo es común. La tecla Fn/Globo es [`VK_FN`].
 
 use crate::inject::{foreground_window, send_key_events, KeyEvent, MARKER};
 use crate::models::{Hotkey, Settings};
@@ -12,9 +15,15 @@ use parking_lot::{Mutex, RwLock};
 use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
+#[cfg(target_os = "macos")]
+use crate::mac::hotkey::{async_down, mask_release, start_hook};
+#[cfg(windows)]
 use windows::Win32::Foundation::{HINSTANCE, LPARAM, LRESULT, WPARAM};
+#[cfg(windows)]
 use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+#[cfg(windows)]
 use windows::Win32::UI::Input::KeyboardAndMouse::GetAsyncKeyState;
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
     CallNextHookEx, DispatchMessageW, GetMessageW, SetWindowsHookExW, TranslateMessage, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, MSG,
     WH_KEYBOARD_LL, WM_KEYDOWN, WM_KEYUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
@@ -52,14 +61,16 @@ struct Mods {
     alt: bool,
     shift: bool,
     win: bool,
+    /// Tecla Fn/Globo (solo existe en Mac: en Windows la gestiona el teclado y nunca llega).
+    func: bool,
 }
 
 impl Mods {
     fn contains(&self, o: &Mods) -> bool {
-        (!o.ctrl || self.ctrl) && (!o.alt || self.alt) && (!o.shift || self.shift) && (!o.win || self.win)
+        (!o.ctrl || self.ctrl) && (!o.alt || self.alt) && (!o.shift || self.shift) && (!o.win || self.win) && (!o.func || self.func)
     }
     fn any(&self) -> bool {
-        self.ctrl || self.alt || self.shift || self.win
+        self.ctrl || self.alt || self.shift || self.win || self.func
     }
 }
 
@@ -112,7 +123,10 @@ static TX: OnceLock<Sender<TimedEvent>> = OnceLock::new();
 
 const VK_ESCAPE: u32 = 0x1B;
 const VK_RETURN: u32 = 0x0D;
+#[cfg(windows)]
 const VK_NEUTRAL: u16 = 0xE8; // tecla sin asignar: sirve para «interrumpir» Win/Alt
+/// Código propio para la tecla Fn/Globo del Mac (fuera del rango de Windows, que llega a 0xFF).
+pub const VK_FN: u32 = 0xFF00;
 
 /// Mientras hay una grabación en curso, Esc se traga y cancela; fuera de ella pasa intacta.
 pub fn set_recording(on: bool) {
@@ -167,7 +181,7 @@ pub fn set_config(s: &Settings) {
 }
 
 fn combo(h: &Hotkey) -> Combo {
-    let mods = Mods { ctrl: h.ctrl, alt: h.alt, shift: h.shift, win: h.win };
+    let mods = Mods { ctrl: h.ctrl, alt: h.alt, shift: h.shift, win: h.win, func: h.func };
     match h.key.as_deref().map(str::trim).filter(|k| !k.is_empty()) {
         None => Combo { mods, key: None, valid: mods.any() },
         Some(name) => match vk_from_name(name) {
@@ -184,6 +198,10 @@ fn combo(h: &Hotkey) -> Combo {
 pub fn vk_from_name(name: &str) -> Option<u32> {
     let n = name.trim();
     let upper = n.to_ascii_uppercase();
+    if upper == "FN" || upper == "GLOBE" {
+        // Solo el Mac recibe la tecla Fn; en Windows un atajo con ella se desactiva.
+        return cfg!(target_os = "macos").then_some(VK_FN);
+    }
     if upper.chars().count() == 1 {
         let c = upper.chars().next()?;
         if c.is_ascii_uppercase() || c.is_ascii_digit() {
@@ -230,6 +248,7 @@ pub fn vk_to_name(vk: u32) -> Option<String> {
     Some(match vk {
         0x41..=0x5A | 0x30..=0x39 => char::from_u32(vk)?.to_string(),
         0x70..=0x87 => format!("F{}", vk - 0x6F),
+        VK_FN => "Fn".into(),
         0x20 => "Space".into(),
         0x0D => "Enter".into(),
         0x09 => "Tab".into(),
@@ -270,6 +289,21 @@ pub fn start(tx: Sender<TimedEvent>) {
     if TX.set(tx).is_err() {
         return;
     }
+    start_hook();
+}
+
+/// Una tecla del gancho (Windows o Mac, ya con código virtual de Windows). Devuelve `true` si hay
+/// que tragársela. Nunca entra en pánico: el gancho no puede caerse.
+pub(crate) fn on_key(ev: KeyEvent) -> bool {
+    std::panic::catch_unwind(|| {
+        // La captura va primero y no depende de la configuración.
+        capture_event(ev.vk as u32, !ev.up).unwrap_or_else(|| handle(ev))
+    })
+    .unwrap_or(false)
+}
+
+#[cfg(windows)]
+fn start_hook() {
     let spawned = std::thread::Builder::new().name("pronto-hook".into()).spawn(|| unsafe {
         let module = GetModuleHandleW(None).map(|m| HINSTANCE(m.0)).ok();
         let hook = match SetWindowsHookExW(WH_KEYBOARD_LL, Some(hook_proc), module, 0) {
@@ -308,6 +342,7 @@ pub fn capture(timeout: Duration) -> Result<Hotkey, String> {
     result
 }
 
+#[cfg(windows)]
 unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -> LRESULT {
     if code == 0 {
         // SAFETY: con HC_ACTION, lparam apunta a un KBDLLHOOKSTRUCT válido durante la llamada.
@@ -324,12 +359,7 @@ unsafe extern "system" fn hook_proc(code: i32, wparam: WPARAM, lparam: LPARAM) -
                     extended: kb.flags.0 & LLKHF_EXTENDED.0 != 0,
                     up: !down,
                 };
-                let swallow = std::panic::catch_unwind(|| {
-                    // La captura va primero y no depende de la configuración.
-                    capture_event(kb.vkCode, down).unwrap_or_else(|| handle(ev))
-                })
-                .unwrap_or(false);
-                if swallow {
+                if on_key(ev) {
                     return LRESULT(1);
                 }
             }
@@ -342,11 +372,13 @@ const GROUP_WIN: [u32; 2] = [0x5B, 0x5C];
 const GROUP_ALT: [u32; 3] = [0xA4, 0xA5, 0x12];
 const GROUP_CTRL: [u32; 3] = [0xA2, 0xA3, 0x11];
 const GROUP_SHIFT: [u32; 3] = [0xA0, 0xA1, 0x10];
+const GROUP_FN: [u32; 1] = [VK_FN];
 
 fn is_modifier(vk: u32) -> bool {
-    GROUP_WIN.contains(&vk) || GROUP_ALT.contains(&vk) || GROUP_CTRL.contains(&vk) || GROUP_SHIFT.contains(&vk)
+    GROUP_WIN.contains(&vk) || GROUP_ALT.contains(&vk) || GROUP_CTRL.contains(&vk) || GROUP_SHIFT.contains(&vk) || GROUP_FN.contains(&vk)
 }
 
+#[cfg(windows)]
 fn async_down(vk: u32) -> bool {
     // SAFETY: GetAsyncKeyState no tiene precondiciones.
     unsafe { (GetAsyncKeyState(vk as i32) as u16) & 0x8000 != 0 }
@@ -355,12 +387,13 @@ fn async_down(vk: u32) -> bool {
 /// Estado de modificadores con el evento actual aplicado (el sistema aún no lo refleja).
 fn current_mods(event_vk: u32, event_down: bool) -> Mods {
     let group = |g: &[u32]| g.iter().any(|&v| if v == event_vk { event_down } else { async_down(v) });
-    Mods { ctrl: group(&GROUP_CTRL), alt: group(&GROUP_ALT), shift: group(&GROUP_SHIFT), win: group(&GROUP_WIN) }
+    Mods { ctrl: group(&GROUP_CTRL), alt: group(&GROUP_ALT), shift: group(&GROUP_SHIFT), win: group(&GROUP_WIN), func: group(&GROUP_FN) }
 }
 
 /// Marca que la próxima liberación de Alt/Win hay que enmascararla (ver [`mask_release`]).
 fn neutralize(hs: &mut HookState, mods: &Mods) {
-    if mods.win || mods.alt {
+    // El menú Inicio y el modo menú de Alt son cosa de Windows: en Mac no hay nada que enmascarar.
+    if cfg!(windows) && (mods.win || mods.alt) {
         hs.mask_pending = true;
     }
 }
@@ -373,6 +406,7 @@ fn neutralize(hs: &mut HookState, mods: &Mods) {
 /// dentro del hook no lo garantiza: el orden con el evento que se está procesando queda en el
 /// aire. Así que la liberación real se traga y otro hilo inyecta, en un solo `SendInput`,
 /// `E8↓ E8↑ tecla↑`: el orden queda fijado. Las inyectadas llevan `MARKER` y este hook las ignora.
+#[cfg(windows)]
 fn mask_release(ev: KeyEvent) {
     let spawned = std::thread::Builder::new().name("pronto-mask".into()).spawn(move || {
         send_key_events(&[KeyEvent::vk(VK_NEUTRAL, false), KeyEvent::vk(VK_NEUTRAL, true), ev]);
@@ -386,7 +420,7 @@ fn mask_release(ev: KeyEvent) {
 
 fn mods_from_down(down: &[u32]) -> Mods {
     let has = |g: &[u32]| down.iter().any(|v| g.contains(v));
-    Mods { ctrl: has(&GROUP_CTRL), alt: has(&GROUP_ALT), shift: has(&GROUP_SHIFT), win: has(&GROUP_WIN) }
+    Mods { ctrl: has(&GROUP_CTRL), alt: has(&GROUP_ALT), shift: has(&GROUP_SHIFT), win: has(&GROUP_WIN), func: has(&GROUP_FN) }
 }
 
 /// `Some(tragar)` si hay una captura en curso (y el evento es suyo); `None` si no la hay.
@@ -408,7 +442,7 @@ fn capture_event(vk: u32, down: bool) -> Option<bool> {
             cap.down.push(vk);
         }
         let m = mods_from_down(&cap.down);
-        cap.peak = Mods { ctrl: cap.peak.ctrl || m.ctrl, alt: cap.peak.alt || m.alt, shift: cap.peak.shift || m.shift, win: cap.peak.win || m.win };
+        cap.peak = Mods { ctrl: cap.peak.ctrl || m.ctrl, alt: cap.peak.alt || m.alt, shift: cap.peak.shift || m.shift, win: cap.peak.win || m.win, func: cap.peak.func || m.func };
         if !is_modifier(vk) {
             cap.key = Some(vk);
         }
@@ -420,10 +454,10 @@ fn capture_event(vk: u32, down: bool) -> Option<bool> {
     if cap.down.is_empty() && (cap.peak.any() || cap.key.is_some()) {
         let result = match cap.key {
             Some(k) => match vk_to_name(k) {
-                Some(name) => Ok(Hotkey { ctrl: cap.peak.ctrl, alt: cap.peak.alt, shift: cap.peak.shift, win: cap.peak.win, key: Some(name) }),
+                Some(name) => Ok(Hotkey { ctrl: cap.peak.ctrl, alt: cap.peak.alt, shift: cap.peak.shift, win: cap.peak.win, func: cap.peak.func, key: Some(name) }),
                 None => Err("Tecla no admitida".to_string()),
             },
-            None => Ok(Hotkey { ctrl: cap.peak.ctrl, alt: cap.peak.alt, shift: cap.peak.shift, win: cap.peak.win, key: None }),
+            None => Ok(Hotkey { ctrl: cap.peak.ctrl, alt: cap.peak.alt, shift: cap.peak.shift, win: cap.peak.win, func: cap.peak.func, key: None }),
         };
         let _ = cap.tx.send(result);
         *guard = None;
@@ -573,6 +607,32 @@ mod tests {
     }
 
     #[test]
+    #[cfg(target_os = "macos")]
+    fn combos_por_defecto_en_mac() {
+        // Mac: mantener Fn/Globo para dictar, Fn+Espacio manos libres, Fn+M reunión (como Wispr Flow).
+        let s = Settings::default();
+        let hold = combo(&s.hotkey_hold);
+        assert!(hold.valid && hold.key.is_none() && hold.mods.func && !hold.mods.win && !hold.mods.alt);
+        let hf = combo(&s.hotkey_hands_free);
+        assert!(hf.mods.func && hf.key == Some(0x20));
+        let m = combo(&s.hotkey_meeting);
+        assert!(m.mods.func && m.key == Some(0x4D));
+    }
+
+    #[test]
+    fn fn_solo_existe_en_mac() {
+        assert_eq!(vk_from_name("Fn"), cfg!(target_os = "macos").then_some(VK_FN));
+        assert_eq!(vk_to_name(VK_FN).as_deref(), Some("Fn"));
+        // Fn es un modificador: mantenerla sola es un atajo válido de «mantener».
+        assert!(is_modifier(VK_FN));
+        let h = Hotkey { func: true, ..Hotkey::default() };
+        let c = combo(&h);
+        assert!(c.valid && c.mods.func && c.key.is_none());
+        assert!(mods_from_down(&[VK_FN, 0x20]).func);
+    }
+
+    #[test]
+    #[cfg(windows)]
     fn combos_por_defecto() {
         let s = Settings::default();
         let hold = combo(&s.hotkey_hold);

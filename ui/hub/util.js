@@ -87,6 +87,8 @@ export function shortDate(iso) {
 export const plural = (n, one, other) => (n === 1 ? one : other);
 
 // ------------------------------------------------------------------ atajos
+// Pronto en Mac: el WebView de Safari se presenta como «Macintosh». En la maqueta, ?mac lo simula.
+export const IS_MAC = /Macintosh|Mac OS X/.test(navigator.userAgent) || new URLSearchParams(location.search).has('mac');
 const KEY_LABEL = {
   Space: () => t('Espacio'), Escape: () => 'Esc', Enter: () => 'Enter', Tab: () => 'Tab', Backspace: () => t('Retroceso'),
   ArrowUp: () => '↑', ArrowDown: () => '↓', ArrowLeft: () => '←', ArrowRight: () => '→',
@@ -94,10 +96,19 @@ const KEY_LABEL = {
 export function hotkeyParts(hk) {
   if (!hk) return [];
   const p = [];
-  if (hk.ctrl) p.push('Ctrl');
-  if (hk.win) p.push('Win');
-  if (hk.alt) p.push('Alt');
-  if (hk.shift) p.push('Shift');
+  if (IS_MAC) {
+    // Orden y símbolos de macOS: fn ⌃ ⌥ ⇧ ⌘ (en el modelo, «win» es la tecla Cmd).
+    if (hk.func) p.push('fn');
+    if (hk.ctrl) p.push('⌃');
+    if (hk.alt) p.push('⌥');
+    if (hk.shift) p.push('⇧');
+    if (hk.win) p.push('⌘');
+  } else {
+    if (hk.ctrl) p.push('Ctrl');
+    if (hk.win) p.push('Win');
+    if (hk.alt) p.push('Alt');
+    if (hk.shift) p.push('Shift');
+  }
   if (hk.key) p.push(KEY_LABEL[hk.key] ? KEY_LABEL[hk.key]() : String(hk.key).length === 1 ? String(hk.key).toUpperCase() : hk.key);
   return p;
 }
@@ -106,7 +117,7 @@ export function keysHtml(hk) {
   return `<span class="keys">${hotkeyParts(hk).map((k) => `<kbd>${esc(k)}</kbd>`).join('<span class="plus">+</span>')}</span>`;
 }
 export const sameHotkey = (a, b) =>
-  !!a && !!b && !!a.ctrl === !!b.ctrl && !!a.alt === !!b.alt && !!a.shift === !!b.shift && !!a.win === !!b.win && (a.key || null) === (b.key || null);
+  !!a && !!b && !!a.ctrl === !!b.ctrl && !!a.alt === !!b.alt && !!a.shift === !!b.shift && !!a.win === !!b.win && !!a.func === !!b.func && (a.key || null) === (b.key || null);
 
 // ------------------------------------------------------------------ toasts
 let toastBox;

@@ -12,26 +12,35 @@ use crate::{commands, ollama};
 use parking_lot::Mutex;
 use serde::Serialize;
 use serde_json::{json, Value};
+#[cfg_attr(not(windows), allow(unused_imports))]
 use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read, Write};
+#[cfg(windows)]
 use std::os::windows::ffi::OsStrExt;
+#[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
 
+#[cfg(windows)]
 pub const SETUP_URL: &str = "https://ollama.com/download/OllamaSetup.exe";
 /// Banderas de Inno Setup: todo oculto, sin cuadros de mensaje, sin reiniciar y sin la pantalla de bienvenida.
 /// El instalador de Ollama es por usuario (`PrivilegesRequired=lowest`), así que no pide administrador.
+#[cfg(windows)]
 const INSTALL_FLAGS: [&str; 4] = ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"];
 /// Un `OllamaSetup.exe` de verdad pesa más de 1 GB; menos de esto es una página de error o un fichero cortado.
+#[cfg(windows)]
 const MIN_SETUP_BYTES: u64 = 50 * 1024 * 1024;
 const EVENT: &str = "ai://progress";
 const EMIT_EVERY: Duration = Duration::from_millis(150);
+#[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+#[cfg(windows)]
 const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
@@ -70,13 +79,13 @@ pub struct AiSetupStatus {
     pub ready: bool,
 }
 
-fn prog(phase: &'static str, received: u64, total: u64, message: &str) -> AiProgress {
+pub(crate) fn prog(phase: &'static str, received: u64, total: u64, message: &str) -> AiProgress {
     AiProgress { phase, received, total, message: message.to_string() }
 }
 
 /// Por qué se corta el proceso: cancelado por el usuario o fallo con motivo.
 #[derive(Debug, PartialEq)]
-enum Stop {
+pub(crate) enum Stop {
     Cancelled,
     Failed(String),
 }
@@ -87,9 +96,9 @@ impl From<String> for Stop {
     }
 }
 
-type Emit<'a> = &'a mut dyn FnMut(AiProgress);
+pub(crate) type Emit<'a> = &'a mut dyn FnMut(AiProgress);
 
-fn check(cancel: &AtomicBool) -> Result<(), Stop> {
+pub(crate) fn check(cancel: &AtomicBool) -> Result<(), Stop> {
     if cancel.load(Ordering::SeqCst) { Err(Stop::Cancelled) } else { Ok(()) }
 }
 
@@ -111,6 +120,10 @@ fn settings_models_missing(s: &Settings, models: &[String]) -> bool {
 }
 
 /// `ollama.exe` del equipo: la ruta del instalador por usuario, la de Archivos de programa o el PATH.
+#[cfg(target_os = "macos")]
+pub use crate::mac::aisetup::find_ollama;
+
+#[cfg(windows)]
 pub fn find_ollama() -> Option<PathBuf> {
     let mut cands = Vec::new();
     if let Some(l) = dirs::data_local_dir() {
@@ -127,7 +140,7 @@ pub fn find_ollama() -> Option<PathBuf> {
 
 /// Carpetas del PATH donde se busca `ollama.exe`: solo las absolutas. Una entrada relativa («.», «bin») se
 /// resuelve contra la carpeta actual, y Pronto lanza Ollama sin preguntar en cada dictado (seguridad 25-oct, B1).
-fn path_dirs(path: &std::ffi::OsStr) -> Vec<PathBuf> {
+pub(crate) fn path_dirs(path: &std::ffi::OsStr) -> Vec<PathBuf> {
     std::env::split_paths(path).filter(|d| d.is_absolute()).collect()
 }
 
@@ -135,7 +148,7 @@ fn path_dirs(path: &std::ffi::OsStr) -> Vec<PathBuf> {
 /// usuario, que puede ser `0.0.0.0` (Ollama abierto a la red local) o no casar con el puerto (seguridad 25-oct, B2).
 /// Con `http://[::1]:…` escucha en ::1 (si no, nunca respondería ahí); el puerto por defecto del esquema cuenta
 /// (`http://127.0.0.1` es el 80, no el 11434; seguridad 25-oct-b, B2).
-fn ollama_host_env(url: &str) -> String {
+pub(crate) fn ollama_host_env(url: &str) -> String {
     let u = tauri::Url::parse(&ollama::normalize_url(url)).ok();
     let port = u.as_ref().and_then(|u| u.port_or_known_default()).unwrap_or(11434);
     // Una IPv4 de loopback escrita tal cual (127.0.0.2…) se usa tal cual: atado a 127.0.0.1, no respondería ahí (rompedor 25-oct-c, BAJA 3).
@@ -241,7 +254,9 @@ const SETUP_DEADLINE: Duration = Duration::from_secs(90 * 60);
 
 /// Baja `url` a `dest` emitiendo los bytes recibidos. Las redirecciones (ollama.com -> GitHub) se
 /// siguen a mano y se validan en cada salto (`setup_hop`): ureq 2 entra en pánico con una `Location`
-/// sin host y sigue a cualquier host.
+/// sin host y sigue a cualquier host. En Mac no se descarga nada (se abre la página de Ollama), pero
+/// se compila y se prueba igual.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn download_installer(url: &str, dest: &Path, cancel: &AtomicBool, emit: Emit) -> Result<u64, Stop> {
     let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(15)).timeout_read(Duration::from_secs(30)).redirects(0).build();
     // Plazo para las cabeceras y plazo total (rompedor 23-oct, descargas MEDIA 1: huecos de aisetup).
@@ -278,6 +293,7 @@ fn download_installer(url: &str, dest: &Path, cancel: &AtomicBool, emit: Emit) -
 
 // ------------------------------------------------------------ firma Authenticode
 
+#[cfg(windows)]
 fn trust_error(hr: i32) -> String {
     match hr as u32 {
         0x800B_0100 => "no está firmado".into(),
@@ -291,6 +307,7 @@ fn trust_error(hr: i32) -> String {
 
 /// Comprueba la firma Authenticode de `path` con `WinVerifyTrust`. Devuelve el nombre del firmante
 /// (CN del certificado) o el motivo del rechazo.
+#[cfg(windows)]
 pub fn verify_signature(path: &Path) -> Result<String, String> {
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{HANDLE, HWND};
@@ -344,6 +361,7 @@ pub fn verify_signature(path: &Path) -> Result<String, String> {
 }
 
 /// Firma válida **y** firmante «Ollama…» (el instalador oficial va firmado por «Ollama Inc.»).
+#[cfg(windows)]
 fn verify_ollama_setup(path: &Path) -> Result<String, String> {
     let signer = verify_signature(path).map_err(|e| format!("No se instaló Ollama: la firma del instalador descargado no es válida ({e})."))?;
     if !signer.to_lowercase().starts_with("ollama") {
@@ -354,6 +372,7 @@ fn verify_ollama_setup(path: &Path) -> Result<String, String> {
 
 // ------------------------------------------------------------ instalar y arrancar
 
+#[cfg(windows)]
 fn run_installer(exe: &Path, timeout: Duration, emit: Emit) -> Result<(), Stop> {
     let mut child = Command::new(exe)
         .args(INSTALL_FLAGS)
@@ -415,6 +434,10 @@ pub fn ensure_running_ex(url: &str, timeout: Duration) -> Option<bool> {
 
 /// Lanza Ollama oculto y sin esperarlo: su aplicación de bandeja si existe (la que arranca el servidor,
 /// como tras una instalación normal) o `ollama serve`.
+#[cfg(target_os = "macos")]
+use crate::mac::aisetup::start_ollama;
+
+#[cfg(windows)]
 fn start_ollama(exe: &Path, url: &str) -> Result<(), String> {
     let dir = exe.parent().unwrap_or(Path::new("."));
     let app = dir.join("ollama app.exe");
@@ -423,6 +446,7 @@ fn start_ollama(exe: &Path, url: &str) -> Result<(), String> {
     if app.is_file() { spawn_hidden(&app, &[], dir, &env) } else { spawn_hidden(exe, &["serve"], dir, &env) }.map(|_| ())
 }
 
+#[cfg(windows)]
 fn spawn_hidden(prog: &Path, args: &[&str], dir: &Path, env: &[(&str, &str)]) -> Result<std::process::Child, String> {
     let path = std::env::var_os("PATH").unwrap_or_default();
     let mut paths = vec![dir.to_path_buf()];
@@ -442,6 +466,12 @@ fn spawn_hidden(prog: &Path, args: &[&str], dir: &Path, env: &[(&str, &str)]) ->
     }
     cmd.spawn().map_err(|e| format!("No se pudo arrancar Ollama ({}): {e}", prog.display()))
 }
+
+/// Qué hacer si Ollama no arranca solo: dónde lo encuentra el usuario en cada sistema.
+#[cfg(windows)]
+const OPEN_HINT: &str = "Ábrelo desde el menú Inicio e inténtalo de nuevo.";
+#[cfg(target_os = "macos")]
+const OPEN_HINT: &str = "Ábrelo desde la carpeta Aplicaciones e inténtalo de nuevo.";
 
 /// Espera a que la API responda. Si pasados `launch_after` aún no responde, llama una vez a `launch`.
 fn wait_reachable(
@@ -464,7 +494,7 @@ fn wait_reachable(
             launch()?;
         }
         if started.elapsed() > timeout {
-            return Err(format!("Ollama no responde en {url}. Ábrelo desde el menú Inicio e inténtalo de nuevo.").into());
+            return Err(format!("Ollama no responde en {url}. {OPEN_HINT}").into());
         }
         emit(prog("start-ollama", 0, 0, "Arrancando Ollama…"));
         std::thread::sleep(Duration::from_millis(500));
@@ -583,7 +613,11 @@ fn setup(settings: &Settings, cancel: &AtomicBool, emit: Emit) -> Result<(), Sto
     Ok(())
 }
 
+#[cfg(target_os = "macos")]
+use crate::mac::aisetup::install_ollama;
+
 /// Descarga, verifica y ejecuta `OllamaSetup.exe`. Devuelve la ruta de `ollama.exe` instalado.
+#[cfg(windows)]
 fn install_ollama(cancel: &AtomicBool, emit: Emit) -> Result<PathBuf, Stop> {
     let dir = std::env::temp_dir().join(format!("Pronto-IA-{}-{}", std::process::id(), std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis())));
     fs::create_dir_all(&dir).map_err(|e| format!("No se pudo crear la carpeta temporal: {e}"))?;
@@ -697,11 +731,20 @@ mod tests {
         assert_eq!(super::ensure_running_ex("http://192.0.2.1:11434", std::time::Duration::from_millis(1)), None);
     }
 
+    #[cfg(windows)]
     #[test]
     fn ollama_no_se_busca_en_carpetas_relativas_del_path() {
         let path = std::env::join_paths([r"C:\Programas\Ollama", ".", "bin", r"D:\herramientas"]).unwrap();
         let dirs = super::path_dirs(&path);
         assert_eq!(dirs, vec![std::path::PathBuf::from(r"C:\Programas\Ollama"), std::path::PathBuf::from(r"D:\herramientas")]);
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn ollama_no_se_busca_en_carpetas_relativas_del_path_mac() {
+        let path = std::env::join_paths(["/opt/homebrew/bin", ".", "bin", "/usr/local/bin"]).unwrap();
+        let dirs = super::path_dirs(&path);
+        assert_eq!(dirs, vec![std::path::PathBuf::from("/opt/homebrew/bin"), std::path::PathBuf::from("/usr/local/bin")]);
     }
 
     use super::*;
@@ -842,6 +885,7 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
+    #[cfg(windows)]
     #[test]
     fn banderas_del_instalador() {
         assert_eq!(INSTALL_FLAGS, ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-"]);
@@ -935,6 +979,7 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
+    #[cfg(windows)]
     #[test]
     fn firma_rechaza_sin_firma_y_firmante_ajeno() {
         let dir = tmp("sig");
@@ -955,6 +1000,7 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
+    #[cfg(windows)]
     #[test]
     fn firma_valida_del_ollama_instalado_si_existe() {
         if let Some(exe) = find_ollama() {
@@ -984,6 +1030,7 @@ mod tests {
 
     /// Real: descarga `OllamaSetup.exe` a una carpeta temporal y comprueba su firma (NO lo ejecuta).
     /// `cargo test firma_real -- --ignored --nocapture`
+    #[cfg(windows)]
     #[test]
     #[ignore]
     fn firma_real_del_instalador_descargado() {
@@ -1009,6 +1056,7 @@ mod tests {
     }
 
     /// Real: arranca `ollama serve` oculto en otro puerto y lo espera (no toca el Ollama en uso).
+    #[cfg(windows)]
     #[test]
     #[ignore]
     fn arranque_real_en_otro_puerto() {

@@ -1083,7 +1083,7 @@ fn transcribe_and_paste(app: &AppHandle, st: &Arc<AppState>, samples: &[f32], du
             if !text.trim().is_empty() {
                 inject::paste_text(text).map_err(|e| Failure::new(format!("No se copió nada; el texto está en el historial ({e})"), Some("paste")))?;
                 if text.chars().count() >= inject::KEEP_IN_CLIPBOARD_CHARS {
-                    emit_notice(app, "Texto largo: también queda en el portapapeles (Ctrl+V)", None);
+                    emit_notice(app, if cfg!(target_os = "macos") { "Texto largo: también queda en el portapapeles (Cmd+V)" } else { "Texto largo: también queda en el portapapeles (Ctrl+V)" }, None);
                 }
             }
             Ok(())

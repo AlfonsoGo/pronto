@@ -44,6 +44,7 @@ static LAST: Mutex<Option<ModelProgress>> = Mutex::new(None);
 /// Carpetas donde Pronto 1 deja el modelo, por orden: `%APPDATA%\Pronto\Pronto\models\parakeet`,
 /// `<carpeta del exe>\models\parakeet` y la del instalador de Pronto 1
 /// (`%LOCALAPPDATA%\Programs\Pronto\models\parakeet`).
+#[cfg(windows)]
 fn existing_dirs() -> Vec<PathBuf> {
     let model = |base: PathBuf| base.join("models").join("parakeet");
     let mut dirs = vec![model(dirs::data_dir().unwrap_or_default().join("Pronto").join("Pronto"))];
@@ -54,6 +55,13 @@ fn existing_dirs() -> Vec<PathBuf> {
         dirs.push(model(local.join("Programs").join("Pronto")));
     }
     dirs
+}
+
+/// macOS: Pronto 1 nunca existió en Mac; el modelo solo está en la carpeta propia
+/// (`~/Library/Application Support/Pronto2/models/parakeet`).
+#[cfg(target_os = "macos")]
+fn existing_dirs() -> Vec<PathBuf> {
+    Vec::new()
 }
 
 /// Carpeta propia de Pronto 2: `%APPDATA%\Pronto2\models\parakeet`.
@@ -677,6 +685,14 @@ mod tests {
         assert!(BASE_URL.starts_with("https://huggingface.co/") && BASE_URL.ends_with("/resolve/main"));
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn en_mac_solo_la_carpeta_propia() {
+        assert!(existing_dirs().is_empty());
+        assert!(own_dir().ends_with(Path::new("Application Support").join("Pronto2").join("models").join("parakeet")));
+    }
+
+    #[cfg(windows)]
     #[test]
     fn rutas_de_pronto1_y_propia() {
         let dirs = existing_dirs();

@@ -48,6 +48,9 @@ fn update_label(lang: &str, version: &str) -> String {
 /// `meeting=…`, `settings=…`, que `hub.js` lee al arrancar). Devuelve si ya existía: solo entonces
 /// tiene sentido mandarle eventos, porque una página recién creada aún no escucha.
 fn ensure_hub(app: &AppHandle, query: &str) -> bool {
+    // Mac: con el panel abierto, Pronto sale en el Dock y en Cmd+Tab.
+    #[cfg(target_os = "macos")]
+    crate::mac::app::hub_shown(app);
     if let Some(w) = app.get_webview_window("hub") {
         let _ = w.show();
         let _ = w.unminimize();
@@ -205,13 +208,23 @@ pub fn build(app: &AppHandle, s: &Settings) -> tauri::Result<()> {
     let mut builder = TrayIconBuilder::with_id(TRAY_ID)
         .tooltip(tip_base())
         .menu(&menu)
-        .show_menu_on_left_click(false)
+        // Mac: en la barra de menús, pulsar el icono abre su menú (lo normal allí); en Windows abre el hub.
+        .show_menu_on_left_click(cfg!(target_os = "macos"))
         .on_menu_event(|app, event| on_menu(app, event.id().as_ref()))
         .on_tray_icon_event(|tray, event| {
             if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                if cfg!(target_os = "macos") {
+                    return; // en Mac el clic abre el menú (arriba)
+                }
                 show_hub(tray.app_handle());
             }
         });
+    #[cfg(target_os = "macos")]
+    {
+        // Icono «plantilla» en blanco y negro: macOS lo pinta del color de la barra de menús.
+        builder = builder.icon(tauri::include_image!("icons/tray-mac.png")).icon_as_template(true);
+    }
+    #[cfg(not(target_os = "macos"))]
     if let Some(icon) = app.default_window_icon() {
         builder = builder.icon(icon.clone());
     }

@@ -54,6 +54,15 @@ fn re_user_path() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r#"(?i)([a-z]):[\\/]+users[\\/]+[^\\/\s"'<>|:*?«»]+"#).expect("regex de ruta de usuario"))
 }
 
+/// macOS: `/Users/Nombre` (la carpeta de cualquier usuario) → `/Users/…`. Solo cuando `/Users` empieza
+/// una ruta (al principio, tras un espacio, comillas, paréntesis, `=`, `:`…), no dentro de una URL
+/// como `github.com/users/x`. Se aplica en Mac; se prueba en los dos sistemas.
+fn mask_unix_user_paths(s: &str) -> String {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r#"(?i)(^|[\s"'(\[{=:,;«“])/users/[^/\s"'<>|:*?«»”]+"#).expect("regex de ruta de usuario de macOS"));
+    re.replace_all(s, "${1}/Users/…").into_owned()
+}
+
 fn re_quoted() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r#"«[^»]*»|“[^”]*”|"[^"]*""#).expect("regex de comillas"))
@@ -99,11 +108,16 @@ fn sanitize_with(msg: &str, names: &[String], profiles: &[String]) -> String {
     // Carpeta de perfil completa (también con `/` y con barras dobles), antes que el patrón general:
     // cubre un perfil que no se llama como el usuario o con espacios en el nombre.
     for p in profiles.iter().filter(|p| !p.is_empty()) {
+        // Perfil de macOS (`/Users/ana`): se tapa con su forma, no con la de Windows.
+        let mask = if p.starts_with('/') { "/Users/…" } else { "C:\\Users\\…" };
         for variant in [p.clone(), p.replace('\\', "/"), p.replace('\\', "\\\\")] {
-            s = replace_ci(&s, &variant, "C:\\Users\\…");
+            s = replace_ci(&s, &variant, mask);
         }
     }
     s = re_user_path().replace_all(&s, "${1}:\\Users\\…").into_owned();
+    if cfg!(target_os = "macos") {
+        s = mask_unix_user_paths(&s);
+    }
     // Frases entre comillas (parecen texto del usuario); las rutas y los identificadores se quedan.
     s = re_quoted()
         .replace_all(&s, |c: &regex::Captures| {
@@ -292,6 +306,21 @@ mod tests {
         let s = sanitize(&format!("no se pudo crear {home}\\AppData\\x"));
         assert!(!s.contains(&home), "{s}");
         assert!(s.contains(r"C:\Users\…") || !home.to_lowercase().contains(r":\users\"), "{s}");
+        if home.starts_with('/') {
+            assert!(s.contains("/Users/…") || !home.starts_with("/Users/"), "{s}");
+        }
+    }
+
+    #[test]
+    fn rutas_de_usuario_de_macos() {
+        assert_eq!(mask_unix_user_paths("no se pudo abrir /Users/ana/Library/Pronto2/x.db"), "no se pudo abrir /Users/…/Library/Pronto2/x.db");
+        assert_eq!(mask_unix_user_paths(r#"Os { path: "/users/Ana/x" }"#), r#"Os { path: "/Users/…/x" }"#);
+        assert_eq!(mask_unix_user_paths("/Users/pepe"), "/Users/…");
+        // Dentro de una URL, no: no es una carpeta de este Mac.
+        assert_eq!(mask_unix_user_paths("https://github.com/users/x"), "https://github.com/users/x");
+        // Un perfil de macOS se tapa con su forma.
+        let s = sanitize_with("fallo en /Users/juan.perez/Documents/a.wav", &[], &["/Users/juan.perez".to_string()]);
+        assert_eq!(s, "fallo en /Users/…/Documents/a.wav");
     }
 
     #[test]

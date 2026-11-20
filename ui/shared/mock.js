@@ -808,6 +808,7 @@ const ollamaUrlIsLocal = (u) => {
     return !x || ['localhost', '[::1]'].includes(host) || /^127(\.\d{1,3}){3}$/.test(host) || /^\[::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}\]$/.test(host);
   } catch (_) { return false; }
 };
+const mockPerms = { granted: false };
 const commands = {
   get_settings: () => clone(settings),
   // Como el backend (commands.rs): Ollama solo en este PC (decisión de Txonso, 23-oct-2026), una dirección de otro equipo se rechaza y no se guarda.
@@ -816,6 +817,14 @@ const commands = {
     settings = { ...settings, ...clone(s) }; emit('settings://changed', settings);
   },
   open_error_log: () => {},
+  // Mac (?mac simula el Mac; ?mac=ok, con todos los permisos dados). En Windows no hay permisos.
+  platform_info: () => {
+    const q = new URLSearchParams(location.search);
+    if (!q.has('mac')) return { os: 'windows', permissions: null };
+    const ok = q.get('mac') === 'ok' || mockPerms.granted;
+    return { os: 'macos', permissions: { accessibility: ok, inputMonitoring: ok, microphone: ok ? 'granted' : 'ask', keyboardHook: ok, globeKey: ok ? 0 : 2, globeKeyConflict: !ok, allOk: ok } };
+  },
+  request_permission: ({ kind }) => { console.info('[mock] permiso pedido:', kind); mockPerms.granted = true; },
   app_info: () => ({ version: '2.3.1', test: new URLSearchParams(location.search).has('pruebas') }),
   list_mics: () => ['Micrófono (Realtek High Definition Audio)', 'Auriculares (Jabra Evolve2 65)', 'Entrada de línea (USB Audio Device)'],
   get_stats: () => stats(),

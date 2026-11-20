@@ -2,7 +2,7 @@
 import { icon } from '../../shared/icons.js';
 import { invoke, listen, state, saveSettings, subscribe, notify, applySettingsEffects, IS_MOCK, checkUpdate, installUpdate, updateBusy, startModelDownload } from '../api.js';
 import {
-  t, esc, $, $$, toast, errText, openModal, confirmDialog, keysHtml, hotkeyText, sameHotkey, getLang,
+  t, esc, $, $$, toast, errText, openModal, confirmDialog, keysHtml, hotkeyText, sameHotkey, getLang, IS_MAC,
 } from '../util.js';
 import { mountCleanup } from './cleanup.js';
 import { switchHtml, selectHtml } from '../ui.js';
@@ -256,7 +256,7 @@ const VIEWS = {
     const hidden = s.flowBarHiddenUntil && new Date(s.flowBarHiddenUntil) > new Date();
     const hhmm = hidden ? new Date(s.flowBarHiddenUntil).toLocaleTimeString(getLang() === 'en' ? 'en-US' : 'es-ES', { hour: '2-digit', minute: '2-digit' }) : '';
     return group(t('Configuración de la aplicación'), [
-      row(t('Abrir Pronto al encender el ordenador'), t('Pronto se abre solo con Windows y espera en la bandeja, junto al reloj.'), switchHtml('launchAtLogin', s.launchAtLogin, t('Abrir Pronto al encender el ordenador'))),
+      row(t('Abrir Pronto al encender el ordenador'), (IS_MAC ? t('Pronto se abre solo al iniciar sesión y espera en la barra de menús, arriba a la derecha.') : t('Pronto se abre solo con Windows y espera en la bandeja, junto al reloj.')), switchHtml('launchAtLogin', s.launchAtLogin, t('Abrir Pronto al encender el ordenador'))),
       row(t('Mostrar siempre la barra de dictado'), hidden ? t('Oculta hasta las {h}.', { h: hhmm }) : t('La barrita flotante de abajo se queda visible aunque no estés dictando.'), switchHtml('showFlowBar', s.showFlowBar, t('Mostrar siempre la barra de dictado'))),
       monitorRowHtml(s),
     ].join('')) + group(t('Sonido'), [

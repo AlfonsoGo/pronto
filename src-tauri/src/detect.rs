@@ -4,15 +4,27 @@
 //! (empaquetada, o en `NonPackaged` con la ruta del exe) tiene `LastUsedTimeStart` y
 //! `LastUsedTimeStop`; con `Stop == 0` el micro está abierto en este momento. La decisión de si
 //! eso es una reunión es una función pura (`detect_meeting`), separada de la lectura del sistema.
+//!
+//! En macOS la lectura (`read_mic_consent`, `window_titles`) vive en `crate::mac::detect` (Core Audio
+//! por proceso); las apps llegan con el mismo nombre corto que aquí (`mac_app_key`).
 
+#[cfg(windows)]
 use crate::inject;
+#[cfg(windows)]
 use windows::core::{w, BOOL, PCWSTR, PWSTR};
+#[cfg(windows)]
 use windows::Win32::Foundation::{HWND, LPARAM};
+#[cfg(windows)]
 use windows::Win32::System::Registry::{
     RegCloseKey, RegEnumKeyExW, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_CURRENT_USER, KEY_READ, REG_VALUE_TYPE,
 };
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, IsWindowVisible};
 
+#[cfg(target_os = "macos")]
+pub use crate::mac::detect::{read_mic_consent, window_titles};
+
+#[cfg(windows)]
 const MIC_KEY: PCWSTR = w!("Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone");
 
 /// Navegadores en los que una pestaña puede ser una reunión.
@@ -24,6 +36,7 @@ const BROWSERS: &[(&str, &str)] = &[
     ("opera", "Opera"),
     ("vivaldi", "Vivaldi"),
     ("arc", "Arc"),
+    ("safari", "Safari"), // solo macOS (`mac_app_key`)
 ];
 
 /// Ejecutables (normalizados con `normalize_app`) de las apps de reuniones, con su nombre. Nombre
@@ -40,7 +53,56 @@ const NATIVE_APPS: &[(&str, &str)] = &[
     ("webexhost", "Webex"),
     ("atmgr", "Webex"),                     // Webex Meetings clásico
     ("slack", "Slack (huddle)"),
+    ("facetime", "FaceTime"), // solo macOS (`mac_app_key`); se avisa, no se graba sola (PRD §1)
 ];
+
+/// macOS: bundle id (en minúsculas) -> nombre corto de `NATIVE_APPS`/`BROWSERS`. Vale el id exacto o
+/// seguido de `.` (los procesos auxiliares: `com.google.Chrome.helper` es Chrome). En Safari el micro lo
+/// abre el proceso GPU de WebKit. Discord y WhatsApp no están: no se graban (PRD §1).
+const MAC_APPS: &[(&str, &str)] = &[
+    ("us.zoom.xos", "zoom"),
+    ("com.microsoft.teams2", "msteams"),
+    ("com.microsoft.teams", "msteams"),
+    ("com.cisco.webexmeetingsapp", "webex"),
+    ("com.cisco.webexmeetings", "webex"),
+    ("com.webex.meetingmanager", "webex"),
+    ("com.tinyspeck.slackmacgap", "slack"),
+    ("com.apple.facetime", "facetime"),
+    ("com.google.chrome", "chrome"),
+    ("com.microsoft.edgemac", "msedge"),
+    ("org.mozilla.firefox", "firefox"),
+    ("org.mozilla.plugincontainer", "firefox"),
+    ("com.brave.browser", "brave"),
+    ("company.thebrowser.browser", "arc"),
+    ("com.operasoftware.opera", "opera"),
+    ("com.vivaldi.vivaldi", "vivaldi"),
+    ("com.apple.safari", "safari"),
+    ("com.apple.webkit.gpu", "safari"),
+];
+
+/// macOS: nombre corto de una app por su bundle id (`us.zoom.xos` -> `zoom`); `None` si no es de
+/// reuniones ni un navegador.
+#[cfg_attr(windows, allow(dead_code))]
+pub fn mac_app_key(bundle_id: &str) -> Option<&'static str> {
+    let b = bundle_id.trim().to_lowercase();
+    MAC_APPS
+        .iter()
+        .find(|(id, _)| b == *id || b.strip_prefix(id).is_some_and(|rest| rest.starts_with('.')))
+        .map(|(_, key)| *key)
+}
+
+/// Marca de `window_titles` cuando el sistema no deja leer títulos (macOS sin el permiso de
+/// Grabación de pantalla, que Pronto no pide). Ningún título real empieza por un carácter de control.
+pub const NO_TITLES: &str = "\u{1}sin títulos";
+
+/// Etiqueta de una llamada de navegador cuya pestaña no se conoce (ver `NO_TITLES`).
+const BROWSER_CALL: &str = "Llamada en el navegador";
+
+/// `window_titles` sin títulos: la marca `NO_TITLES` para cada navegador conocido.
+#[cfg_attr(windows, allow(dead_code))]
+pub fn titles_unavailable() -> Vec<(String, String)> {
+    BROWSERS.iter().map(|(exe, _)| (exe.to_string(), NO_TITLES.to_string())).collect()
+}
 
 /// `C:#Program Files#Zoom#bin#Zoom.exe` -> `zoom`; `MSTeams_8wekyb3d8bbwe` -> `msteams`.
 pub fn normalize_app(raw: &str) -> String {
@@ -171,8 +233,15 @@ pub fn scan(mic_apps: &[(String, bool)], titles: &[(String, String)]) -> Scan {
             // de la videollamada. Windows no dice qué pestaña tiene el micro: el título estricto
             // es lo que evita que otra ventana con «zoom» o «teams» en el título dispare.
             let own: Vec<&str> = titles.iter().filter(|(exe, _)| normalize_app(exe) == app).map(|(_, t)| t.as_str()).collect();
-            private_window = own.iter().any(|t| is_private_call_window(t));
-            own.iter().find_map(|t| title_service(t)).map(|service| format!("{service} ({browser})"))
+            if own.contains(&NO_TITLES) {
+                // Sin títulos (macOS): micro en uso en el navegador, pestaña desconocida. Puede ser
+                // Meet o una llamada privada: dudosa, se avisa y nunca se graba sola.
+                private_window = true;
+                Some(format!("{BROWSER_CALL} ({browser})"))
+            } else {
+                private_window = own.iter().any(|t| is_private_call_window(t));
+                own.iter().find_map(|t| title_service(t)).map(|service| format!("{service} ({browser})"))
+            }
         } else {
             None
         };
@@ -219,6 +288,7 @@ pub fn any_browser_in_use(mic_apps: &[(String, bool)]) -> bool {
 
 // ------------------------------------------------------------------ lectura del sistema
 
+#[cfg(windows)]
 fn enum_subkeys(key: HKEY) -> Vec<String> {
     let mut out = Vec::new();
     let mut index = 0u32;
@@ -236,6 +306,7 @@ fn enum_subkeys(key: HKEY) -> Vec<String> {
     out
 }
 
+#[cfg(windows)]
 fn read_qword(key: HKEY, name: PCWSTR) -> Option<u64> {
     let mut data = [0u8; 8];
     let mut size = 8u32;
@@ -245,6 +316,7 @@ fn read_qword(key: HKEY, name: PCWSTR) -> Option<u64> {
     (r.0 == 0 && size == 8).then(|| u64::from_le_bytes(data))
 }
 
+#[cfg(windows)]
 fn open(parent: HKEY, sub: PCWSTR) -> Option<HKEY> {
     let mut key = HKEY::default();
     // SAFETY: `key` es un destino válido.
@@ -252,6 +324,7 @@ fn open(parent: HKEY, sub: PCWSTR) -> Option<HKEY> {
     (r.0 == 0).then_some(key)
 }
 
+#[cfg(windows)]
 fn in_use(key: HKEY) -> bool {
     let start = read_qword(key, w!("LastUsedTimeStart")).unwrap_or(0);
     let stop = read_qword(key, w!("LastUsedTimeStop")).unwrap_or(1);
@@ -259,6 +332,7 @@ fn in_use(key: HKEY) -> bool {
 }
 
 /// Apps (paquete o exe) con su estado de uso del micrófono, según el registro.
+#[cfg(windows)]
 pub fn read_mic_consent() -> Vec<(String, bool)> {
     let mut out = Vec::new();
     let Some(root) = open(HKEY_CURRENT_USER, MIC_KEY) else { return out };
@@ -291,6 +365,7 @@ pub fn read_mic_consent() -> Vec<(String, bool)> {
     out
 }
 
+#[cfg(windows)]
 unsafe extern "system" fn collect_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
     // SAFETY: lparam es el puntero al Vec que nos pasó `window_titles`, vivo durante EnumWindows.
     let list = unsafe { &mut *(lparam.0 as *mut Vec<(String, String)>) };
@@ -304,6 +379,7 @@ unsafe extern "system" fn collect_window(hwnd: HWND, lparam: LPARAM) -> BOOL {
 }
 
 /// `(exe, título)` de las ventanas visibles con título.
+#[cfg(windows)]
 pub fn window_titles() -> Vec<(String, String)> {
     let mut list: Vec<(String, String)> = Vec::new();
     // SAFETY: el puntero a `list` vive hasta que EnumWindows termina.
@@ -459,6 +535,45 @@ mod tests {
         assert!(!any_browser_in_use(&apps(&[("C:#x#chrome.exe", false), ("C:#x#zoom.exe", true)])));
     }
 
+    /// macOS: los bundle ids llegan al nombre corto que entiende `scan`; Discord y WhatsApp no.
+    #[test]
+    fn apps_de_mac_por_bundle_id() {
+        assert_eq!(mac_app_key("us.zoom.xos"), Some("zoom"));
+        assert_eq!(mac_app_key("com.microsoft.teams2"), Some("msteams"));
+        assert_eq!(mac_app_key("com.google.Chrome.helper"), Some("chrome"));
+        assert_eq!(mac_app_key("com.apple.WebKit.GPU"), Some("safari"));
+        assert_eq!(mac_app_key("com.microsoft.teamsX"), None); // no es un proceso auxiliar de Teams
+        assert_eq!(mac_app_key("com.hnc.Discord"), None);
+        assert_eq!(mac_app_key("net.whatsapp.WhatsApp"), None);
+        assert_eq!(mac_app_key("com.beltranlabs.pronto2"), None);
+        // Lo que sale de `mac_app_key` es lo que `scan` reconoce.
+        let mic: Vec<(String, bool)> =
+            [("us.zoom.xos", true), ("com.microsoft.teams2", true)].iter().map(|(b, u)| (mac_app_key(b).unwrap().to_string(), *u)).collect();
+        assert_eq!(detect_all(&mic, &[]), vec!["Zoom".to_string(), "Microsoft Teams".to_string()]);
+    }
+
+    /// macOS sin títulos de ventana: el navegador con el micro es una llamada dudosa (se avisa, no se
+    /// graba sola) y se sigue por el navegador; sin micro no hay nada.
+    #[test]
+    fn navegador_sin_titulos_es_llamada_dudosa() {
+        let none = titles_unavailable();
+        let got = scan(&apps(&[("chrome", true)]), &none);
+        let label = "Llamada en el navegador (Chrome)".to_string();
+        assert_eq!(got.meetings, vec![label.clone()]);
+        assert_eq!(got.ambiguous, vec![label.clone()]);
+        assert_eq!(got.browsers, vec!["Chrome".to_string()]);
+        assert_eq!(browser_of(&label), Some("Chrome"));
+        assert!(!is_auto_service(&label));
+        assert!(candidates(&got, true).is_empty());
+        assert_eq!(candidates(&got, false), vec![label]);
+        assert!(scan(&apps(&[("chrome", false)]), &none).meetings.is_empty());
+        // Safari también es un navegador.
+        assert_eq!(scan(&apps(&[("safari", true)]), &none).browsers, vec!["Safari".to_string()]);
+        // Con títulos reales (Windows) nada cambia: sin título de videollamada no hay reunión.
+        assert!(scan(&apps(&[("chrome", true)]), &titles(&[("chrome.exe", "Correo - Google Chrome")])).meetings.is_empty());
+    }
+
+    #[cfg(windows)]
     #[test]
     fn lectura_del_registro_no_falla() {
         // No asumimos qué hay, solo que leerlo no revienta y los nombres son legibles.

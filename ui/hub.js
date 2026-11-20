@@ -5,7 +5,7 @@ import {
   invoke, listen, win, state, loadSettings, refreshEngine, refreshModel, applyModelProgress, refreshStats, notify, applySettingsEffects, IS_MOCK, subscribe,
   refreshUpdate, applyUpdateAvailable, applyUpdateProgress,
 } from './hub/api.js';
-import { t, esc, $, $$, toast, closeMenu, hasModal, errText, flushPending, openModal, keysHtml } from './hub/util.js';
+import { t, esc, $, $$, toast, closeMenu, hasModal, errText, flushPending, openModal, keysHtml, IS_MAC } from './hub/util.js';
 import home from './hub/pages/home.js';
 import insights from './hub/pages/insights.js';
 import dictionary from './hub/pages/dictionary.js';
@@ -15,11 +15,13 @@ import transforms from './hub/pages/transforms.js';
 import notes from './hub/pages/notes.js';
 import meetings from './hub/pages/meetings.js';
 import novedades, { maybeShowWhatsNew, unseen as novedadesSinVer } from './hub/pages/novedades.js';
+import permisos from './hub/pages/permisos.js';
+import { initMac } from './hub/mac.js';
 import { initMeetingState, live as liveMeeting } from './hub/meeting.js';
 import { openSettings, openSettingsDialog } from './hub/pages/settings.js';
 import { mountUpdateBanner } from './hub/update.js';
 
-const PAGES = { home, meetings, insights, dictionary, snippets, style, transforms, notes, novedades };
+const PAGES = { home, meetings, insights, dictionary, snippets, style, transforms, notes, novedades, permisos };
 // Menú pensado para quien no sabe de informática (pruebas con tres primerizos, 24-oct-2026): solo lo de la primera semana.
 // Estadísticas se abre desde la tarjeta de cifras de Dictado y Transforms desde Configuración → IA en tu PC.
 const NAV = () => [
@@ -29,6 +31,8 @@ const NAV = () => [
   { id: 'snippets', label: t('Atajos de texto'), icon: 'scissors' },
   { id: 'style', label: t('Cómo escribe'), icon: 'type' },
   { id: 'notes', label: t('Notas'), icon: 'notebook-pen' },
+  // Solo en Mac: los permisos que pide macOS.
+  ...(IS_MAC ? [{ id: 'permisos', label: t('Permisos del Mac'), icon: 'shield-check' }] : []),
 ];
 
 const ALIAS = {
@@ -318,6 +322,7 @@ async function boot() {
   }, 2000);
   try { state.app = await invoke('app_info'); } catch { /* versión desconocida: no se enseña */ }
   buildShell();
+  initMac({ win, closeAction: () => windowAction('close') });
   subscribe((what) => { if (what === 'meeting') updateRecDot(); });
 
   const qs = new URLSearchParams(location.search);

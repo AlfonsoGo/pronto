@@ -16,6 +16,7 @@ use std::time::{Duration, Instant};
 // ------------------------------------------------------------------ utilidades
 
 /// Memoria del proceso: (working set, pico del working set, privada) en MB y handles abiertos.
+#[cfg(windows)]
 fn mem() -> (f64, f64, f64, u32) {
     use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS_EX, PROCESS_MEMORY_COUNTERS};
     use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessHandleCount};
@@ -31,12 +32,43 @@ fn mem() -> (f64, f64, f64, u32) {
 }
 
 /// Hilos del proceso (por PowerShell: el crate `windows` no trae ToolHelp en este proyecto).
+#[cfg(windows)]
 fn threads() -> usize {
     let pid = std::process::id();
     let out = std::process::Command::new("powershell")
         .args(["-NoProfile", "-Command", &format!("(Get-Process -Id {pid}).Threads.Count")])
         .output();
     out.ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok()).unwrap_or(0)
+}
+
+/// macOS: `ps` del sistema (no hay `GetProcessMemoryInfo`). RSS del proceso en MB.
+#[cfg(target_os = "macos")]
+fn ps_rss_mb() -> f64 {
+    let pid = std::process::id().to_string();
+    let out = std::process::Command::new("/bin/ps").args(["-o", "rss=", "-p", &pid]).output();
+    out.ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<f64>().ok()).map_or(0.0, |kb| kb / 1024.0)
+}
+
+/// macOS: hilos del proceso con `ps -M` (una línea por hilo más la cabecera).
+#[cfg(target_os = "macos")]
+fn ps_threads() -> usize {
+    let pid = std::process::id().to_string();
+    let out = std::process::Command::new("/bin/ps").args(["-M", "-p", &pid]).output();
+    out.ok().map_or(0, |o| String::from_utf8_lossy(&o.stdout).lines().filter(|l| !l.trim().is_empty()).count().saturating_sub(1))
+}
+
+/// macOS: (RSS, RSS, RSS) en MB (sin pico ni memoria privada a mano) y descriptores abiertos
+/// (`/dev/fd`) en vez de handles.
+#[cfg(target_os = "macos")]
+fn mem() -> (f64, f64, f64, u32) {
+    let rss = ps_rss_mb();
+    let fds = std::fs::read_dir("/dev/fd").map_or(0, |d| d.count() as u32);
+    (rss, rss, rss, fds)
+}
+
+#[cfg(target_os = "macos")]
+fn threads() -> usize {
+    ps_threads()
 }
 
 /// Muestrea el working set cada 50 ms hasta que se pare; devuelve el máximo visto (MB).

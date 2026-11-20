@@ -1,3 +1,5 @@
+// Rompe el instalador y el actualizador de Windows (PowerShell, Authenticode): solo en Windows.
+#![cfg(windows)]
 //! Sondas del rompedor (2026-10-22, tanda paralela): descargas. Solo se compilan en pruebas.
 //! Las que demuestran una rotura llevan #[ignore = "rompedor: <título>"].
 //! Zona: actualizador (`updater.rs`, `update_helper.ps1`), modelos (`modeldl.rs`, `whisper.rs`) e IA local

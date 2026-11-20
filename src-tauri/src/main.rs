@@ -1,6 +1,10 @@
 // Sin consola en release.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+// Pronto existe para Windows y macOS (lo de Mac en `src/mac/`, ver `specs/mac/DECISIONES.md`).
+#[cfg(not(any(windows, target_os = "macos")))]
+compile_error!("Pronto solo compila para Windows y macOS");
+
 mod aisetup;
 mod anclaje;
 mod asr;
@@ -14,6 +18,8 @@ mod errlog;
 mod flowbar;
 mod hotkey;
 mod inject;
+#[cfg(target_os = "macos")]
+mod mac;
 mod media;
 mod meeting;
 mod meetingdb;
@@ -24,8 +30,12 @@ mod ollama;
 mod polish;
 mod pronounce;
 mod segment;
+mod sistema;
 mod state;
 mod summary;
+// Tabla de teclas del Mac: pura, se compila en Mac y en los tests de Windows.
+#[cfg(any(test, target_os = "macos"))]
+mod teclas_mac;
 mod text;
 mod tray;
 mod updater;
@@ -125,6 +135,7 @@ fn main() {
     // El arranque que lanza el usuario tiene permiso para pasar al frente; se lo cede al Pronto que ya
     // está en marcha, que es quien enseña el hub (si no, Windows lo deja detrás de la ventana activa).
     // SAFETY: llamada Win32 sin punteros.
+    #[cfg(windows)]
     unsafe {
         let _ = windows::Win32::UI::WindowsAndMessaging::AllowSetForegroundWindow(windows::Win32::UI::WindowsAndMessaging::ASFW_ANY);
     }
@@ -211,6 +222,8 @@ fn main() {
             commands::export_meeting,
             commands::toggle_action_item,
             commands::open_error_log,
+            sistema::platform_info,
+            sistema::request_permission,
         ])
         .on_menu_event(|app, event| tray::on_ctx_menu(app, event.id().as_ref()))
         .on_window_event(|window, event| {
@@ -221,6 +234,11 @@ fn main() {
                     api.prevent_close();
                     let _ = window.hide();
                 }
+            }
+            // Mac: sin panel abierto, Pronto vuelve a vivir solo en la barra de menús.
+            #[cfg(target_os = "macos")]
+            if matches!(event, WindowEvent::Destroyed) && window.label() == "hub" {
+                mac::app::hub_hidden(window.app_handle());
             }
         })
         .setup(|app| {
@@ -297,6 +315,10 @@ fn main() {
             }
             updater::spawn_background(handle.clone(), st_for_init.clone());
 
+            // Mac: sin icono en el Dock (vive en la barra de menús) y permisos pedidos con explicación.
+            #[cfg(target_os = "macos")]
+            mac::app::setup(&handle);
+
             // El hub se muestra al arrancar, salvo si Windows nos lanzó al iniciar sesión.
             if !std::env::args().any(|a| a == autostart::HIDDEN_FLAG) {
                 tray::show_hub(&handle);
@@ -308,11 +330,14 @@ fn main() {
 
     app.run(|_app, event| {
         // Con el hub oculto no queda ninguna ventana visible; eso no debe cerrar la app.
-        if let RunEvent::ExitRequested { api, code, .. } = event {
+        if let RunEvent::ExitRequested { api, code, .. } = &event {
             if code.is_none() {
                 api.prevent_exit();
             }
         }
+        // Mac: pulsar el icono de Pronto (Dock, Launchpad, Finder) con la app ya abierta enseña el hub.
+        #[cfg(target_os = "macos")]
+        mac::app::on_run_event(_app, &event);
     });
 }
 

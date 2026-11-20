@@ -11,31 +11,51 @@
 //! `set_ignore_cursor_events`, `set_focusable`…): tao recalcula entonces todos los estilos desde
 //! su estado interno y los reaplica con `ShowWindow(SW_SHOW)`, que puede activar la ventana y
 //! quitarle el foco a la app donde se va a pegar. Todo va con Win32 directo.
+//!
+//! En macOS la ventana, los monitores y el sondeo del cursor viven en `crate::mac::flowbar` (AppKit y
+//! CoreGraphics); lo puro (tamaño, zona pulsable, barra fija) es común.
 use crate::models::{MonitorInfo, MonitorRect, Rect};
+#[cfg(windows)]
 use crate::state::AppState;
 use parking_lot::Mutex;
+#[cfg(windows)]
 use std::collections::HashMap;
+#[cfg(windows)]
 use std::ffi::c_void;
+#[cfg(windows)]
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::AtomicBool;
+#[cfg(windows)]
+use std::sync::atomic::Ordering;
+#[cfg(windows)]
 use std::time::Duration;
-use tauri::{AppHandle, Emitter, Manager};
+use tauri::AppHandle;
+#[cfg(windows)]
+use tauri::{Emitter, Manager};
+#[cfg(target_os = "macos")]
+pub use crate::mac::flowbar::{current_monitor, init, list_monitors, monitor_rect, place, show};
+#[cfg(windows)]
 use windows::Win32::Devices::Display::{
     DisplayConfigGetDeviceInfo, GetDisplayConfigBufferSizes, QueryDisplayConfig, DISPLAYCONFIG_DEVICE_INFO_GET_SOURCE_NAME,
     DISPLAYCONFIG_DEVICE_INFO_GET_TARGET_NAME, DISPLAYCONFIG_DEVICE_INFO_HEADER, DISPLAYCONFIG_MODE_INFO, DISPLAYCONFIG_PATH_INFO,
     DISPLAYCONFIG_SOURCE_DEVICE_NAME, DISPLAYCONFIG_TARGET_DEVICE_NAME, QDC_ONLY_ACTIVE_PATHS,
 };
+#[cfg(windows)]
 use windows::Win32::Foundation::{ERROR_SUCCESS, HWND, LPARAM, POINT, RECT};
+#[cfg(windows)]
 use windows::Win32::Graphics::Gdi::{
     EnumDisplayMonitors, GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, HDC, HMONITOR, MONITORINFO, MONITORINFOEXW,
     MONITOR_DEFAULTTONEAREST,
 };
+#[cfg(windows)]
 use windows::Win32::UI::HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI};
+#[cfg(windows)]
 use windows::Win32::UI::WindowsAndMessaging::{
     GetCursorPos, GetWindowLongPtrW, GetWindowRect, IsWindowVisible, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE,
     HWND_TOPMOST, MONITORINFOF_PRIMARY, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_SHOWNOACTIVATE,
     WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
 };
+#[cfg(windows)]
 use windows::core::BOOL;
 
 /// Tamaño fijo (lógico) de la ventana: la píldora y sus tarjetas viven dentro, el resto es hueco
@@ -46,11 +66,11 @@ use windows::core::BOOL;
 pub const SIZE: (f64, f64) = (360.0, 300.0);
 
 /// Zona pulsable informada por la UI (px CSS relativos a la ventana). `None` = nada pulsable.
-static HITBOX: Mutex<Option<Rect>> = Mutex::new(None);
+pub(crate) static HITBOX: Mutex<Option<Rect>> = Mutex::new(None);
 /// Último hover comunicado a la UI.
-static HOVER: AtomicBool = AtomicBool::new(false);
+pub(crate) static HOVER: AtomicBool = AtomicBool::new(false);
 /// Cada cuántas vueltas del sondeo (~2 s) se comprueba que la barra fijada sigue en su monitor.
-const PIN_CHECK_TICKS: u32 = 60;
+pub(crate) const PIN_CHECK_TICKS: u32 = 60;
 
 pub fn set_hitbox(rect: Option<Rect>) {
     *HITBOX.lock() = rect;
@@ -73,6 +93,7 @@ pub enum Anchor {
     Cursor,
 }
 
+#[cfg(windows)]
 fn hwnd(app: &AppHandle) -> Option<HWND> {
     let win = app.get_webview_window("flowbar")?;
     let h = win.hwnd().ok()?;
@@ -82,6 +103,7 @@ fn hwnd(app: &AppHandle) -> Option<HWND> {
 /// Estilos que impiden activarse y la ocultan de Alt+Tab, posición y sondeo. Una vez al arrancar.
 /// La ventana nace visible y sin foco (`tauri.conf.json`: `visible`, `focus: false`,
 /// `focusable: false`); `_visible_at_rest` lo resuelve la UI con los ajustes.
+#[cfg(windows)]
 pub fn init(app: &AppHandle, _visible_at_rest: bool) {
     let Some(h) = hwnd(app) else {
         eprintln!("[flowbar] ventana flowbar no encontrada");
@@ -101,6 +123,7 @@ pub fn init(app: &AppHandle, _visible_at_rest: bool) {
 
 /// Se asegura de que la ventana está visible y encima de todo, sin activarla. Lo que se pinta lo
 /// decide la UI.
+#[cfg(windows)]
 pub fn show(app: &AppHandle) {
     if let Some(h) = hwnd(app) {
         // SAFETY: h es el HWND vivo de nuestra ventana.
@@ -117,11 +140,13 @@ pub fn show(app: &AppHandle) {
 /// es invisible y transparente a los clics. Se deja para que el controlador exprese la intención.
 pub fn hide(_app: &AppHandle) {}
 
+#[cfg(windows)]
 fn click_through_bits() -> isize {
     (WS_EX_TRANSPARENT.0 | WS_EX_LAYERED.0) as isize
 }
 
 /// Monitor donde va la barra: el fijado si sigue conectado; si no, el que pide `anchor`.
+#[cfg(windows)]
 fn target_monitor(app: &AppHandle, anchor: Anchor, h: HWND) -> HMONITOR {
     if let Some(mon) = pinned_monitor(app) {
         return mon;
@@ -141,6 +166,7 @@ fn target_monitor(app: &AppHandle, anchor: Anchor, h: HWND) -> HMONITOR {
 }
 
 /// Área de trabajo (sin barra de tareas) del monitor y su factor de escala.
+#[cfg(windows)]
 fn work_area(mon: HMONITOR) -> Option<(RECT, f64)> {
     let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
     // SAFETY: info está inicializada con su tamaño.
@@ -155,6 +181,7 @@ fn work_area(mon: HMONITOR) -> Option<(RECT, f64)> {
 
 /// Rectángulo (px físicos) de la ventana abajo al centro del área de trabajo de `mon` (justo sobre
 /// la barra de tareas; el margen inferior de 8 px lo lleva la propia píldora dentro de la ventana).
+#[cfg(windows)]
 fn bar_rect(mon: HMONITOR) -> Option<RECT> {
     let (work, scale) = work_area(mon)?;
     let (lw, lh) = SIZE;
@@ -164,6 +191,7 @@ fn bar_rect(mon: HMONITOR) -> Option<RECT> {
     Some(RECT { left: x, top: y, right: x + w, bottom: y + hgt })
 }
 
+#[cfg(windows)]
 fn move_to(h: HWND, r: RECT) {
     // SAFETY: h es el HWND vivo de nuestra ventana.
     unsafe {
@@ -172,6 +200,7 @@ fn move_to(h: HWND, r: RECT) {
 }
 
 /// Coloca la ventana abajo al centro de su monitor (el fijado o el de `anchor`).
+#[cfg(windows)]
 pub fn place(app: &AppHandle, anchor: Anchor) {
     let Some(h) = hwnd(app) else { return };
     let Some(r) = bar_rect(target_monitor(app, anchor, h)) else { return };
@@ -181,6 +210,7 @@ pub fn place(app: &AppHandle, anchor: Anchor) {
 /// Con la barra fijada, la devuelve a su sitio si no está en él: el monitor volvió a enchufarse,
 /// cambió la resolución o la escala, o Windows la movió al desconectarlo. Siguiendo al cursor no
 /// hace nada (la barra se queda donde se dictó por última vez, como siempre).
+#[cfg(windows)]
 fn keep_pinned(app: &AppHandle, h: HWND) {
     let Some(mon) = pinned_monitor(app) else { return };
     let Some(want) = bar_rect(mon) else { return };
@@ -194,6 +224,7 @@ fn keep_pinned(app: &AppHandle, h: HWND) {
 // ------------------------------------------------------------ monitores y barra fija
 
 /// Un monitor conectado según Win32.
+#[cfg(windows)]
 struct Monitor {
     handle: HMONITOR,
     device: String,
@@ -201,16 +232,19 @@ struct Monitor {
     primary: bool,
 }
 
+#[cfg(windows)]
 fn wide(buf: &[u16]) -> String {
     String::from_utf16_lossy(&buf[..buf.iter().position(|&c| c == 0).unwrap_or(buf.len())])
 }
 
 /// Número de la pantalla a partir de su nombre de dispositivo (`\\.\DISPLAY2` -> 2).
+#[cfg_attr(not(windows), allow(dead_code))]
 fn display_number(device: &str) -> u32 {
     let start = device.trim_end_matches(|c: char| c.is_ascii_digit()).len();
     device[start..].parse().unwrap_or(0)
 }
 
+#[cfg(windows)]
 fn monitor_info(mon: HMONITOR) -> Option<Monitor> {
     let mut info = MONITORINFOEXW::default();
     info.monitorInfo.cbSize = std::mem::size_of::<MONITORINFOEXW>() as u32;
@@ -227,6 +261,7 @@ fn monitor_info(mon: HMONITOR) -> Option<Monitor> {
     })
 }
 
+#[cfg(windows)]
 unsafe extern "system" fn collect_monitor(mon: HMONITOR, _: HDC, _: *mut RECT, data: LPARAM) -> BOOL {
     // SAFETY: `data` apunta al `Vec` de `monitors()`, vivo mientras dura EnumDisplayMonitors.
     let list = unsafe { &mut *(data.0 as *mut Vec<HMONITOR>) };
@@ -235,6 +270,7 @@ unsafe extern "system" fn collect_monitor(mon: HMONITOR, _: HDC, _: *mut RECT, d
 }
 
 /// Monitores conectados, en el orden de Win32.
+#[cfg(windows)]
 fn monitors() -> Vec<Monitor> {
     let mut handles: Vec<HMONITOR> = Vec::new();
     // SAFETY: el callback solo usa el puntero a `handles`, que vive durante toda la llamada.
@@ -257,6 +293,7 @@ pub fn resolve_pin(device: &str, rect: Option<MonitorRect>, monitors: &[(&str, M
 }
 
 /// El monitor fijado en los ajustes, si hay uno y sigue conectado.
+#[cfg(windows)]
 fn pinned_monitor(app: &AppHandle) -> Option<HMONITOR> {
     let (device, rect) = {
         let st = app.try_state::<Arc<AppState>>()?;
@@ -269,6 +306,7 @@ fn pinned_monitor(app: &AppHandle) -> Option<HMONITOR> {
 }
 
 /// Monitor donde está ahora la ventana de la barra: nombre de dispositivo y rectángulo.
+#[cfg(windows)]
 pub fn current_monitor(app: &AppHandle) -> Option<(String, MonitorRect)> {
     let h = hwnd(app)?;
     // SAFETY: h es el HWND vivo de nuestra ventana.
@@ -277,12 +315,14 @@ pub fn current_monitor(app: &AppHandle) -> Option<(String, MonitorRect)> {
 }
 
 /// Rectángulo actual del monitor con ese nombre de dispositivo, si está conectado.
+#[cfg(windows)]
 pub fn monitor_rect(device: &str) -> Option<MonitorRect> {
     monitors().into_iter().find(|m| m.device.eq_ignore_ascii_case(device)).map(|m| m.rect)
 }
 
 /// Nombre comercial (EDID) de cada monitor activo, por nombre de dispositivo GDI. Si Windows no lo
 /// da (o falla la consulta) el mapa queda vacío y la UI se queda con «Pantalla N».
+#[cfg(windows)]
 fn friendly_names() -> HashMap<String, String> {
     let mut out = HashMap::new();
     let (mut np, mut nm) = (0u32, 0u32);
@@ -329,6 +369,7 @@ fn friendly_names() -> HashMap<String, String> {
 }
 
 /// Monitores conectados para la lista de Ajustes (`list_monitors`), por número de pantalla.
+#[cfg(windows)]
 pub fn list_monitors(app: &AppHandle) -> Vec<MonitorInfo> {
     let names = friendly_names();
     let current = current_monitor(app).map(|(d, _)| d);
@@ -350,7 +391,8 @@ pub fn list_monitors(app: &AppHandle) -> Vec<MonitorInfo> {
 
 /// Ordena por el número de Windows y renumera 1, 2…: Windows no numera seguido (`DISPLAY7` y `DISPLAY8` con
 /// solo dos pantallas) y en Ajustes salía «Pantalla 7» (fallo del 18-oct). `device` sigue siendo la clave.
-fn number_in_order(list: &mut [MonitorInfo]) {
+/// En Mac la usa `crate::mac::flowbar::list_monitors` con su propio orden previo.
+pub(crate) fn number_in_order(list: &mut [MonitorInfo]) {
     list.sort_by(|a, b| (a.number, &a.device).cmp(&(b.number, &b.device)));
     for (i, m) in list.iter_mut().enumerate() {
         m.number = i as u32 + 1;
@@ -360,6 +402,7 @@ fn number_in_order(list: &mut [MonitorInfo]) {
 /// Sondea el cursor a ~30 Hz: sobre la zona pulsable la ventana recibe el ratón; fuera, los
 /// clics la atraviesan. Se mira el estilo real en cada vuelta (no un valor cacheado) porque tao
 /// puede reescribir los estilos por su cuenta (p. ej. al cambiar de DPI).
+#[cfg(windows)]
 fn spawn_cursor_poller(app: AppHandle) {
     let mut tick = 0u32;
     let spawned = std::thread::Builder::new().name("pronto-flowbar-poll".into()).spawn(move || loop {
@@ -389,6 +432,7 @@ fn spawn_cursor_poller(app: AppHandle) {
     }
 }
 
+#[cfg(windows)]
 fn cursor_in_hitbox(app: &AppHandle) -> bool {
     let Some(rect) = *HITBOX.lock() else { return false };
     let Some(h) = hwnd(app) else { return false };
@@ -492,6 +536,7 @@ mod tests {
 
     /// En el equipo real: hay al menos un monitor, uno es el principal y cada uno se reencuentra
     /// por su nombre y su rectángulo.
+    #[cfg(windows)]
     #[test]
     fn monitores_reales() {
         let mons = monitors();

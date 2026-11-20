@@ -1404,7 +1404,7 @@ pub fn category_for_app(exe: &str, title: &str) -> Category {
     match exe {
         "whatsapp" | "whatsapp.root" | "telegram" | "discord" | "signal" | "messenger" => Category::Personal,
         "slack" | "teams" | "ms-teams" | "msteams" | "zoom" => Category::Work,
-        "outlook" | "olk" | "thunderbird" | "hxoutlook" => Category::Email,
+        "outlook" | "olk" | "thunderbird" | "hxoutlook" | "mail" => Category::Email,
         _ if title.contains("gmail") || title.contains("outlook") => Category::Email,
         _ => Category::Other,
     }

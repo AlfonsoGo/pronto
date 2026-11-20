@@ -54,14 +54,30 @@ fn ms(t: Instant) -> f64 {
     t.elapsed().as_secs_f64() * 1000.0
 }
 
+#[cfg(windows)]
 fn vram_free_mb() -> f64 {
     whisper_rs::vulkan::list_devices().into_iter().max_by_key(|d| d.vram.total).map_or(0.0, |d| d.vram.free as f64 / 1_048_576.0)
 }
 
+#[cfg(windows)]
 fn threads() -> usize {
     let pid = std::process::id();
     let out = std::process::Command::new("powershell").args(["-NoProfile", "-Command", &format!("(Get-Process -Id {pid}).Threads.Count")]).output();
     out.ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse().ok()).unwrap_or(0)
+}
+
+/// macOS: memoria unificada, sin presupuesto de VRAM aparte que medir (Metal no lo da por proceso): 0.
+#[cfg(target_os = "macos")]
+fn vram_free_mb() -> f64 {
+    0.0
+}
+
+/// macOS: hilos del proceso con `ps -M` (una línea por hilo más la cabecera).
+#[cfg(target_os = "macos")]
+fn threads() -> usize {
+    let pid = std::process::id().to_string();
+    let out = std::process::Command::new("/bin/ps").args(["-M", "-p", &pid]).output();
+    out.ok().map_or(0, |o| String::from_utf8_lossy(&o.stdout).lines().filter(|l| !l.trim().is_empty()).count().saturating_sub(1))
 }
 
 /// Contexto y estado de whisper.cpp como `whisper::Ctx::open` (turbo).

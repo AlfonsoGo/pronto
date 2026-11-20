@@ -129,15 +129,26 @@
 
   // ── Atajos ────────────────────────────────────────────────────────────────
   const KEYNAMES = { Space: 'Espacio', Escape: 'Esc', Enter: 'Intro', Backspace: 'Retroceso', Tab: 'Tab' };
+  // Mac: símbolos de macOS (fn ⌃ ⌥ ⇧ ⌘; en el modelo «win» es Cmd). En la maqueta, ?mac lo simula.
+  const IS_MAC = /Macintosh|Mac OS X/.test(navigator.userAgent) || new URLSearchParams(location.search).has('mac');
+  const DEFAULT_HOLD = IS_MAC ? ['fn'] : ['Win', 'Alt'];
   function hotkeyParts(h) {
-    if (!h) return ['Win', 'Alt'];
+    if (!h) return DEFAULT_HOLD;
     const p = [];
-    if (h.ctrl) p.push('Ctrl');
-    if (h.win) p.push('Win');
-    if (h.alt) p.push('Alt');
-    if (h.shift) p.push('Shift');
+    if (IS_MAC) {
+      if (h.func) p.push('fn');
+      if (h.ctrl) p.push('⌃');
+      if (h.alt) p.push('⌥');
+      if (h.shift) p.push('⇧');
+      if (h.win) p.push('⌘');
+    } else {
+      if (h.ctrl) p.push('Ctrl');
+      if (h.win) p.push('Win');
+      if (h.alt) p.push('Alt');
+      if (h.shift) p.push('Shift');
+    }
     if (h.key) p.push(KEYNAMES[h.key] || String(h.key));
-    return p.length ? p : ['Win', 'Alt'];
+    return p.length ? p : DEFAULT_HOLD;
   }
   const holdKeys = () => hotkeyParts(settings && settings.hotkeyHold);
 

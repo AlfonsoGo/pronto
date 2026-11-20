@@ -9,6 +9,10 @@
 //!   Pronto se cierre, ejecuta el instalador en silencio y vuelve a abrir `pronto.exe`.
 //!
 //! Solo lectura contra la API de GitHub; nada se instala sin que el usuario pulse «Actualizar ahora».
+//!
+//! En Mac (D9) se avisa igual, pero «Actualizar» abre la página del release y no descarga nada: la
+//! descarga verificada (límites, SHA-256) sigue compilada y probada en los dos sistemas, sin uso en Mac.
+#![cfg_attr(target_os = "macos", allow(dead_code))]
 
 use crate::state::AppState;
 use crate::tray;
@@ -19,8 +23,10 @@ use sha2::{Digest, Sha256};
 use std::cmp::Ordering;
 use std::fs::{self, File};
 use std::io::{Read, Write};
+#[cfg(windows)]
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
+#[cfg(windows)]
 use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::sync::Arc;
@@ -45,6 +51,7 @@ const RETRY_AFTER_RATE_LIMIT: Duration = Duration::from_secs(3600);
 const TICK: Duration = Duration::from_secs(30);
 const EMIT_EVERY: Duration = Duration::from_millis(120);
 /// Cuánto esperar a que el ayudante confirme que está vivo antes de cerrar Pronto.
+#[cfg(windows)]
 const HELPER_ALIVE_TIMEOUT: Duration = Duration::from_secs(10);
 const NOTES_MAX_CHARS: usize = 600;
 const NOTES_MAX_LINES: usize = 12;
@@ -52,6 +59,7 @@ const NOTES_MAX_LINES: usize = 12;
 const EV_AVAILABLE: &str = "update://available";
 const EV_PROGRESS: &str = "update://progress";
 
+#[cfg(windows)]
 const HELPER_SCRIPT: &str = include_str!("update_helper.ps1");
 
 // ------------------------------------------------------------ versiones (semver mínimo)
@@ -204,16 +212,55 @@ pub fn parse_digest(digest: Option<&str>) -> Option<String> {
     (hex.len() == 64 && hex.bytes().all(|b| b.is_ascii_hexdigit())).then_some(hex)
 }
 
+/// Sistema para el que se elige el paquete de un release (un mismo release sirve a los dos).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Os {
+    Windows,
+    Mac,
+}
+
+/// El sistema de esta compilación.
+pub const THIS_OS: Os = if cfg!(windows) { Os::Windows } else { Os::Mac };
+
+/// Índice del paquete de `names` para `os`. Windows: el PRIMER `.exe` (como siempre). Mac: un `.dmg`
+/// de Apple Silicon (D4): primero el que diga `aarch64`/`arm64`; si no, uno que diga `mac` o
+/// `universal` y no sea de Intel (`x64`, `x86_64`, `intel`).
+pub fn pick_asset(names: &[&str], os: Os) -> Option<usize> {
+    let lower: Vec<String> = names.iter().map(|n| n.to_ascii_lowercase()).collect();
+    match os {
+        Os::Windows => lower.iter().position(|n| n.ends_with(".exe")),
+        Os::Mac => {
+            let dmg = |n: &String| n.ends_with(".dmg");
+            let intel = |n: &String| n.contains("x64") || n.contains("x86_64") || n.contains("intel");
+            lower
+                .iter()
+                .position(|n| dmg(n) && (n.contains("aarch64") || n.contains("arm64")))
+                .or_else(|| lower.iter().position(|n| dmg(n) && (n.contains("mac") || n.contains("universal")) && !intel(n)))
+        }
+    }
+}
+
 /// Interpreta el JSON de `releases/latest`. `Ok(None)` = nada que instalar (borrador, prerelease o sin
-/// ningún `.exe`); `Err` = JSON ilegible o tag que no es una versión. Toma el PRIMER asset `.exe`.
+/// paquete para este sistema); `Err` = JSON ilegible o tag que no es una versión. El paquete lo elige
+/// `pick_asset` (en Windows, el PRIMER asset `.exe`).
 pub fn parse_release(json: &str) -> Result<Option<Release>, String> {
+    parse_release_for(json, THIS_OS)
+}
+
+/// `parse_release` para el sistema `os` (pura: lo del Mac se prueba también en Windows).
+pub fn parse_release_for(json: &str, os: Os) -> Result<Option<Release>, String> {
     let gh: GhRelease = serde_json::from_str(json).map_err(|e| format!("La respuesta de GitHub no se entiende: {e}"))?;
     let version = parse_version(&gh.tag_name).ok_or_else(|| format!("El tag «{}» no es una versión", gh.tag_name))?;
     if gh.draft || gh.prerelease || !version.pre.is_empty() {
         return Ok(None);
     }
-    let Some(a) = gh.assets.iter().find(|a| a.name.to_ascii_lowercase().ends_with(".exe")) else {
+    let names: Vec<&str> = gh.assets.iter().map(|a| a.name.as_str()).collect();
+    let Some(a) = pick_asset(&names, os).and_then(|i| gh.assets.get(i)) else {
         return Ok(None);
+    };
+    let name = match os {
+        Os::Windows => safe_file_name(&a.name),
+        Os::Mac => safe_dmg_name(&a.name),
     };
     let tag = gh.tag_name.trim().to_string();
     Ok(Some(Release {
@@ -221,7 +268,7 @@ pub fn parse_release(json: &str) -> Result<Option<Release>, String> {
         notes: plain_notes(gh.body.as_deref().unwrap_or(""), NOTES_MAX_CHARS, NOTES_MAX_LINES),
         page_url: gh.html_url.unwrap_or_default(),
         published_at: gh.published_at,
-        asset: Asset { name: safe_file_name(&a.name), url: a.browser_download_url.clone(), size: a.size, sha256: parse_digest(a.digest.as_deref()) },
+        asset: Asset { name, url: a.browser_download_url.clone(), size: a.size, sha256: parse_digest(a.digest.as_deref()) },
         version,
         tag,
     }))
@@ -232,6 +279,14 @@ fn safe_file_name(name: &str) -> String {
     let base = Path::new(name).file_name().and_then(|n| n.to_str()).unwrap_or("");
     let clean: String = base.chars().filter(|c| !matches!(c, '<' | '>' | ':' | '"' | '/' | '\\' | '|' | '?' | '*') && !c.is_control()).collect();
     if clean.to_ascii_lowercase().ends_with(".exe") && clean.len() > 4 { clean } else { "Pronto-Setup.exe".into() }
+}
+
+/// Nombre del `.dmg` del Mac para enseñarlo (en Mac no se descarga, D9): sin carpetas (ni `/` ni `\`)
+/// ni caracteres raros; igual en los dos sistemas.
+fn safe_dmg_name(name: &str) -> String {
+    let base = name.rsplit(['/', '\\']).next().unwrap_or("");
+    let clean: String = base.chars().filter(|c| !matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*') && !c.is_control()).collect();
+    if clean.to_ascii_lowercase().ends_with(".dmg") && clean.len() > 4 { clean } else { "Pronto.dmg".into() }
 }
 
 /// Solo se descarga de GitHub por HTTPS (con la URL de pruebas también de 127.0.0.1).
@@ -868,6 +923,7 @@ fn download_installer(asset: &Asset, dir: &Path, file_name: &str, limits: Limits
 
 // ------------------------------------------------------------ ayudante e instalación
 
+#[cfg(windows)]
 fn powershell_exe() -> PathBuf {
     let p = PathBuf::from(std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into())).join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
     if p.is_file() { p } else { PathBuf::from("powershell.exe") }
@@ -875,6 +931,7 @@ fn powershell_exe() -> PathBuf {
 
 /// Lanza el ayudante (PowerShell oculto, sin ventana) y espera a que confirme que está vivo
 /// (`helper-started`). Si no lo hace, devuelve error y Pronto NO se cierra.
+#[cfg(windows)]
 pub fn spawn_helper(pid: u32, installer: &Path, exe: &Path, dir: &Path) -> Result<(), String> {
     const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -921,6 +978,7 @@ pub fn spawn_helper(pid: u32, installer: &Path, exe: &Path, dir: &Path) -> Resul
 
 /// ¿Es un ejecutable compilado con cargo? Por la ruta (`target\debug|release`) o, con otro
 /// `target-dir` (el de src-tauri/.cargo/config.toml), por lo que cargo deja a su lado.
+#[cfg(windows)]
 fn is_dev_exe(exe: &Path) -> bool {
     let s = exe.to_string_lossy().to_ascii_lowercase().replace('/', "\\");
     let cargo_dir = exe.parent().is_some_and(|d| d.join("deps").is_dir() && d.join(".fingerprint").is_dir());
@@ -929,11 +987,13 @@ fn is_dev_exe(exe: &Path) -> bool {
 
 /// ¿Esta copia no se puede autoinstalar? Una compilación de depuración nunca; una de `target`
 /// solo con `PRONTO_UPDATE_ALLOW_DEV` (pruebas).
+#[cfg(windows)]
 fn install_blocked(exe: &Path, debug: bool, allow_dev: bool) -> bool {
     debug || (is_dev_exe(exe) && !allow_dev)
 }
 
 /// Por qué no se puede cerrar Pronto ahora para instalar (reunión grabándose o dictado en curso).
+#[cfg(windows)]
 fn busy_reason(st: &AppState) -> Option<&'static str> {
     if st.meeting.is_active() {
         return Some("Hay una reunión grabándose. Termínala y actualiza después.");
@@ -950,6 +1010,7 @@ fn busy_reason(st: &AppState) -> Option<&'static str> {
 
 /// Lanza el ayudante (que cierra Pronto) solo si durante la descarga no se ha empezado a dictar ni
 /// a grabar una reunión: se vuelve a mirar justo antes de salir.
+#[cfg_attr(not(windows), allow(dead_code))]
 fn launch_when_idle(busy: impl Fn() -> Option<&'static str>, launch: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
     match busy() {
         Some(why) => Err(why.into()),
@@ -982,6 +1043,7 @@ fn publish(app: &AppHandle, state: &'static str, done: u64, total: u64) {
 
 /// Descarga la versión pendiente, la verifica y cierra Pronto dejando al ayudante instalarla y reabrirla.
 /// Vuelve enseguida; el avance llega por `update://progress`. Los errores también salen por ese evento.
+#[cfg(windows)]
 pub fn install(app: &AppHandle, st: &Arc<AppState>) -> Result<(), String> {
     let preflight = || -> Result<(Release, PathBuf), String> {
         let exe = std::env::current_exe().map_err(|e| format!("No se pudo localizar Pronto: {e}"))?;
@@ -1053,6 +1115,42 @@ pub fn install(app: &AppHandle, st: &Arc<AppState>) -> Result<(), String> {
     Ok(())
 }
 
+/// Página que se abre en Mac al pulsar «Actualizar»: la del release (`html_url`) si es de GitHub por
+/// https; si no, la del último release.
+#[cfg_attr(windows, allow(dead_code))]
+fn release_page(r: Option<&Release>) -> String {
+    const LATEST_PAGE: &str = "https://github.com/AlfonsoGo/pronto/releases/latest";
+    r.map(|r| r.page_url.trim().to_string())
+        .filter(|u| tauri::Url::parse(u).is_ok_and(|p| p.scheme() == "https" && p.host_str() == Some("github.com")))
+        .unwrap_or_else(|| LATEST_PAGE.to_string())
+}
+
+/// Mac (D9): «Actualizar» NO instala. Abre la página del release con `/usr/bin/open` para que el
+/// usuario baje el `.dmg`, y el estado vuelve a `available` (la UI lo había pasado a «Descargando…»).
+/// Sin notarizar y sin un Mac para probarlo, cambiar el .app en caliente es arriesgado. Misma firma
+/// que la de Windows.
+#[cfg(target_os = "macos")]
+pub fn install(app: &AppHandle, _st: &Arc<AppState>) -> Result<(), String> {
+    let (page, had_release) = {
+        let g = INNER.lock();
+        (release_page(g.release.as_ref()), g.release.is_some())
+    };
+    match crate::mac::aisetup::open_with_system(std::ffi::OsStr::new(&page)) {
+        Ok(()) => {
+            eprintln!("[updater] abierta la página del release: {page}");
+            let state = if had_release { "available" } else { INNER.lock().state };
+            publish(app, state, 0, 0);
+            Ok(())
+        }
+        Err(e) => {
+            crate::errlog::error("updater", format!("no se pudo abrir la página del release: {e}"));
+            let msg = "No se pudo abrir la página de la actualización. Descárgala desde github.com/AlfonsoGo/pronto/releases.".to_string();
+            set_error(app, msg.clone());
+            Err(msg)
+        }
+    }
+}
+
 // ------------------------------------------------------------ hilo de fondo
 
 /// Lee y borra el resultado que dejó el ayudante en la actualización anterior. `Some(error)` si falló.
@@ -1116,6 +1214,70 @@ mod tests {
     use std::io::{BufRead, BufReader};
     use std::net::TcpListener;
     use std::sync::atomic::AtomicUsize;
+
+    /// Estas pruebas son del paquete de Windows (`.exe`): en los dos sistemas eligen como Windows. Lo
+    /// del Mac va en `paquete_del_mac_*` con `parse_release_for(…, Os::Mac)`.
+    fn parse_release(json: &str) -> Result<Option<Release>, String> {
+        parse_release_for(json, Os::Windows)
+    }
+
+    /// `json` con un `.dmg` de Apple Silicon añadido al final de los assets: así `fetch_latest` (que
+    /// elige para el sistema de la compilación) encuentra paquete en Windows y en Mac.
+    fn with_mac_asset(json: &str) -> String {
+        let mut v: serde_json::Value = serde_json::from_str(json).unwrap();
+        v["assets"].as_array_mut().unwrap().push(serde_json::json!({
+            "name": "Pronto-2.0.1-mac-aarch64.dmg", "size": 9_000_000,
+            "browser_download_url": "https://github.com/AlfonsoGo/pronto/releases/download/v2.0.1/Pronto-2.0.1-mac-aarch64.dmg"
+        }));
+        v.to_string()
+    }
+
+    #[test]
+    fn paquete_del_mac_y_de_windows_en_el_mismo_release() {
+        let names = ["Pronto-Setup-2.4.0.exe", "Pronto-2.4.0-mac-x64.dmg", "Pronto-2.4.0-mac-aarch64.dmg", "notas.txt"];
+        assert_eq!(pick_asset(&names, Os::Windows), Some(0));
+        assert_eq!(pick_asset(&names, Os::Mac), Some(2), "Apple Silicon antes que Intel");
+        assert_eq!(pick_asset(&["Pronto_2.4.0_ARM64.DMG"], Os::Mac), Some(0));
+        assert_eq!(pick_asset(&["Pronto-macOS.dmg"], Os::Mac), Some(0));
+        assert_eq!(pick_asset(&["Pronto-universal.dmg"], Os::Mac), Some(0));
+        // Solo Intel, un .dmg sin «mac» o un .exe: nada para el Mac.
+        for n in ["Pronto-mac-x64.dmg", "Pronto-mac-intel.dmg", "Pronto-mac-x86_64.dmg", "Pronto.dmg", "Pronto-Setup.exe", "Pronto-mac-aarch64.zip"] {
+            assert_eq!(pick_asset(&[n], Os::Mac), None, "{n}");
+        }
+        assert_eq!(pick_asset(&["Pronto-mac-aarch64.dmg"], Os::Windows), None, "Windows nunca coge el .dmg");
+        assert_eq!(pick_asset(&[], Os::Mac), None);
+        assert_eq!(THIS_OS, if cfg!(windows) { Os::Windows } else { Os::Mac });
+    }
+
+    #[test]
+    fn paquete_del_mac_desde_el_json() {
+        let both = with_mac_asset(REAL_RELEASE);
+        let mac = parse_release_for(&both, Os::Mac).unwrap().expect("hay .dmg");
+        assert_eq!(mac.asset.name, "Pronto-2.0.1-mac-aarch64.dmg");
+        assert!(mac.asset.url.ends_with("/v2.0.1/Pronto-2.0.1-mac-aarch64.dmg"));
+        assert_eq!(mac.version.to_string(), "2.0.1");
+        let win = parse_release_for(&both, Os::Windows).unwrap().unwrap();
+        assert_eq!(win.asset.name, "Pronto-Setup-2.0.1.exe");
+        // Un release solo de Windows no ofrece nada al Mac.
+        assert!(parse_release_for(REAL_RELEASE, Os::Mac).unwrap().is_none());
+        // El nombre del .dmg se enseña limpio, sin carpetas.
+        assert_eq!(safe_dmg_name("../../x/Pronto-mac-arm64.dmg"), "Pronto-mac-arm64.dmg");
+        assert_eq!(safe_dmg_name("..\\..\\Pronto-mac-arm64.dmg"), "Pronto-mac-arm64.dmg");
+        assert_eq!(safe_dmg_name("a:b*-mac-arm64.dmg"), "ab-mac-arm64.dmg");
+        assert_eq!(safe_dmg_name(".dmg"), "Pronto.dmg");
+    }
+
+    #[test]
+    fn pagina_del_release_que_abre_el_mac() {
+        let mut r = parse_release(REAL_RELEASE).unwrap().unwrap();
+        r.page_url = "https://github.com/AlfonsoGo/pronto/releases/tag/v2.0.1".into();
+        assert_eq!(release_page(Some(&r)), "https://github.com/AlfonsoGo/pronto/releases/tag/v2.0.1");
+        for malo in ["", "http://github.com/x", "https://evil.example/x", "https://github.com.evil.example/x", "file:///etc/passwd", "javascript:alert(1)"] {
+            r.page_url = malo.into();
+            assert_eq!(release_page(Some(&r)), "https://github.com/AlfonsoGo/pronto/releases/latest", "{malo}");
+        }
+        assert_eq!(release_page(None), "https://github.com/AlfonsoGo/pronto/releases/latest");
+    }
 
     fn v(s: &str) -> Version {
         parse_version(s).unwrap_or_else(|| panic!("no es versión: {s}"))
@@ -1238,6 +1400,7 @@ mod tests {
         assert!(max.len() + ".part".len() < 100, "{max}");
     }
 
+    #[cfg(windows)]
     #[test]
     fn nombre_de_asset_peligroso_se_sanea() {
         assert_eq!(safe_file_name("Pronto-Setup-2.0.2.exe"), "Pronto-Setup-2.0.2.exe");
@@ -1670,7 +1833,7 @@ mod tests {
 
     #[test]
     fn consulta_a_un_servidor_local_y_errores() {
-        let (url, _) = serve(vec![("/latest", REAL_RELEASE.as_bytes().to_vec()), ("/roto", b"esto no es json".to_vec())]);
+        let (url, _) = serve(vec![("/latest", with_mac_asset(REAL_RELEASE).into_bytes()), ("/roto", b"esto no es json".to_vec())]);
         let r = fetch_latest(&format!("{url}/latest")).unwrap().unwrap();
         assert_eq!(r.version.to_string(), "2.0.1");
         assert!(fetch_latest(&format!("{url}/nada")).unwrap().is_none(), "404 = sin releases");
@@ -1718,6 +1881,7 @@ mod tests {
         let _ = fs::remove_dir_all(dir);
     }
 
+    #[cfg(windows)]
     #[test]
     fn compilaciones_de_desarrollo_no_se_autoinstalan() {
         assert!(is_dev_exe(Path::new(r"C:\x\Prontov2\src-tauri\target\release\pronto.exe")));
@@ -1755,6 +1919,7 @@ mod tests {
         assert!(launched);
     }
 
+    #[cfg(windows)]
     #[test]
     fn el_ayudante_hace_lo_prometido() {
         let s = HELPER_SCRIPT;
@@ -1803,6 +1968,7 @@ mod tests {
 
     /// `#[ignore]`: ayudante REAL. Instala `PRONTO_E2E_INSTALLER` (un instalador de pruebas /DTestSandbox) y
     /// comprueba que reabre `PRONTO_E2E_EXE` una sola vez. Ver docs/ARQUITECTURA.md «Pruebas».
+    #[cfg(windows)]
     #[test]
     #[ignore]
     fn ayudante_real() {

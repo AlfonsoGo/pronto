@@ -840,6 +840,7 @@ fn rompedor_datos_base_real_copiada() {
     };
     let src = PathBuf::from(src);
     assert!(!src.to_string_lossy().to_lowercase().contains("appdata\\roaming\\pronto2"), "nunca la base de %APPDATA%");
+    assert!(!src.to_string_lossy().to_lowercase().contains("application support/pronto2"), "nunca la base real del Mac");
     let raiz = tmp("real");
     let copia = |nombre: &str| -> PathBuf {
         let d = raiz.join(nombre);
@@ -981,7 +982,23 @@ fn rompedor_datos_rendimiento_disparadores() {
 }
 
 // ------------------------------------------------------------------ 11. -wal enorme
+/// macOS: `ps` del sistema (no hay `GetProcessMemoryInfo`). RSS del proceso en MB.
+#[cfg(target_os = "macos")]
+fn ps_rss_mb() -> f64 {
+    let pid = std::process::id().to_string();
+    let out = std::process::Command::new("/bin/ps").args(["-o", "rss=", "-p", &pid]).output();
+    out.ok().and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<f64>().ok()).map_or(0.0, |kb| kb / 1024.0)
+}
 
+/// macOS: (RSS, RSS) en MB; `ps` no da el pico.
+#[cfg(target_os = "macos")]
+fn mem_mb() -> (f64, f64) {
+    let rss = ps_rss_mb();
+    (rss, rss)
+}
+
+
+#[cfg(windows)]
 fn mem_mb() -> (f64, f64) {
     use windows::Win32::System::ProcessStatus::{GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS};
     use windows::Win32::System::Threading::GetCurrentProcess;
@@ -1533,6 +1550,7 @@ fn rompedor_datos_p2_real_restaurar_copia_de_2_0_2() {
     };
     let src = PathBuf::from(src);
     assert!(!src.to_string_lossy().to_lowercase().contains("appdata\\roaming\\pronto2"), "nunca la base de %APPDATA%");
+    assert!(!src.to_string_lossy().to_lowercase().contains("application support/pronto2"), "nunca la base real del Mac");
     let Ok(copia_real) = std::env::var("PRONTO_ROMPEDOR_DATOS_REAL_COPIA").map(PathBuf::from) else {
         println!("[p2-real] sin PRONTO_ROMPEDOR_DATOS_REAL_COPIA: no se mide");
         return;

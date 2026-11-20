@@ -27,6 +27,9 @@
 .wc-b.close:hover{background:#E81123;color:#fff}
 .wc-b.close:active{background:#C41016;color:#fff}
 .wc-b:focus-visible{outline-offset:-3px}
+/* Mac: los botones de la ventana son los de macOS (arriba a la izquierda) */
+html[data-os="macos"] .wc{display:none}
+html[data-os="macos"] .hdr{padding-left:84px}
 .dict-pill{margin-right:12px}
 .pill-s{display:inline-flex;align-items:center;gap:8px;height:30px;padding:0 14px;border-radius:999px;font-size:12.5px;font-weight:700;
   background:var(--err-bg);color:var(--err-t);box-shadow:var(--brillo)}
@@ -879,3 +882,12 @@ mark{background:rgba(139,92,246,.35);color:inherit;border-radius:4px;padding:0 2
 @keyframes nv-spot{50%{box-shadow:0 0 0 3px var(--violeta),0 0 0 14px rgba(139,92,246,0)}}
 @media (prefers-reduced-motion:reduce){.nv-spot{animation:none}}
 .nv-modal-v{font-size:12px;font-weight:800;letter-spacing:.08em;text-transform:uppercase;color:var(--acento-t);margin:6px 0 -6px}
+
+/* ------------------------------------------------------------------ permisos del Mac */
+.perm-page .tarj{margin-bottom:14px}
+.perm-h{display:flex;align-items:center;gap:12px;justify-content:space-between}
+.perm-h h2{font-size:17px;margin:0}
+.perm p{margin:8px 0 0;color:var(--tinta-2);line-height:1.5}
+.perm .perm-how{color:var(--tinta)}
+.perm .btn{margin-top:12px}
+.perm-foot{margin-top:18px;font-size:13px;color:var(--apagado)}

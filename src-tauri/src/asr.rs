@@ -599,6 +599,7 @@ fn create_recognizer(model_dir: &str, threads: usize) -> Result<OfflineRecognize
 /// `verify` las aprueba, pero sherpa-onnx no: con una carpeta de modelo tan honda el hub decía «listo»
 /// y no se podía dictar (rompedor 22-oct-c, descargas BAJA 6). Con el prefijo `\\?\` (ruta absoluta y
 /// normalizada, que con el prefijo Windows ya no normaliza) sí la abre.
+#[cfg(windows)]
 pub(crate) fn native_path(p: &Path) -> String {
     let s = p.to_string_lossy().into_owned();
     if s.encode_utf16().count() < LONG_PATH || s.starts_with(r"\\?\") {
@@ -616,7 +617,14 @@ pub(crate) fn native_path(p: &Path) -> String {
 
 /// A partir de aquí (en unidades UTF-16) una ruta lleva `\\?\` (MAX_PATH = 260 con el nulo final; algo
 /// de margen por si la librería añade algo).
+#[cfg(windows)]
 const LONG_PATH: usize = 240;
+
+/// macOS: sin MAX_PATH ni prefijo `\\?\`; la ruta tal cual (un `\\?\` delante la rompería).
+#[cfg(target_os = "macos")]
+pub(crate) fn native_path(p: &Path) -> String {
+    p.to_string_lossy().into_owned()
+}
 
 /// Parte audio largo en trozos de como mucho `max` muestras, cortando en el punto más silencioso
 /// de los últimos 6 s de cada trozo para no partir palabras.
@@ -653,6 +661,14 @@ fn split_long(samples: &[f32], max: usize) -> Vec<&[f32]> {
 mod tests {
     use super::*;
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn rutas_largas_tal_cual_en_mac() {
+        let honda = format!("/Users/a/{}/tokens.txt", "carpeta-muy-larga/".repeat(16));
+        assert_eq!(native_path(Path::new(&honda)), honda);
+    }
+
+    #[cfg(windows)]
     #[test]
     fn rutas_largas_llevan_el_prefijo_para_sherpa() {
         let corta = Path::new(r"C:\Users\a\AppData\Roaming\Pronto2\models\parakeet\tokens.txt");

@@ -812,8 +812,18 @@ pub fn open_error_log() -> Result<(), String> {
 
 /// Abre una carpeta en el Explorador de Windows. `explorer.exe` devuelve 1 aunque abra bien, así que
 /// solo se mira que haya podido lanzarse.
+#[cfg(windows)]
 fn open_folder(dir: &std::path::Path) -> Result<(), String> {
     std::process::Command::new("explorer.exe").arg(dir).spawn().map(|_| ()).map_err(|e| {
+        errlog::error("settings", format!("no se pudo abrir la carpeta del registro: {e}"));
+        format!("No se pudo abrir la carpeta: {e}")
+    })
+}
+
+/// Mac: abre la carpeta en el Finder con `/usr/bin/open` (con plazo, `mac::aisetup::open_with_system`).
+#[cfg(target_os = "macos")]
+fn open_folder(dir: &std::path::Path) -> Result<(), String> {
+    crate::mac::aisetup::open_with_system(dir.as_os_str()).map_err(|e| {
         errlog::error("settings", format!("no se pudo abrir la carpeta del registro: {e}"));
         format!("No se pudo abrir la carpeta: {e}")
     })
