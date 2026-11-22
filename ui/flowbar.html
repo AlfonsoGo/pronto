@@ -54,6 +54,10 @@
     </div>
   </div>
 
+  <!-- Texto en vivo (BELTR-PRT-10): lo fijado y, en gris, lo provisional, mientras se habla. Es una ayuda
+       visual que cambia cada 0,7 s: el lector de pantalla oye el resultado final, no cada tick. -->
+  <div id="vivo" class="vivo" aria-hidden="true" hidden><div class="vv-ventana"><p><span id="vivo-fijo" class="vv-fijo"></span><span id="vivo-prov" class="vv-prov"></span></p></div></div>
+
   <!-- Tooltip único, se coloca encima del elemento con data-tip -->
   <div id="tip" class="tip" aria-hidden="true"></div>
 
@@ -93,6 +97,11 @@
 
       <div class="shine"></div>
     </div>
+
+    <!-- satélite: hay una actualización (solo en «ready» y con una versión pendiente) -->
+    <button id="sat-update" class="sat sat-update" type="button" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3"/><path d="m7 10 5 5 5-5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg>
+    </button>
 
     <!-- satélite: Grabar Meet (solo en «ready») -->
     <button id="sat-notes" class="sat sat-notes" type="button" data-tip="Grabar Meet" aria-label="Grabar la reunión con Meets">

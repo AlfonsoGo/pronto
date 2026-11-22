@@ -1,0 +1,20 @@
+Sube el código a GitHub antes de comer, por favor.
+Txonso ha pedido que revisemos la factura de BeltranLabs.
+Abre Claqueta y exporta el vídeo del cliente en vertical.
+El modelo Parakeet transcribe más rápido que Whisper en este ordenador.
+Si Ollama no responde, el dictado tiene que seguir funcionando.
+Guarda los datos de los usuarios en Supabase y haz una copia diaria.
+Crea un ticket en Odoo para la reunión del martes.
+Pregúntale a Sonnet si el resumen está bien escrito.
+Mañana a las diez enseñamos Claqueta a dos clientes nuevos.
+Mándale a Txonso el enlace del repositorio de GitHub.
+En BeltranLabs probamos cada cambio antes de publicarlo.
+Parakeet entiende bien el español aunque hables deprisa.
+He apagado Ollama para medir cuánta memoria libre queda.
+La base de Supabase tiene tres tablas nuevas desde ayer.
+Revisa en Odoo qué tareas siguen abiertas esta semana.
+Whisper tarda un poco más, pero acierta mejor los nombres raros.
+Esta tarde grabamos el anuncio de BeltranLabs con Claqueta.
+Sonnet escribe el borrador y luego lo revisa una persona.
+Txonso quiere que el dictado respete las palabras del diccionario.
+Conecta GitHub con Odoo para que las tareas se cierren solas.

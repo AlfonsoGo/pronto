@@ -1,0 +1,32 @@
+{
+  "_nota": "Peor resultado admitido por tests/banco-entender.test.mjs. Solo se cambia con una medida nueva y nunca a peor para que pase. Línea base (antes) en linea-base-2026-11-20.txt; estos son los números tras BELTR-PRT-11 (20-nov-2026).",
+  "sinteticas": {
+    "muestras": 20,
+    "dicDichas": 25,
+    "werMax": 5.61,
+    "dicMin": 21,
+    "inventadasMax": 4,
+    "vistaWerMax": 6.12,
+    "vistaDicMin": 20,
+    "vistaInventadasMax": 4
+  },
+  "reales": {
+    "muestras": 13,
+    "dicDichas": 0,
+    "werMax": 10.45,
+    "dicMin": 0,
+    "inventadasMax": 0,
+    "vistaWerMax": 23.13,
+    "vistaDicMin": 0,
+    "vistaInventadasMax": 1
+  },
+  "whisperMedium": {
+    "_nota": "Whisper medium (idioma «automático», sin vista previa): % de palabras mal. Medido el 21 y el 22-nov-2026 antes y después de BELTR-PRT-30: 7,1 % y 11,2 % (iguales).",
+    "sinteticas": {
+      "werMax": 7.14
+    },
+    "reales": {
+      "werMax": 11.2
+    }
+  }
+}

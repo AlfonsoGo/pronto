@@ -3,7 +3,7 @@ Datos: solo bases en memoria (`Db::open_memory`) y WAV en `%TEMP%` (borrados) ·
 
 Rama `fases/2026-10-22` (commit 2f78f7f + árbol compartido con 6 rompedores). Sondas en `src-tauri/src/rompedor_reuniones.rs`,
 las de hoy con prefijo `rompedor_reuniones_2_`. Las que rompen llevan `#[ignore = "rompedor: …"]`:
-`CARGO_TARGET_DIR=C:/Users/usuario/dev/pt-f cargo test rompedor_reuniones_2_ -- --include-ignored --nocapture --test-threads=1`.
+`CARGO_TARGET_DIR=C:/Users/Txonso/dev/pt-f cargo test rompedor_reuniones_2_ -- --include-ignored --nocapture --test-threads=1`.
 `rompedor_reuniones_2_solapes_extremos` tarda ~7 min (perfil `test`). Sin red, sin Ollama real, sin dispositivos, sin motor real.
 Sin `--include-ignored`: 16 pasan, 11 ignoradas (10 roturas + 1 medida de apoyo).
 

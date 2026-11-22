@@ -6,7 +6,7 @@
 
 <p align="center">
   Dictado por voz y notas de reunión automáticas para Windows.<br>
-  100 % local, escrito en Rust, sin nube, sin cuentas y sin suscripción.
+  Tu voz y tu texto no salen de tu PC. Escrito en Rust, sin cuentas y sin suscripción.
 </p>
 
 <p align="center">
@@ -105,12 +105,14 @@ error y el estado de la reunión («Tomando notas de Teams · Detener»).
 
 ## Privacidad
 
-- La voz y el texto se procesan en tu equipo. No hay servidores de Pronto ni telemetría.
+- La voz y el texto se procesan en tu equipo y nunca salen de él.
+- Estadísticas de uso: solo si aceptas, una vez al día se envían un código al azar y cifras (día, versión,
+  palabras, tiempo, dictados, reuniones y programa principal si es uno muy conocido) a un servidor propio. Se cambia en Privacidad y datos.
 - Datos en `%APPDATA%\Pronto2\pronto2.db` (SQLite) y el audio de cada dictado en `audio\`, que se
   borra a los 14 días.
 - Conexiones: la descarga única del modelo (Hugging Face), la consulta de versiones a GitHub
-  (se puede apagar) y, si activas la IA local, la descarga de Ollama y su modelo. Ollama corre en
-  `localhost`.
+  (se puede apagar), las estadísticas si las aceptas y, si activas la IA local, la descarga de Ollama
+  y su modelo. Ollama corre en `localhost`.
 
 ## Compilar desde el código
 

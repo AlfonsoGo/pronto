@@ -4,7 +4,7 @@ Huecos: ver abajo.
 
 Zona: descargas (`updater.rs`, `update_helper.ps1`, `modeldl.rs`, `whisper.rs`, `aisetup.rs`, `ollama.rs`, `asr.rs` en lo que toca a las rutas del modelo). Rama `fases/2026-10-22`, a partir de 2f78f7f; cuando se probó, HEAD estaba en aeda142, que no cambia nada de la zona. Arreglos atacados: 022e85c y ca4f00b.
 Sondas: todas en `src-tauri/src/rompedor_descargas.rs`. Tras la segunda pasada hay 26: 17 de la primera y 9 nuevas.
-Compilación: `CARGO_TARGET_DIR=C:/Users/usuario/dev/pt-d`.
+Compilación: `CARGO_TARGET_DIR=C:/Users/Txonso/dev/pt-d`.
 Lanzar: `cargo test rompedor_descargas_ -- --include-ignored --nocapture --test-threads=1`, con `PRONTO_ROMPEDOR_MODELO=%APPDATA%\Pronto2\models\parakeet` y `PRONTO_ROMPEDOR_WHISPER=%APPDATA%\Pronto2\models\whisper\ggml-medium-q5_0.bin`.
 El ayudante solo se probó con `.exe` de juguete en `%TEMP%`.
 No cuenta lo ya conocido: M1 (el digest es opcional).

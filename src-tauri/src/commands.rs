@@ -42,6 +42,7 @@ pub fn apply_settings(app: &AppHandle, st: &Arc<AppState>, mut new: Settings) ->
             new.flow_bar_monitor.as_deref().and_then(flowbar::monitor_rect)
         };
         new.meeting_auto_confirmed = meeting_confirmed(prev.meeting_auto_confirmed, prev.meeting_auto, new.meeting_auto, new.meeting_auto_confirmed);
+        new.usage_stats = prev.usage_stats;
     }
     new.meeting_detect = new.meeting_auto != MeetingAuto::Off;
     // Una carpeta del modelo nueva no se guarda hasta que el motor la carga bien: si no vale (le
@@ -49,7 +50,11 @@ pub fn apply_settings(app: &AppHandle, st: &Arc<AppState>, mut new: Settings) ->
     // se guardara antes, un modelo malo dejaría a Pronto sin motor en cada arranque (rompedor, ALTA 2).
     let wanted_dir = std::mem::replace(&mut new.model_dir, st.settings.read().model_dir.clone());
     st.db.save_settings(&new).map_err(err)?;
-    let old = std::mem::replace(&mut *st.settings.write(), new.clone());
+    let old = {
+        let mut w = st.settings.write();
+        new.usage_stats = w.usage_stats; // solo lo cambia `set_usage_stats`
+        std::mem::replace(&mut *w, new.clone())
+    };
 
     hotkey::set_config(&new);
     let choice = crate::asr::Choice::from_settings(&new);
@@ -145,6 +150,26 @@ pub fn get_settings(st: St) -> Result<Settings, String> {
 #[tauri::command]
 pub fn save_settings(app: AppHandle, st: St, settings: Settings) -> Result<(), String> {
     apply_settings(&app, st.inner(), settings)
+}
+
+/// La decisión sobre las estadísticas de uso: el único camino que la cambia.
+#[tauri::command]
+pub fn set_usage_stats(app: AppHandle, st: St, enabled: bool) -> Result<(), String> {
+    let (old, s) = {
+        let mut w = st.settings.write();
+        let old = std::mem::replace(&mut w.usage_stats, Some(enabled));
+        (old, w.clone())
+    };
+    st.db.usage_sync(old, s.usage_stats, chrono::Local::now().date_naive()).map_err(err)?;
+    st.db.save_settings(&s).map_err(err)?;
+    let _ = app.emit("settings://changed", s);
+    Ok(())
+}
+
+/// Código de instalación de las estadísticas de uso, para enseñarlo y poder pedir el borrado.
+#[tauri::command]
+pub fn usage_id(st: St) -> Result<Option<String>, String> {
+    st.db.usage_id().map_err(err)
 }
 
 /// Restablece los atajos a los de fábrica y devuelve los ajustes resultantes.
@@ -632,7 +657,18 @@ pub fn update_status() -> Result<UpdateStatus, String> {
 /// «Buscar ahora»: consulta GitHub y devuelve el estado. Falla con un mensaje si no hay conexión.
 #[tauri::command]
 pub async fn update_check(app: AppHandle) -> Result<UpdateStatus, String> {
-    blocking(move || updater::check(&app).map_err(|e| e.msg)).await
+    blocking(move || {
+        updater::clear_dismissed(&app);
+        updater::check(&app).map_err(|e| e.msg)
+    })
+    .await
+}
+
+/// «Más tarde»: la tarjeta del hub y la Flow bar dejan de anunciar esta versión (`update://changed`).
+#[tauri::command]
+pub fn update_dismiss(app: AppHandle) -> Result<(), String> {
+    updater::dismiss(&app);
+    Ok(())
 }
 
 /// «Actualizar ahora»: descarga y verifica el instalador (`update://progress`), cierra Pronto y deja que un

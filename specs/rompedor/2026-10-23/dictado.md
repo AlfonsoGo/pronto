@@ -2,7 +2,7 @@ Rompedor · 2026-10-23 · dictado · 1 altas, 6 medias, 7 bajas · Arreglado: AL
 Datos: solo bases en memoria y carpetas temporales propias (borradas al salir: 0 restos `pronto2-rompedor-dictado-*` en `%TEMP%`); `%APPDATA%\Pronto2\pronto2.db` 270 336 B / 15-oct 21:29:15 y `-wal` 1 825 192 B / 22-oct 17:05:33, iguales antes y después → restaurados ✅. Motor real en solo lectura (`%APPDATA%\Pronto2\models\parakeet`); WAV propios generados con la voz TTS de Windows («Helena», es-ES) directo a fichero en el scratchpad de la sesión, nunca por altavoces | Servidor usado: ninguno
 
 Rama `fases/2026-10-22` (2f78f7f). Sondas en `src-tauri/src/rompedor_dictado.rs`, las de esta pasada con prefijo `rompedor_dictado_b_`:
-`cargo test rompedor_dictado_ -- --include-ignored --nocapture --test-threads=1` (`CARGO_TARGET_DIR=C:/Users/usuario/dev/pt-b`).
+`cargo test rompedor_dictado_ -- --include-ignored --nocapture --test-threads=1` (`CARGO_TARGET_DIR=C:/Users/Txonso/dev/pt-b`).
 Sin `--include-ignored`: 19 pasan, 13 ignoradas (las roturas). Las del motor real piden `PRONTO_ROMPEDOR_MODELO=%APPDATA%\Pronto2\models\parakeet` y `PRONTO_ROMPEDOR_VOZ=<carpeta con w_ollama_0..2.wav, w_asana_0..2.wav, w_pronto_0..2.wav, s_ollama.wav, s_asana.wav, s_pronto.wav>` (se generan con `System.Speech` a 16 kHz mono, como `tests/no-se-negocia/datos/generar-dictado.ps1`); sin ellas imprimen «OMITIDA» y pasan.
 Medidas en perfil `test` (debug) y con otros 6 rompedores compilando en la máquina: los tiempos absolutos son orientativos; donde importa se da la razón frente a una medida hecha a la vez (antes/ahora sobre la misma base).
 

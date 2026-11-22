@@ -89,3 +89,7 @@ smart talk sharp stripe whisper falcon gemini copilot obsidian bear spark craft 
 
 # nombres de pila en inglés (un nombre propio distinto no se cambia por otro del diccionario)
 aaron adam alan albert alex alice amanda amy andrew angela anna anne anthony arthur ashley barbara ben benjamin beth betty brandon brian carl carol caroline catherine charles charlie chris christine christopher claire daniel david deborah dennis donald donna dorothy douglas edward elizabeth emily emma eric ethan george gary gregory hannah harry heather helen henry jacob james jane janet jason jeff jennifer jeremy jessica joe john jonathan joseph joshua julia justin karen kate katherine keith kelly kevin kimberly larry laura lauren linda lisa louis margaret maria mary matthew megan melissa michael michelle nancy nathan nicholas nicole noah oliver olivia patrick paul peter rachel raymond rebecca richard robert ronald ryan samantha samuel sandra sarah scott sharon sophia stephanie stephen steven susan thomas timothy tom tyler walter william
+# más palabras corrientes (revisión BELTR-PRT-11): no se juntan con la de al lado («para kit» no es «Parakeet»)
+kit
+# nombres de pila y apellidos frecuentes (revisión BELTR-PRT-11): «Beltrán las veces» no es «BeltranLabs veces»
+gil beltran

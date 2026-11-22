@@ -167,7 +167,7 @@ export default {
         if (query) return emptyState('search', t('No se encontraron notas para "{q}"', { q: query }), '');
         if (live.active) return '';
         return emptyState('disc-2', t('Pronto toma notas de tus reuniones para que puedas estar presente'),
-          t('Graba tu voz y la de los demás por separado y, al terminar, transcribe, une la conversación y saca quién dijo qué, preguntas, decisiones y tareas. Nada sale de este ordenador.'),
+          t('Graba tu voz y la de los demás por separado y, al terminar, transcribe, une la conversación y saca quién dijo qué, preguntas, decisiones y tareas. Ni el audio ni el texto salen de este ordenador.'),
           `<button class="pill" data-act="start" style="margin-top:10px"><span>${esc(t('Grabar reunión'))}</span><span class="circ">${icon('arrow-up-right', 16)}</span></button>`);
       }
       let html = searchOpen ? `<div class="searchbar"><span class="sb-ic">${icon('search', 17)}</span>

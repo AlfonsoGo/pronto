@@ -3,8 +3,7 @@
 # controlador de su tarjeta (vulkan-1.dll), y ni eso: sin él Pronto usa Parakeet.
 [env]
 VULKAN_SDK = 'C:/VulkanSDK/1.4.363.0'
-# Ajusta LIBCLANG_PATH a tu instalación de libclang (pip install libclang).
-LIBCLANG_PATH = 'C:/Users/usuario/AppData/Local/Programs/Python/Python312/Lib/site-packages/clang/native'
+LIBCLANG_PATH = 'C:/Users/Txonso/AppData/Local/Programs/Python/Python312/Lib/site-packages/clang/native'
 # Binario portable: nada de instrucciones propias del procesador que compila (GGML_NATIVE), con
 # AVX2 como base (cualquier PC desde ~2015; Pronto no ofrece Whisper sin AVX2).
 GGML_NATIVE = "OFF"
@@ -19,4 +18,4 @@ CMAKE_MSVC_RUNTIME_LIBRARY = "MultiThreaded"
 # Ruta corta: el subproyecto de shaders de Vulkan de whisper.cpp no encuentra el compilador si la
 # carpeta de compilación queda demasiado honda (límite de 260 caracteres de Windows).
 [build]
-target-dir = 'C:/dev/pt'
+target-dir = 'C:/Users/Txonso/dev/pt'

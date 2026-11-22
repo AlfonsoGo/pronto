@@ -1,6 +1,6 @@
 Rompedor · 2026-10-23 · hub · 0 altas, 6 medias, 10 bajas · Arreglado: MEDIA 1-6 y BAJA 1, 3, 5, 6, 8, 9 (más la parte del hub de BAJA 2); sin tocar: BAJA 2 en Rust, 4 (velo sobre la barra de título), 7 (meetings.js), 10 (Rust) y los Huecos (ver «Arreglado» al final)
 Datos: sin datos reales (backend simulado + bases temporales `Tmp` de Rust, borradas solas) · `%APPDATA%\Pronto2\pronto2.db` 270336 B, mtime 2026-10-15 21:29:15.377 antes y después (no se abre) · restaurados ✅
-Servidor usado: `scripts/servir-ui.mjs` en http://127.0.0.1:4181 (Chrome headless, `playwright-core`) · Rust con `CARGO_TARGET_DIR=C:/Users/usuario/dev/pt-g` · 0 peticiones fuera de 127.0.0.1 · sin commit
+Servidor usado: `scripts/servir-ui.mjs` en http://127.0.0.1:4181 (Chrome headless, `playwright-core`) · Rust con `CARGO_TARGET_DIR=C:/Users/Txonso/dev/pt-g` · 0 peticiones fuera de 127.0.0.1 · sin commit
 
 Zona: `ui/hub.html`, `ui/hub.js`, `ui/hub/**`, `ui/shared/**` y los comandos IPC que llaman. Rama `fases/2026-10-22` @ 2f78f7f.
 Ejecutar: `node e2e/rompedor/correr.mjs [segunda|estados|tildes|ingles|axe-control|prisa|entradas|xss-backend|flowbar|pantallas]`

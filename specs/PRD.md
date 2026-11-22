@@ -20,7 +20,7 @@ Sin Pronto: teclear, o Wispr Flow (de pago, en la nube).
 | G5 | Nunca perder datos | 0 bases vaciadas al arrancar; copia diaria que se restaura con éxito (incidente del 13-oct-2026) |
 
 ## 3. No-objetivos (lo que NO es este producto)
-- `decidido` Nada en la nube: ni transcripción, ni IA, ni copia, ni sincronización. Ni cuentas ni telemetría.
+- `decidido` Nada en la nube: ni transcripción, ni IA, ni copia, ni sincronización. Ni cuentas. Sin telemetría salvo las estadísticas de uso voluntarias (§5.2).
 - `decidido` No graba reuniones de Discord ni de juegos: la detección automática se limita a Teams, Zoom y Meet.
 - `decidido` Pronto 1 (Flutter) no se mantiene: su historial y diccionario no se migran (respaldo en `%APPDATA%\Pronto2\respaldo-pronto1`).
 - `decidido` En 2.x solo Windows; macOS es la siguiente versión grande y no entra en esta rama.
@@ -58,6 +58,7 @@ Sin Pronto: teclear, o Wispr Flow (de pago, en la nube).
 - `copias\`: 7 copias diarias de la base (VACUUM INTO).
 ### 5.2 Lo único que sale del PC (`observado`)
 - `huggingface.co` (modelos de voz), `ollama.com` / GitHub (instalador de Ollama), `api.github.com` + assets de releases de `AlfonsoGo/pronto` (actualizador), `127.0.0.1:11434` (Ollama local). Ninguna lleva voz ni texto del usuario.
+- `stats.beltranlabs.com` (Umami propio, `uso.rs`): solo si la persona acepta las estadísticas de uso, una vez al día, un código al azar y la lista cerrada de cifras (día, versión, palabras, tiempo, dictados, reuniones y programa principal si es uno muy conocido; si no, «otro»).
 
 ## 6. Caminos críticos (los recorre el `recorredor`, en el hub con `ui/shared/mock.js`)
 1. Primer uso: abrir el hub sin modelo de voz → descargarlo → «listo para dictar».

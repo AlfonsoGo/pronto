@@ -3,7 +3,7 @@
 import { icon } from './shared/icons.js';
 import {
   invoke, listen, win, state, loadSettings, refreshEngine, refreshModel, applyModelProgress, refreshStats, notify, applySettingsEffects, IS_MOCK, subscribe,
-  refreshUpdate, applyUpdateAvailable, applyUpdateProgress,
+  refreshUpdate, applyUpdateAvailable, applyUpdateStatus, applyUpdateProgress,
 } from './hub/api.js';
 import { t, esc, $, $$, toast, closeMenu, hasModal, errText, flushPending, openModal, keysHtml } from './hub/util.js';
 import home from './hub/pages/home.js';
@@ -15,6 +15,7 @@ import transforms from './hub/pages/transforms.js';
 import notes from './hub/pages/notes.js';
 import meetings from './hub/pages/meetings.js';
 import novedades, { maybeShowWhatsNew, unseen as novedadesSinVer } from './hub/pages/novedades.js';
+import { maybeAskUsage } from './hub/uso.js';
 import { initMeetingState, live as liveMeeting } from './hub/meeting.js';
 import { openSettings, openSettingsDialog } from './hub/pages/settings.js';
 import { mountUpdateBanner } from './hub/update.js';
@@ -84,11 +85,11 @@ function shellHtml() {
       <div class="sb-fill"></div>
       <button class="eng tarj" id="eng-card" data-act="open-data">
         <span class="in">
-          <span class="eng-hd"><i class="eng-ic">${icon('shield-check', 17)}</i><b>${esc(t('100 % local'))}</b></span>
-          <span class="eng-tx">${esc(t('Tu voz no sale del equipo'))}</span>
+          <span class="eng-hd"><i class="eng-ic">${icon('shield-check', 17)}</i><b>${esc(t('Voz y texto locales'))}</b></span>
+          <span class="eng-tx">${esc(t('No salen de tu equipo'))}</span>
           <span class="badge ${ev.cls}" id="eng-badge"><i class="dot ${ev.dot}"></i>${esc(ev.text)}</span>
         </span></button>
-      <button class="eng-mini" id="eng-mini" data-act="open-data" aria-label="${esc(t('100 % local · Tu voz no sale del equipo'))}">${icon('shield-check', 20)}<i class="dot ${ev.dot}"></i></button>
+      <button class="eng-mini" id="eng-mini" data-act="open-data" aria-label="${esc(t('Voz y texto locales · No salen de tu equipo'))}">${icon('shield-check', 20)}<i class="dot ${ev.dot}"></i></button>
       <div class="sb-div"></div>
       <button class="nav" data-act="settings">${icon('settings', 20)}<span class="lbl">${esc(t('Configuración'))}</span></button>
       <button class="nav" data-act="help">${icon('circle-help', 20)}<span class="lbl">${esc(t('Cómo se usa'))}</span></button>
@@ -324,6 +325,8 @@ async function boot() {
   if (qs.get('meeting')) ctx.openMeeting = Number(qs.get('meeting'));
   navigate(qs.get('page') || 'home');
   if (qs.get('settings')) openSettingsFrom(qs.get('settings'));
+  // Estadísticas de uso: se pregunta una vez, antes que «Lo nuevo» (que espera a la próxima apertura). En la maqueta, solo con ?uso.
+  if (!IS_MOCK || qs.has('uso')) maybeAskUsage({ blocked: !!qs.get('meeting') || !!qs.get('settings') || !['home', null].includes(qs.get('page')) });
   // «Lo nuevo» tras actualizar, una vez por versión. En la maqueta solo con ?novedades (si no, taparía las páginas en los tests).
   if (!IS_MOCK || qs.has('novedades')) {
     // Quien solo usa reuniones también viene de una versión anterior (rompedor 25-oct, BAJA 3): `get_stats` no las cuenta.
@@ -337,6 +340,7 @@ async function boot() {
   listen('hub://settings', (p) => openSettingsFrom(p && p.tab));
   listen('model://progress', applyModelProgress);
   listen('update://available', applyUpdateAvailable);
+  listen('update://changed', applyUpdateStatus);
   listen('update://progress', applyUpdateProgress);
   listen('settings://changed', (s) => {
     if (!s) return;

@@ -6,7 +6,7 @@ fases: `specs/FASES.md`. Tests: `npm test` (reglas de abajo + `cargo test` en `s
 
 - No publicar, no hacer push y no crear releases sin que Txonso diga «sube».
 - No usar el ratón, los altavoces ni el Pronto instalado de Txonso para probar: baterías automáticas.
-- No parar Ollama. No tocar `%APPDATA%\Pronto2` (datos reales); para probar, copiar una de `copias\`.
+- No parar Ollama. No tocar `%APPDATA%\Pronto2` (datos reales); para probar, copiar (sin tocar el original) una base de `%APPDATA%\Pronto2\copias\` a una carpeta temporal.
 - Para abrir el hub sin Tauri: `npm run ui` → `http://127.0.0.1:4173/hub.html` (backend simulado).
 - Al subir de versión: entrada nueva arriba en `ui/hub/novedades.js` (página «Novedades» y tarjeta «Lo nuevo», que sale
   una vez tras actualizar; en la maqueta, `hub.html?novedades`). El texto de la release sale de ahí:
@@ -17,11 +17,11 @@ fases: `specs/FASES.md`. Tests: `npm test` (reglas de abajo + `cargo test` en `s
 Estas reglas no se ceden por plazos, recortes de alcance, "arreglos rápidos" ni código más simple.
 Si un cambio debilitaría una, **para y avísalo** en vez de enviarlo. Si dos chocan, gana la que
 está antes en la lista. Cada regla tiene su test en `tests/no-se-negocia/` (columna *Test*): una
-regla sin test no está activa. **Estado: aprobadas por Txonso el 23-oct-2026** (reglas 1 y 7 con su redacción de ese día).
+regla sin test no está activa. **Estado: aprobadas por Txonso el 23-oct-2026** (reglas 1 y 7 con su redacción de ese día; la 1, ampliada el 31-oct).
 
 | # | Regla | Umbral medible | Test |
 |---|---|---|---|
-| 1 | **Privacidad: todo local.** Ni voz ni texto del usuario salen del PC. Solo hay red hacia los hosts de `specs/PRD.md` §5.2, y ninguna de esas peticiones lleva datos del usuario. Ollama solo en este PC (loopback): una dirección de otro equipo se rechaza al guardar. | 0 hosts fuera de la lista; 0 peticiones con texto o audio del usuario fuera de 127.0.0.1 | `tests/no-se-negocia/01-privacidad.*` |
+| 1 | **Privacidad: todo local.** Ni voz ni texto del usuario salen del PC. Solo hay red hacia los hosts de `specs/PRD.md` §5.2, y ninguna de esas peticiones lleva datos del usuario. Única excepción (Txonso, 31-oct-2026, PRNT-43): las estadísticas de uso, solo con un «sí» expreso, y solo la lista cerrada de cifras y programas conocidos de `uso.rs`. Ollama solo en este PC (loopback): una dirección de otro equipo se rechaza al guardar. | 0 hosts fuera de la lista; 0 peticiones con texto o audio del usuario fuera de 127.0.0.1; 0 estadísticas sin el «sí» | `tests/no-se-negocia/01-privacidad.*` |
 | 2 | **Integridad de datos.** Nada se pierde al arrancar, migrar o hacer copia: una migración conserva cada fila; la copia diaria se abre y tiene las mismas filas; nunca se crea una base vacía encima de una con datos. | 0 filas perdidas en migración y copia; copia restaurable | `tests/no-se-negocia/02-integridad.*` |
 | 3 | **Velocidad.** El texto aparece al soltar el atajo. No se empeora la línea base medida del motor por defecto. | transcripción de 15 s de audio ≤ línea base × 1,2 = 1068 ms (línea base 890 ms: p50, Parakeet, Ryzen 7 5800X3D, 22-oct-2026; resto de la tubería ~0,3 ms) | `tests/no-se-negocia/03-velocidad.*` |
 | 4 | **Disponibilidad.** Si cae Ollama, la red o un modelo, el dictado sigue pegando texto: solo se degrada esa función. Ninguna llamada de red sin timeout. | 100 % de llamadas `ureq` con timeout; dictado sin IA si Ollama no responde en su plazo | `tests/no-se-negocia/04-disponibilidad.*` |

@@ -65,6 +65,9 @@ impl Default for Choice {
 enum Recognizer {
     Parakeet(OfflineRecognizer),
     Whisper(crate::whisper::Whisper, String),
+    /// Motor de mentira para las pruebas de la regla 5 (vacío, lento, que falla): `Engine::falso_para_tests`.
+    #[cfg(test)]
+    Falso(Box<dyn Fn(&[f32]) -> Timed + Send + Sync>),
 }
 
 impl Recognizer {
@@ -72,6 +75,8 @@ impl Recognizer {
         match self {
             Recognizer::Parakeet(_) => MAX_CHUNK_SECS,
             Recognizer::Whisper(..) => crate::whisper::MAX_CHUNK_SECS,
+            #[cfg(test)]
+            Recognizer::Falso(_) => MAX_CHUNK_SECS,
         }
     }
 
@@ -80,6 +85,8 @@ impl Recognizer {
         match self {
             Recognizer::Parakeet(rec) => decode_timed(rec, samples),
             Recognizer::Whisper(w, lang) => w.decode(samples, lang, precise),
+            #[cfg(test)]
+            Recognizer::Falso(f) => f(samples),
         }
     }
 }
@@ -149,7 +156,8 @@ pub struct Engine {
     /// Cuándo acabó el último dictado (o pronunciación) con prioridad: el reintento largo del hub no
     /// retoma el motor justo detrás de uno, para no pillar al siguiente dictado a mitad de trozo.
     last_dictation_end: Mutex<Option<std::time::Instant>>,
-    /// Dictados esperando turno; mientras haya alguno, la reunión cede el motor.
+    /// Dictados esperando turno; mientras haya alguno, la reunión cede el motor y el texto en vivo
+    /// de Whisper corta el tick a medias (`transcribe_live`).
     dictation_waiting: AtomicUsize,
     /// Hay un dictado en marcha desde que se pulsa el atajo (`AppState.active`): la fase 2 de una
     /// reunión no empieza otro trozo mientras tanto, así el motor está libre al soltar.
@@ -209,6 +217,16 @@ impl Engine {
         *engine.recognizer.lock() = Some(Arc::new(Recognizer::Parakeet(create_recognizer(model_dir, threads)?)));
         engine.status.lock().ready = true;
         Ok(engine)
+    }
+
+    /// Motor de mentira (pruebas de la regla 5): `decode` decide qué «oye» cada trozo; puede tardar
+    /// (carga simulada), devolver vacío o entrar en pánico (el motor falla).
+    #[cfg(test)]
+    pub fn falso_para_tests(decode: impl Fn(&[f32]) -> Timed + Send + Sync + 'static) -> Self {
+        let engine = Self::new("");
+        *engine.recognizer.lock() = Some(Arc::new(Recognizer::Falso(Box::new(decode))));
+        engine.status.lock().ready = true;
+        engine
     }
 
     /// Whisper ya cargado, sin `AppHandle` (pruebas con el modelo real).
@@ -311,6 +329,8 @@ impl Engine {
                         w.set_prompt(engine.whisper_prompt.lock().clone());
                         "whisper"
                     }
+                    #[cfg(test)]
+                    Recognizer::Falso(_) => "falso",
                 };
                 let r = Arc::new(r);
                 *engine.recognizer.lock() = Some(r.clone());
@@ -328,6 +348,8 @@ impl Engine {
                 let active = match engine.recognizer.lock().as_deref() {
                     Some(Recognizer::Parakeet(_)) => "parakeet",
                     Some(Recognizer::Whisper(..)) => "whisper",
+                    #[cfg(test)]
+                    Some(Recognizer::Falso(_)) => "falso",
                     None => "",
                 };
                 engine.set_status(&app, EngineStatus { ready: !active.is_empty(), loading: false, model_dir, error: Some(e), active: active.into() });
@@ -358,6 +380,43 @@ impl Engine {
         self.transcribe_locked(samples, turn, Kind::Precise)
     }
 
+    /// Texto en vivo (`vivo.rs`, BELTR-PRT-10): transcribe un trozo del dictado que aún se graba, pero
+    /// solo si el motor está libre en este momento. Nunca espera: si lo tiene otro (el trozo de una
+    /// reunión que estaba a medias, un reintento del hub) o hay un dictado esperando turno, devuelve
+    /// `None` y ese tick se salta. No cuenta como dictado acabado (`last_dictation_end`).
+    ///
+    /// Al soltar el atajo el dictado no espera al tick a medias (regla 3). Con Parakeet el tick suelta el
+    /// turno antes de decodificar y los dos van a la vez sobre el mismo reconocedor (sherpa-onnx lo
+    /// admite; mismo texto, medido): no hay forma de cortar su decodificación, así que el tick es corto
+    /// (`vivo::TRAMO_MAXIMO`). Con Whisper (GPU) el tick se queda el turno, pero se corta en cuanto un
+    /// dictado lo espera (`abort_callback` de whisper.cpp).
+    pub fn transcribe_live(&self, samples: &[f32]) -> Option<Result<Timed, String>> {
+        if self.dictation_waiting.load(Ordering::SeqCst) > 0 {
+            return None;
+        }
+        let turn = self.busy.try_lock()?;
+        let Some(rec) = self.recognizer.lock().clone() else { return Some(Err(self.not_ready())) };
+        // Un trozo en vivo es de pocos segundos; por si acaso, nunca más de lo que el motor admite de una vez.
+        let samples = &samples[samples.len().saturating_sub(rec.max_chunk() * SAMPLE_RATE as usize)..];
+        let t = match &*rec {
+            Recognizer::Parakeet(r) => {
+                drop(turn);
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| decode_timed(r, samples)))
+            }
+            Recognizer::Whisper(w, lang) => {
+                let t = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| w.decode_abortable(samples, lang, &self.dictation_waiting)));
+                drop(turn);
+                t
+            }
+            #[cfg(test)]
+            Recognizer::Falso(f) => {
+                drop(turn);
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(samples)))
+            }
+        };
+        Some(t.map_err(|_| "el motor de voz falló al transcribir".to_string()))
+    }
+
     /// Latido de la GPU mientras se graba un dictado con Whisper (`Whisper::pulse`), para que al soltar
     /// el atajo no esté a medio reloj: un latido cada `PULSE_EVERY` hasta que se suelta el `Warmth`
     /// (al acabar la grabación) o pasan `PULSE_CAP`. `None` con Parakeet o sin camino rápido.
@@ -385,6 +444,11 @@ impl Engine {
             .map_err(|e| eprintln!("[asr] sin latido: {e}"))
             .ok()?;
         Some(Warmth(on))
+    }
+
+    /// ¿El motor cargado es Whisper? (Parakeet si no; los segmentos y el texto anticipado dependen de ello.)
+    pub fn is_whisper(&self) -> bool {
+        matches!(self.recognizer.lock().as_deref(), Some(Recognizer::Whisper(..)))
     }
 
     /// ¿Los tiempos por token de `transcribe_timed` son aproximados? Solo con Whisper por su camino
@@ -443,15 +507,18 @@ impl Engine {
         }
     }
 
+    /// Por qué no se puede transcribir aún: el modelo se está cargando o falló.
+    fn not_ready(&self) -> String {
+        let st = self.status();
+        if st.loading {
+            "El motor de voz aún se está cargando".to_string()
+        } else {
+            st.error.unwrap_or_else(|| "El motor de voz no está listo".to_string())
+        }
+    }
+
     fn transcribe_locked<'a>(&'a self, samples: &[f32], mut turn: parking_lot::MutexGuard<'a, ()>, kind: Kind) -> Result<Timed, String> {
-        let rec = self.recognizer.lock().clone().ok_or_else(|| {
-            let st = self.status();
-            if st.loading {
-                "El motor de voz aún se está cargando".to_string()
-            } else {
-                st.error.unwrap_or_else(|| "El motor de voz no está listo".to_string())
-            }
-        })?;
+        let rec = self.recognizer.lock().clone().ok_or_else(|| self.not_ready())?;
         let mut parts: Vec<String> = Vec::new();
         let mut tokens = Vec::new();
         for (i, chunk) in split_long(samples, rec.max_chunk() * SAMPLE_RATE as usize).into_iter().enumerate() {
@@ -482,7 +549,7 @@ impl Engine {
 
 /// Quién transcribe: un dictado (o pronunciación) con prioridad, el mismo dictado repetido con
 /// tiempos finos para la huella de voz, un reintento del hub que suelta el motor entre trozos, o la
-/// fase 2 de una reunión.
+/// fase 2 de una reunión. El texto en vivo va aparte (`transcribe_live`).
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Kind {
     Dictation,
@@ -726,6 +793,26 @@ mod tests {
         let t0 = std::time::Instant::now();
         let _ = atascada.transcribe_background_timed(&[0.0; 10]);
         assert!(t0.elapsed() < Duration::from_secs(2), "una marca atascada dejó la reunión sin motor");
+    }
+
+    /// BELTR-PRT-10: el texto en vivo cede el motor. Si lo tiene otro (un trozo de reunión) o hay un
+    /// dictado esperando turno, el tick se salta al momento en vez de esperar; y no cuenta como dictado
+    /// acabado, así no retrasa el reintento del hub ni la fase 2 más de lo que ya hacía el dictado.
+    #[test]
+    fn el_texto_en_vivo_no_espera_al_motor_ni_cuenta_como_dictado() {
+        let e = Engine::new("");
+        {
+            let _ocupado = e.busy.lock();
+            let t0 = std::time::Instant::now();
+            assert!(e.transcribe_live(&[0.0; 10]).is_none(), "con el motor ocupado, el tick tenía que saltarse");
+            assert!(t0.elapsed() < Duration::from_millis(100), "el tick esperó al motor");
+        }
+        e.dictation_waiting.fetch_add(1, Ordering::SeqCst);
+        assert!(e.transcribe_live(&[0.0; 10]).is_none(), "con un dictado esperando turno, el tick tenía que cederlo");
+        e.dictation_waiting.fetch_sub(1, Ordering::SeqCst);
+        // Libre (aquí sin modelo): lo intenta y devuelve el error del motor, sin marcar un dictado acabado.
+        assert!(matches!(e.transcribe_live(&[0.0; 10]), Some(Err(_))));
+        assert!(e.last_dictation_end.lock().is_none(), "un tick en vivo contó como dictado acabado");
     }
 }
 
@@ -994,5 +1081,22 @@ mod nsn_velocidad {
         println!("NSN_CRUDO={crudo}");
         println!("NSN_TEXTO={last}");
         assert!(last.split_whitespace().count() >= 10, "la transcripción salió casi vacía: {last:?}");
+    }
+}
+
+#[cfg(test)]
+impl Engine {
+    /// Whisper con el idioma dado (pruebas con el modelo real).
+    pub fn load_whisper_lang_for_tests(lang: &str) -> Result<Self, String> {
+        Self::load_whisper_model_for_tests("", lang)
+    }
+
+    /// Whisper con el modelo (`id` de `whisper::MODELS`, vacío = el de fábrica) y el idioma dados.
+    pub fn load_whisper_model_for_tests(id: &str, lang: &str) -> Result<Self, String> {
+        let engine = Self::new("");
+        let w = crate::whisper::Whisper::load(crate::whisper::model(id), true)?;
+        *engine.recognizer.lock() = Some(Arc::new(Recognizer::Whisper(w, lang.into())));
+        engine.status.lock().ready = true;
+        Ok(engine)
     }
 }

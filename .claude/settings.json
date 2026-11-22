@@ -4,7 +4,23 @@
       {
         "matcher": "*",
         "hooks": [
-          { "type": "command", "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/primerizo-guardia.mjs\" --solo-primerizo" }
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR:-.}/.claude/hooks/primerizo-guardia.mjs\" --solo-primerizo"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/vigilante-terminado.mjs\"",
+            "timeout": 3900,
+            "async": true,
+            "asyncRewake": true
+          }
         ]
       }
     ]

@@ -18,7 +18,7 @@ use crate::meeting::MeetingManager;
 use crate::{flowbar, media, modeldl, ollama, polish, voiceprint};
 use crossbeam_channel::{after, never, select, Receiver, Sender};
 use parking_lot::{Mutex, RwLock};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
@@ -54,13 +54,54 @@ pub struct AppState {
     pub active: Arc<AtomicBool>,
     /// Notetaker: reunión en curso (si la hay).
     pub meeting: MeetingManager,
+    /// Se está grabando un dictado (BELTR-PRT-30): un dictado anterior que acaba entonces espera para pegar.
+    pub grabando: AtomicBool,
+    /// Dictados en la cola de transcribir y pegar (en curso incluido). Mientras haya, `active` sigue puesta.
+    pub pendientes: AtomicUsize,
+    /// La cola única de transcribir y pegar (`spawn_transcriptor`): un dictado tras otro, en orden; dos
+    /// pegados nunca se cruzan. El receptor lo coge el hilo al arrancar.
+    cola: Sender<Trabajo>,
+    cola_rx: parking_lot::Mutex<Option<Receiver<Trabajo>>>,
 }
 
 impl AppState {
     pub fn new(settings: Settings, db: Arc<Db>, engine: Arc<Engine>, tx: Sender<Cmd>) -> Self {
         let active = Arc::new(AtomicBool::new(false));
         engine.share_dictation_flag(active.clone());
-        Self { settings: RwLock::new(settings), db, engine, tx, ui_epoch: AtomicU64::new(0), active, meeting: MeetingManager::default() }
+        let (cola, cola_rx) = crossbeam_channel::unbounded();
+        Self {
+            settings: RwLock::new(settings),
+            db,
+            engine,
+            tx,
+            ui_epoch: AtomicU64::new(0),
+            active,
+            meeting: MeetingManager::default(),
+            grabando: AtomicBool::new(false),
+            pendientes: AtomicUsize::new(0),
+            cola,
+            cola_rx: parking_lot::Mutex::new(Some(cola_rx)),
+        }
+    }
+
+    /// Quita la marca de «dictado en marcha» solo si no queda nada: ni grabación ni dictados por
+    /// transcribir o pegar (BELTR-PRT-30: con un dictado anterior aún sin guardar, el actualizador podía
+    /// instalar y cerrar Pronto).
+    pub fn liberar(&self) {
+        if self.pendientes.load(Ordering::SeqCst) == 0 && !self.grabando.load(Ordering::SeqCst) {
+            self.active.store(false, Ordering::SeqCst);
+        }
+    }
+
+    /// Espera a que acabe la grabación en curso, si la hay, antes de pegar un dictado anterior: así no se
+    /// pega con el atajo del nuevo pulsado y el orden es el anterior y luego el nuevo. Devuelve si esperó.
+    pub fn esperar_grabacion(&self) -> bool {
+        let mut espero = false;
+        while self.grabando.load(Ordering::SeqCst) {
+            espero = true;
+            std::thread::sleep(Duration::from_millis(30));
+        }
+        espero
     }
 
     pub fn send(&self, cmd: Cmd) {
@@ -303,6 +344,7 @@ pub fn hide_flowbar_for_hour(app: &AppHandle, st: &Arc<AppState>) -> Result<(), 
 
 pub fn spawn_controller(app: AppHandle, st: Arc<AppState>, hk_rx: Receiver<TimedEvent>, cmd_rx: Receiver<Cmd>) {
     spawn_audio_purge(st.clone());
+    spawn_transcriptor(app.clone(), st.clone());
     let spawned = std::thread::Builder::new().name("pronto-ctl".into()).spawn(move || {
         let mut ctl = Controller {
             app,
@@ -310,9 +352,12 @@ pub fn spawn_controller(app: AppHandle, st: Arc<AppState>, hk_rx: Receiver<Timed
             phase: Phase::Idle,
             rec: None,
             warmth: None,
+            live: None,
+            pulidor: None,
             started: Instant::now(),
             hold_down_at: None,
             pending_tap: None,
+            parado_con_mantener: false,
             warned: false,
             job: 0,
             transform_cancel: None,
@@ -343,6 +388,59 @@ pub fn spawn_controller(app: AppHandle, st: Arc<AppState>, hk_rx: Receiver<Timed
     }
 }
 
+/// Un dictado soltado, a la espera de transcribir y pegar en la cola única (BELTR-PRT-30).
+struct Trabajo {
+    samples: Vec<f32>,
+    duration_ms: i64,
+    target: AppInfo,
+    /// La ventana de delante al soltar: si se dictó otro entretanto y ahora hay otra, no se pega en ella.
+    ventana: isize,
+    confirmados: Option<Arc<crate::vivo::Confirmados>>,
+    pulidor: Option<Arc<polish::Pulidor>>,
+    job: u64,
+}
+
+/// La cola única: un hilo transcribe y pega los dictados de uno en uno, en el orden en que se soltaron.
+fn spawn_transcriptor(app: AppHandle, st: Arc<AppState>) {
+    let Some(rx) = st.cola_rx.lock().take() else { return };
+    let spawned = std::thread::Builder::new().name("pronto-transcribe".into()).spawn(move || {
+        for t in rx.iter() {
+            let (app2, st2) = (app.clone(), st.clone());
+            run_guarded(
+                "pronto-transcribe",
+                || {
+                    let outcome = transcribe_and_paste(&app, &st, &t.samples, t.duration_ms, &t.target, t.ventana, t.confirmados.as_deref(), t.pulidor.as_deref());
+                    let epoch = st.ui_epoch.load(Ordering::SeqCst);
+                    let a_la_vista = fin_a_la_vista(st.grabando.load(Ordering::SeqCst), st.pendientes.load(Ordering::SeqCst));
+                    match outcome {
+                        Ok(()) if a_la_vista => end_ui(&app, &st, epoch, "done", None, None, SETTLE_DONE),
+                        Err(f) if a_la_vista => end_ui(&app, &st, epoch, "error", Some(f.message), f.kind, SETTLE_ERROR),
+                        // La barra es de otro dictado (grabando, o en la cola detrás): el error, como aviso.
+                        Ok(()) => {}
+                        Err(f) => emit_notice(&app, &f.message, None),
+                    }
+                },
+                || {
+                    let epoch = st2.ui_epoch.load(Ordering::SeqCst);
+                    if fin_a_la_vista(st2.grabando.load(Ordering::SeqCst), st2.pendientes.load(Ordering::SeqCst)) {
+                        end_ui(&app2, &st2, epoch, "error", Some("Error interno al transcribir".into()), None, SETTLE_ERROR);
+                    } else {
+                        emit_notice(&app2, "Error interno al transcribir", None);
+                    }
+                },
+                // Siempre, también tras un pánico: el contador nunca se queda alto.
+                || {
+                    st2.pendientes.fetch_sub(1, Ordering::SeqCst);
+                    st2.send(Cmd::Finished { job: t.job });
+                },
+            );
+        }
+    });
+    if let Err(e) = spawned {
+        eprintln!("[state] no se pudo lanzar la cola de transcribir: {e}");
+    }
+}
+
 struct Controller {
     app: AppHandle,
     st: Arc<AppState>,
@@ -350,11 +448,17 @@ struct Controller {
     rec: Option<Recorder>,
     /// Latido de la GPU mientras se graba con Whisper (`Engine::keep_warm`); se suelta al parar.
     warmth: Option<crate::asr::Warmth>,
+    /// Texto en vivo del dictado que se graba (`vivo.rs`); al soltarlo, su hilo para.
+    live: Option<crate::vivo::Sesion>,
+    /// Pulido de fondo de los segmentos confirmados (BELTR-PRT-16); solo con el pulido encendido.
+    pulidor: Option<Arc<polish::Pulidor>>,
     started: Instant,
     /// Momento (del hook) en que se pulsó el atajo «mantener» que sigue pulsado.
     hold_down_at: Option<Instant>,
     /// Plazo para un segundo toque, tras un toque suelto.
     pending_tap: Option<Instant>,
+    /// El atajo «mantener», aún pulsado, acaba de terminar un manos libres (ver `gesto`).
+    parado_con_mantener: bool,
     warned: bool,
     /// Id del último trabajo de fondo lanzado (transcripción o Transform): `Cmd::Finished` solo vale
     /// si trae este id y seguimos en `Processing`/`Polishing`.
@@ -372,6 +476,72 @@ struct Controller {
 /// (rompedor 22-oct-c, carga ALTA 1; regla 4 de CLAUDE.md: si la IA falla, el dictado sigue).
 fn interrupts_transform(ev: HotkeyEvent, phase: Phase) -> bool {
     phase == Phase::Polishing && matches!(ev, HotkeyEvent::HoldDown | HotkeyEvent::HandsFree)
+}
+
+/// ¿Se puede empezar a dictar en esta fase? En reposo, pegando un Transform y también mientras se
+/// transcribe el dictado anterior (BELTR-PRT-30: ignorar el atajo ahí perdía lo dicho).
+fn puede_empezar(phase: Phase) -> bool {
+    matches!(phase, Phase::Idle | Phase::Pasting | Phase::Processing)
+}
+
+/// Lo que hace un atajo de dictar («mantener» o manos libres) según la fase.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Gesto {
+    Empezar { hands_free: bool },
+    /// Fija en manos libres una grabación «mantener» ya empezada.
+    Fijar,
+    /// Termina, transcribe y pega.
+    Parar,
+    /// Se soltó el atajo «mantener»: `on_hold_up` decide si es un toque o el final.
+    Soltar,
+    Nada,
+}
+
+/// Decide qué hace un atajo de dictar. `parado_con_mantener`: el atajo «mantener», aún pulsado, acaba de
+/// terminar un manos libres. Win+Alt+Espacio es Win+Alt («mantener») y luego Espacio (manos libres): al
+/// pulsarlo para terminar, Win+Alt para la grabación y el Espacio llega justo detrás. Ese Espacio es el
+/// mismo gesto de terminar y no empieza otra (BELTR-PRT-36: desde PRT-30 se puede empezar en `Processing`,
+/// y la grabación volvía a arrancar sola).
+fn gesto(ev: HotkeyEvent, phase: Phase, pending_tap: bool, parado_con_mantener: bool) -> Gesto {
+    match (ev, phase) {
+        // También mientras se pega un Transform confirmado: el pegado sigue en su hilo.
+        // Y mientras se transcribe el anterior (BELTR-PRT-30): con el PC cargado eso tarda, y la voz que
+        // se dice entonces no puede perderse. El anterior sigue en su hilo y se pega al acabar.
+        (HotkeyEvent::HoldDown, phase) if puede_empezar(phase) => Gesto::Empezar { hands_free: false },
+        // Segundo toque dentro del plazo: se bloquea el modo manos libres sin perder lo grabado.
+        (HotkeyEvent::HoldDown, Phase::Listening { hands_free: false }) if pending_tap => Gesto::Fijar,
+        // En manos libres, el atajo «mantener» termina y pega.
+        (HotkeyEvent::HoldDown, Phase::Listening { hands_free: true }) => Gesto::Parar,
+        (HotkeyEvent::HoldUp, Phase::Listening { hands_free: false }) => Gesto::Soltar,
+        (HotkeyEvent::HandsFree, _) if parado_con_mantener => Gesto::Nada,
+        // Manos libres: arranca, o fija una grabación «mantener» ya empezada, o la para.
+        (HotkeyEvent::HandsFree, phase) if puede_empezar(phase) => Gesto::Empezar { hands_free: true },
+        (HotkeyEvent::HandsFree, Phase::Listening { hands_free: false }) => Gesto::Fijar,
+        (HotkeyEvent::HandsFree, Phase::Listening { hands_free: true }) => Gesto::Parar,
+        _ => Gesto::Nada,
+    }
+}
+
+/// La marca `parado_con_mantener` tras un evento: la pone el «mantener» que termina un manos libres y la
+/// quita soltarlo (o pulsarlo otra vez para otra cosa).
+fn sigue_parado_con_mantener(ev: HotkeyEvent, g: Gesto, antes: bool) -> bool {
+    match ev {
+        HotkeyEvent::HoldDown => g == Gesto::Parar,
+        HotkeyEvent::HoldUp => false,
+        _ => antes,
+    }
+}
+
+/// ¿El final de un dictado se enseña en la Flow bar? Solo si no se está grabando otro ni queda otro en la
+/// cola detrás (`pendientes` cuenta este): la barra es de ese otro. Un error se avisa entonces aparte.
+fn fin_a_la_vista(grabando: bool, pendientes: usize) -> bool {
+    !grabando && pendientes <= 1
+}
+
+/// Un `Finished` que no es del trabajo en curso, en «Transcribiendo», con la cola vacía y sin Transform: nadie
+/// más va a cerrar esa fase, así que se cierra (si no, la barra y `active` se quedaban atascadas).
+fn suelta_procesando(current_job: u64, job: u64, pendientes: usize, transform: bool) -> bool {
+    !finish_applies(Phase::Processing, current_job, job) && pendientes == 0 && !transform
 }
 
 /// ¿El `Finished` de `job` cierra el trabajo en curso? Solo si es el último lanzado y la fase lo
@@ -449,17 +619,18 @@ impl Controller {
             self.cancel_transform();
         }
         match (t.ev, self.phase) {
-            // También mientras se pega un Transform confirmado: el pegado sigue en su hilo.
-            (HotkeyEvent::HoldDown, Phase::Idle | Phase::Pasting) => self.start(false, Some(t.at)),
-            // Segundo toque dentro del plazo: se bloquea el modo manos libres sin perder lo grabado.
-            (HotkeyEvent::HoldDown, Phase::Listening { hands_free: false }) if self.pending_tap.is_some() => self.lock_hands_free(),
-            // En manos libres, el atajo «mantener» termina y pega.
-            (HotkeyEvent::HoldDown, Phase::Listening { hands_free: true }) => self.stop(),
-            (HotkeyEvent::HoldUp, Phase::Listening { hands_free: false }) => self.on_hold_up(t.at),
-            // Manos libres: arranca, o fija una grabación «mantener» ya empezada, o la para.
-            (HotkeyEvent::HandsFree, Phase::Idle | Phase::Pasting) => self.start(true, None),
-            (HotkeyEvent::HandsFree, Phase::Listening { hands_free: false }) => self.lock_hands_free(),
-            (HotkeyEvent::HandsFree, Phase::Listening { hands_free: true }) => self.stop(),
+            // Dictar («mantener» y manos libres): la decisión está en `gesto`, que se prueba sin ventanas.
+            (HotkeyEvent::HoldDown | HotkeyEvent::HoldUp | HotkeyEvent::HandsFree, phase) => {
+                let g = gesto(t.ev, phase, self.pending_tap.is_some(), self.parado_con_mantener);
+                self.parado_con_mantener = sigue_parado_con_mantener(t.ev, g, self.parado_con_mantener);
+                match g {
+                    Gesto::Empezar { hands_free } => self.start(hands_free, (!hands_free).then_some(t.at)),
+                    Gesto::Fijar => self.lock_hands_free(),
+                    Gesto::Parar => self.stop(),
+                    Gesto::Soltar => self.on_hold_up(t.at),
+                    Gesto::Nada => {}
+                }
+            }
             (HotkeyEvent::Cancel, Phase::Listening { .. }) => self.cancel(),
             (HotkeyEvent::PasteLast, Phase::Idle) => {
                 if let Err(e) = paste_last(&self.st, Duration::ZERO) {
@@ -472,7 +643,7 @@ impl Controller {
                 if matches!(phase, Phase::Listening { .. }) {
                     drop(self.finish_recording());
                     self.phase = Phase::Idle;
-                    self.st.active.store(false, Ordering::SeqCst);
+                    self.st.liberar();
                     emit_idle(&self.app, &self.st);
                 }
                 if matches!(phase, Phase::Idle | Phase::Listening { .. }) {
@@ -491,7 +662,7 @@ impl Controller {
                 if matches!(phase, Phase::Listening { .. }) {
                     drop(self.finish_recording());
                     self.phase = Phase::Idle;
-                    self.st.active.store(false, Ordering::SeqCst);
+                    self.st.liberar();
                     emit_idle(&self.app, &self.st);
                 }
                 match self.st.db.transform_by_hotkey(n as i64) {
@@ -517,10 +688,19 @@ impl Controller {
                 self.cancel_transform();
                 self.start(hands_free, None);
             }
-            (Cmd::UiStart { hands_free }, Phase::Idle | Phase::Pasting) => self.start(hands_free, None),
+            (Cmd::UiStart { hands_free }, phase) if puede_empezar(phase) => self.start(hands_free, None),
             (Cmd::UiStop, Phase::Listening { .. }) => self.stop(),
             (Cmd::UiCancel, Phase::Listening { .. }) => self.cancel(),
             (Cmd::RunTransform { id }, Phase::Idle) => self.start_transform(id),
+            // El fin de un dictado anterior con la app ya en reposo (p. ej. se empezó una reunión): solo la marca.
+            (Cmd::Finished { .. }, Phase::Idle) => self.st.liberar(),
+            // «Transcribiendo» sin nada en la cola ni un Transform en marcha (p. ej. un Transform cancelado subió el
+            // número de trabajo mientras quedaba un dictado anterior): a reposo, sin atascar `active` (revisión
+            // del 22-nov).
+            (Cmd::Finished { job }, Phase::Processing) if suelta_procesando(self.job, job, self.st.pendientes.load(Ordering::SeqCst), self.transform_cancel.is_some()) => {
+                self.phase = Phase::Idle;
+                self.st.liberar();
+            }
             (Cmd::Finished { job }, phase) if finish_applies(phase, self.job, job) => {
                 let ready = self.transform_ready.take().and_then(|slot| slot.lock().take());
                 self.transform_cancel = None;
@@ -533,7 +713,7 @@ impl Controller {
                     (Phase::Preview, Some(r)) => self.open_preview(r),
                     _ => {
                         self.phase = Phase::Idle;
-                        self.st.active.store(false, Ordering::SeqCst);
+                        self.st.liberar();
                     }
                 }
             }
@@ -564,7 +744,7 @@ impl Controller {
                 false
             }
             PreviewOutcome::Discard { then } => {
-                self.st.active.store(false, Ordering::SeqCst);
+                self.st.liberar();
                 if then {
                     // Lo que sigue (dictar, otro Transform…) pinta su propio estado.
                     emit_idle(&self.app, &self.st);
@@ -630,7 +810,7 @@ impl Controller {
         if let Err(e) = spawned {
             eprintln!("[state] no se pudo lanzar el pegado del transform: {e}");
             self.phase = Phase::Idle;
-            self.st.active.store(false, Ordering::SeqCst);
+            self.st.liberar();
             self.end_ui("error", Some("No se pudo pegar el texto".into()), Some("paste"), SETTLE_ERROR);
         }
     }
@@ -647,8 +827,11 @@ impl Controller {
 
     fn discard_tap(&mut self) {
         drop(self.finish_recording());
-        self.phase = Phase::Idle;
-        self.st.active.store(false, Ordering::SeqCst);
+        if self.reposo() {
+            // Queda un dictado anterior por pegar: la barra sigue en «Transcribiendo» (sin el aviso del toque).
+            emit_state(&self.app, "processing", None);
+            return;
+        }
         let hold = self.st.settings.read().hotkey_hold.describe();
         self.end_ui("error", Some(format!("No lo toques. Mantén pulsado {hold}.")), Some("tap"), SETTLE_ERROR);
     }
@@ -692,13 +875,19 @@ impl Controller {
                 return;
             }
         };
+        let tap = rec.tap();
         self.rec = Some(rec);
         self.warmth = self.st.engine.keep_warm();
+        // Texto en vivo (BELTR-PRT-10) con el ajuste encendido y, siempre, los segmentos confirmados de los
+        // dictados largos (BELTR-PRT-16), con su pulido de fondo si el pulido está encendido.
+        self.pulidor = polish::Pulidor::nuevo(&settings).map(Arc::new);
+        self.live = if engine.ready { start_live(&self.app, &self.st, tap, settings.live_text, self.pulidor.clone()) } else { None };
         self.started = down_at.unwrap_or_else(Instant::now);
         self.hold_down_at = if hands_free { None } else { down_at };
         self.pending_tap = None;
         self.warned = false;
         self.phase = Phase::Listening { hands_free };
+        self.st.grabando.store(true, Ordering::SeqCst);
         self.st.active.store(true, Ordering::SeqCst);
         hotkey::set_recording(true);
 
@@ -716,17 +905,24 @@ impl Controller {
 
     /// Cierra la grabación y devuelve el audio (o nada si no había).
     fn finish_recording(&mut self) -> Vec<f32> {
-        // Primero el latido: que no empiece otro mientras se transcribe.
+        // Primero el latido y el texto en vivo: que no empiecen otro latido ni otro tick, y que el tick
+        // a medias no haga otra decodificación (`vivo::Sesion`).
         self.warmth = None;
+        self.live = None;
+        self.pulidor = None;
         hotkey::set_recording(false);
         self.pending_tap = None;
         self.hold_down_at = None;
         let samples = self.rec.take().map(|r| r.stop()).unwrap_or_default();
+        // El audio ya está entero: un dictado anterior que esperaba para pegar puede pegar.
+        self.st.grabando.store(false, Ordering::SeqCst);
         media::restore();
         fake_wav().unwrap_or(samples)
     }
 
     fn stop(&mut self) {
+        let confirmados = self.live.as_ref().map(|l| l.confirmados());
+        let pulidor = self.pulidor.clone();
         let samples = self.finish_recording();
         let settings = self.st.settings.read().clone();
         if settings.sounds {
@@ -734,9 +930,11 @@ impl Controller {
         }
         let duration_ms = samples.len() as i64 * 1000 / TARGET_RATE as i64;
         if duration_ms < MIN_RECORDING_MS {
-            // Toque accidental: vuelta a reposo sin ruido.
-            self.phase = Phase::Idle;
-            self.st.active.store(false, Ordering::SeqCst);
+            // Toque accidental: vuelta a reposo sin ruido (o a «Transcribiendo» si queda uno anterior).
+            if self.reposo() {
+                emit_state(&self.app, "processing", None);
+                return;
+            }
             emit_idle(&self.app, &self.st);
             if !flowbar::rest_visible(&settings) {
                 flowbar::hide(&self.app);
@@ -746,52 +944,51 @@ impl Controller {
         let peak = samples.iter().fold(0.0f32, |m, s| m.max(s.abs()));
         eprintln!("[state] grabación: {duration_ms} ms, pico {peak:.4}");
         if peak < SILENCE_PEAK {
-            self.phase = Phase::Idle;
-            self.st.active.store(false, Ordering::SeqCst);
+            self.reposo();
             self.end_ui("error", Some("¿Tienes el micrófono silenciado?".into()), Some("noaudio"), SETTLE_ERROR);
             return;
         }
         // La app destino se mide ahora, antes de pegar: la Flow bar no roba el foco, así que es la
         // misma que tenía el usuario al soltar el atajo.
         let target = inject::foreground_app();
+        let ventana = inject::foreground_window();
         self.phase = Phase::Processing;
         emit_state(&self.app, "processing", None);
-
-        let app = self.app.clone();
-        let st = self.st.clone();
         self.job += 1;
-        let job = self.job;
-        let spawned = std::thread::Builder::new().name("pronto-transcribe".into()).spawn(move || {
-            let (app2, st2) = (app.clone(), st.clone());
-            run_guarded(
-                "pronto-transcribe",
-                || {
-                    let outcome = transcribe_and_paste(&app, &st, &samples, duration_ms, &target);
-                    let epoch = st.ui_epoch.load(Ordering::SeqCst);
-                    match outcome {
-                        Ok(()) => end_ui(&app, &st, epoch, "done", None, None, SETTLE_DONE),
-                        Err(f) => end_ui(&app, &st, epoch, "error", Some(f.message), f.kind, SETTLE_ERROR),
-                    }
-                },
-                || {
-                    let epoch = st2.ui_epoch.load(Ordering::SeqCst);
-                    end_ui(&app2, &st2, epoch, "error", Some("Error interno al transcribir".into()), None, SETTLE_ERROR);
-                },
-                || st2.send(Cmd::Finished { job }),
-            );
-        });
-        if let Err(e) = spawned {
-            eprintln!("[state] no se pudo lanzar la transcripción: {e}");
+        // A la cola única (BELTR-PRT-30): si aún se transcribe otro, este va detrás y se pega después.
+        self.st.pendientes.fetch_add(1, Ordering::SeqCst);
+        let trabajo = Trabajo { samples, duration_ms, target, ventana, confirmados, pulidor, job: self.job };
+        if let Err(e) = self.st.cola.send(trabajo) {
+            // Sin cola (el hilo murió): el dictado queda en el historial con su audio para reintentar.
+            self.st.pendientes.fetch_sub(1, Ordering::SeqCst);
+            let t = e.into_inner();
+            let kept = keep_failed_transcription(&self.st.db, settings.keep_audio_days, &t.samples, &t.target.display_name(), t.duration_ms);
+            if let Some(item) = kept {
+                let _ = self.app.emit("dictation://result", item);
+            }
+            eprintln!("[state] no hay cola de transcribir");
+            self.reposo();
+            self.end_ui("error", Some("No se pudo transcribir; el audio queda en el historial".into()), None, SETTLE_ERROR);
+        }
+    }
+
+    /// Tras un toque, un micro mudo o cancelar: a reposo, o, si queda un dictado anterior por transcribir
+    /// o pegar, de vuelta a «Transcribiendo» (BELTR-PRT-30: la barra se escondía y `active` se apagaba con
+    /// ese dictado aún sin guardar). Devuelve si sigue transcribiendo.
+    fn reposo(&mut self) -> bool {
+        if self.st.pendientes.load(Ordering::SeqCst) > 0 {
+            self.phase = Phase::Processing;
+            true
+        } else {
             self.phase = Phase::Idle;
-            self.st.active.store(false, Ordering::SeqCst);
-            self.end_ui("error", Some("No se pudo transcribir".into()), None, SETTLE_ERROR);
+            self.st.liberar();
+            false
         }
     }
 
     fn cancel(&mut self) {
         drop(self.finish_recording());
-        self.phase = Phase::Idle;
-        self.st.active.store(false, Ordering::SeqCst);
+        self.reposo();
         self.end_ui("cancelled", None, None, SETTLE_DONE);
     }
 
@@ -846,7 +1043,7 @@ impl Controller {
             self.transform_cancel = None;
             self.transform_ready = None;
             self.phase = Phase::Idle;
-            self.st.active.store(false, Ordering::SeqCst);
+            self.st.liberar();
             self.end_ui("error", Some("No se pudo ejecutar el transform".into()), None, SETTLE_ERROR);
         }
     }
@@ -862,7 +1059,7 @@ impl Controller {
         self.transform_ready = None;
         self.job += 1;
         self.phase = Phase::Idle;
-        self.st.active.store(false, Ordering::SeqCst);
+        self.st.liberar();
         inject::restore_pending();
     }
 
@@ -935,6 +1132,7 @@ pub fn vocabulary(words: &[crate::models::Word]) -> Vec<String> {
 
 /// Audio -> Parakeet -> huella de voz (Contrato v11) -> tubería. Devuelve lo que oyó Parakeet (para
 /// el historial) y el resultado; los cambios de la huella cuentan como arreglos del diccionario.
+/// Siempre el audio entero: el texto en vivo (BELTR-PRT-10) es solo vista previa.
 pub fn transcribe_processed(st: &Arc<AppState>, samples: &[f32], app_name: &str, title: &str) -> Result<(String, text::Processed), String> {
     transcribe_processed_as(st, samples, app_name, title, false)
 }
@@ -948,14 +1146,89 @@ pub fn retry_processed(st: &Arc<AppState>, samples: &[f32], app_name: &str, titl
 fn transcribe_processed_as(st: &Arc<AppState>, samples: &[f32], app_name: &str, title: &str, polite: bool) -> Result<(String, text::Processed), String> {
     let words = dictionary(st);
     st.engine.set_vocabulary(&vocabulary(&words));
+    let (timed, heard, fixes) = transcribe_heard(&st.engine, &words, samples, polite)?;
+    let mut processed = run_pipeline_with(st, &heard, &words, app_name, title);
+    // Con reemplazo, la tubería ya cuenta el arreglo al pasar la palabra a su reemplazo.
+    processed.fixes_dictionary += fixes.iter().filter(|f| !f.replaced).count();
+    Ok((timed.text, processed))
+}
+
+/// Lo que se espera, al soltar, a un segmento que se estaba confirmando (BELTR-PRT-16): ese trabajo
+/// hace falta igual; si tarda más, se transcribe todo por el camino de siempre.
+const ESPERA_CONFIRMACION: Duration = Duration::from_secs(5);
+
+/// Como `transcribe_processed`, con segmentos ya confirmados mientras se hablaba (BELTR-PRT-16): solo se
+/// transcribe la cola (desde el último segmento). La tubería corre sobre el texto entero, como siempre.
+/// Devuelve además los trozos (cada segmento y la cola tras la tubería) si unidos dan el mismo texto que
+/// la tubería sobre el entero; si no (un snippet o un formato que cruza un corte), `None` y se pule todo.
+pub fn transcribe_processed_seg(st: &Arc<AppState>, samples: &[f32], segs: &[crate::vivo::Segmento], cola: Option<&str>, app_name: &str, title: &str) -> Result<(String, text::Processed, Option<Vec<String>>), String> {
+    let words = dictionary(st);
+    st.engine.set_vocabulary(&vocabulary(&words));
+    let (raw, crudos) = juntar_segmentos(&st.engine, &words, samples, segs, cola)?;
+    let processed = run_pipeline_with(st, &raw, &words, app_name, title);
+    let piezas: Vec<String> = crudos.iter().map(|c| run_pipeline_with(st, c, &words, app_name, title).text).collect();
+    let piezas = partir_como(&processed.text, &piezas);
+    Ok((raw, processed, piezas))
+}
+
+/// Lo oído de cada segmento confirmado más la cola (la anticipada si la hay; si no, transcrita ahora), y
+/// todo junto.
+pub(crate) fn juntar_segmentos(engine: &Engine, words: &[crate::models::Word], samples: &[f32], segs: &[crate::vivo::Segmento], anticipada: Option<&str>) -> Result<(String, Vec<String>), String> {
+    let fin = segs.last().map_or(0, |s| s.fin).min(samples.len());
+    let cola = &samples[fin..];
+    // Un trozo con voz y sin texto (el motor falló o salió vacío mientras se hablaba) no se da por bueno:
+    // se transcribe otra vez por el camino del dictado (regla 5, BELTR-PRT-30). Antes, un texto anticipado
+    // vacío dejaba el dictado entero en «No se entendió nada».
+    let con_voz = |s: &[f32]| s.len() >= TARGET_RATE as usize / 5 && !crate::vivo::callado(s);
+    let oido_cola = match anticipada {
+        Some(t) if !t.trim().is_empty() || !con_voz(cola) => t.to_string(),
+        _ if !con_voz(cola) => String::new(),
+        _ => transcribe_heard(engine, words, cola, false)?.1,
+    };
+    let mut crudos: Vec<String> = Vec::with_capacity(segs.len() + 1);
+    for s in segs {
+        let trozo = &samples[s.inicio.min(samples.len())..s.fin.min(samples.len())];
+        let oido = if s.crudo.trim().is_empty() && con_voz(trozo) { transcribe_heard(engine, words, trozo, false)?.1 } else { s.crudo.clone() };
+        crudos.push(oido.trim().to_string());
+    }
+    crudos.push(oido_cola.trim().to_string());
+    crudos.retain(|t| !t.is_empty());
+    Ok((crudos.join(" "), crudos))
+}
+
+/// Parte el texto entero (tras la tubería) en los mismos trozos que `piezas` (cada segmento y la cola tras
+/// la tubería): tantas palabras como cada pieza, y las mismas palabras (sin mirar mayúsculas ni signos, que
+/// en un corte pueden cambiar: «hola.» frente a «hola,»). Unidos con un espacio, los trozos dan el entero
+/// tal cual. `None` si no casan (un snippet o un correo partido por un corte): entonces se pule todo junto.
+pub(crate) fn partir_como(entero: &str, piezas: &[String]) -> Option<Vec<String>> {
+    let palabras: Vec<&str> = entero.split_whitespace().collect();
+    let mut out = Vec::with_capacity(piezas.len());
+    let mut i = 0;
+    for p in piezas {
+        let n = p.split_whitespace().count();
+        let trozo = palabras.get(i..i + n)?;
+        if polish::words_key(&trozo.join(" ")) != polish::words_key(p) {
+            return None;
+        }
+        out.push(trozo.join(" "));
+        i += n;
+    }
+    (i == palabras.len() && !out.is_empty()).then_some(out)
+}
+
+/// Audio -> lo que oye el motor, corregido por la huella de voz (Contrato v11). Siempre el audio entero,
+/// también con el texto en vivo encendido, que es solo vista previa (BELTR-PRT-10). Devuelve lo que
+/// transcribió el motor (para el historial), el texto corregido y los arreglos de la huella. Lo usan el
+/// dictado, el reintento y las pruebas del texto en vivo (`vivo::tests_dictar_y_soltar`).
+pub(crate) fn transcribe_heard(engine: &Engine, words: &[crate::models::Word], samples: &[f32], polite: bool) -> Result<(crate::asr::Timed, String, Vec<voiceprint::Fix>), String> {
     // Whisper dicta por su camino rápido, con tiempos por token aproximados (~0,35 s de error). Si la
     // huella de voz oye una palabra del diccionario (solo mira el audio), el dictado va directo por el
     // camino con DTW, que la sitúa bien: una sola pasada (antes eran dos, +52 %: rompedor 24-oct, MEDIA 1).
     // Si esa pasada falla o sale vacía (whisper.cpp devuelve vacío al fallar), se repite por el rápido sin
     // huella: un dictado bueno no se tira por ella (regla 5).
-    let wants_precise = st.engine.rough_timings() && voiceprint::hears(&words, samples);
+    let wants_precise = engine.rough_timings() && voiceprint::hears(words, samples);
     let fine = if wants_precise {
-        let t = if polite { st.engine.transcribe_timed_polite_precise(samples) } else { st.engine.transcribe_timed_precise(samples) };
+        let t = if polite { engine.transcribe_timed_polite_precise(samples) } else { engine.transcribe_timed_precise(samples) };
         t.map_err(|e| eprintln!("[state] huella sin tiempos finos ({e}): texto sin corregir")).ok().filter(|t| !t.text.trim().is_empty())
     } else {
         None
@@ -963,13 +1236,10 @@ fn transcribe_processed_as(st: &Arc<AppState>, samples: &[f32], app_name: &str, 
     let (timed, voiceprint_ok) = match fine {
         Some(t) => (t, true),
         // Con los tiempos aproximados la huella situaría mal la palabra: si se pidió DTW y no salió, no corrige.
-        None => (if polite { st.engine.transcribe_timed_polite(samples)? } else { st.engine.transcribe_timed(samples)? }, !wants_precise),
+        None => (if polite { engine.transcribe_timed_polite(samples)? } else { engine.transcribe_timed(samples)? }, !wants_precise),
     };
-    let (heard, fixes) = if voiceprint_ok { voiceprint::correct(&words, samples, &timed) } else { (timed.text.clone(), Vec::new()) };
-    let mut processed = run_pipeline_with(st, &heard, &words, app_name, title);
-    // Con reemplazo, la tubería ya cuenta el arreglo al pasar la palabra a su reemplazo.
-    processed.fixes_dictionary += fixes.iter().filter(|f| !f.replaced).count();
-    Ok((timed.text, processed))
+    let (heard, fixes) = if voiceprint_ok { voiceprint::correct(words, samples, &timed) } else { (timed.text.clone(), Vec::new()) };
+    Ok((timed, heard, fixes))
 }
 
 /// Texto crudo -> tubería -> texto final, con los ajustes actuales y el diccionario dado.
@@ -1027,15 +1297,82 @@ fn keep_emptied_dictation(db: &Db, keep_audio_days: u32, samples: &[f32], raw: &
 }
 
 /// Audio -> texto -> historial (+ WAV) -> pegado. Devuelve el error para la Flow bar.
-fn transcribe_and_paste(app: &AppHandle, st: &Arc<AppState>, samples: &[f32], duration_ms: i64, target: &AppInfo) -> Result<(), Failure> {
-    let (raw, processed) = match transcribe_processed(st, samples, &target.exe, &target.title) {
+fn transcribe_and_paste(
+    app: &AppHandle,
+    st: &Arc<AppState>,
+    samples: &[f32],
+    duration_ms: i64,
+    target: &AppInfo,
+    ventana: isize,
+    confirmados: Option<&crate::vivo::Confirmados>,
+    pulidor: Option<&polish::Pulidor>,
+) -> Result<(), Failure> {
+    let enter = dictar_con(
+        st,
+        samples,
+        duration_ms,
+        target,
+        confirmados,
+        pulidor,
+        &|item| {
+            let _ = app.emit("dictation://result", item);
+        },
+        &|aviso| emit_notice(app, aviso, None),
+        &|text, espero| {
+            // Se esperó a que acabara otro dictado y ahora hay otra ventana delante: no se pega en ella.
+            if espero && ventana != 0 && inject::foreground_window() != ventana {
+                return Err(Failure::new("No se pegó: cambiaste de ventana mientras dictabas otro. Está en el historial", Some("paste")));
+            }
+            inject::paste_text(text).map_err(|e| Failure::new(format!("No se copió nada; el texto está en el historial ({e})"), Some("paste")))?;
+            if text.chars().count() >= inject::KEEP_IN_CLIPBOARD_CHARS {
+                emit_notice(app, "Texto largo: también queda en el portapapeles (Ctrl+V)", None);
+            }
+            Ok(())
+        },
+    )?;
+    if enter {
+        // Margen para que la app procese el pegado antes del Enter.
+        std::thread::sleep(Duration::from_millis(150));
+        inject::press_enter();
+    }
+    Ok(())
+}
+
+/// El dictado sin la app (sin `AppHandle` ni portapapeles, para las pruebas de la regla 5): transcribe,
+/// guarda en el historial con su audio y llama a `pegar`. `emitir` recibe cada fila guardada; `aviso`, los
+/// avisos suaves. Devuelve si hay que pulsar Enter («pulsa enter» al final del dictado).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn dictar_con(
+    st: &Arc<AppState>,
+    samples: &[f32],
+    duration_ms: i64,
+    target: &AppInfo,
+    confirmados: Option<&crate::vivo::Confirmados>,
+    pulidor: Option<&polish::Pulidor>,
+    emitir: &dyn Fn(HistoryItem),
+    aviso: &dyn Fn(&str),
+    pegar: &dyn Fn(&str, bool) -> Result<(), Failure>,
+) -> Result<bool, Failure> {
+    // Dictado largo con segmentos confirmados mientras se hablaba (BELTR-PRT-16): solo queda la cola.
+    // Y con el texto ya anticipado si se dejó de hablar antes de soltar.
+    let segmentos = confirmados
+        .and_then(|c| c.al_soltar_con(ESPERA_CONFIRMACION, samples))
+        .filter(|(s, cola)| (!s.is_empty() || cola.is_some()) && crate::vivo::segmentos_validos(s, samples.len()));
+    let entero = || transcribe_processed(st, samples, &target.exe, &target.title).map(|(r, p)| (r, p, None));
+    let transcrito = match &segmentos {
+        // Si por segmentos sale vacío con voz en el audio, se repite con el audio entero (regla 5, BELTR-PRT-30).
+        Some((segs, cola)) => transcribe_processed_seg(st, samples, segs, cola.as_deref(), &target.exe, &target.title)
+            .and_then(|r| if unheard_audio(&r.0, samples) { entero() } else { Ok(r) }),
+        None => entero(),
+    };
+    let (raw, processed, piezas) = match transcrito {
         Ok(r) => r,
         Err(e) => {
             // Regla 5 de CLAUDE.md: el dictado no se pierde; queda con su audio para «Reintentar transcripción».
             let days = st.settings.read().keep_audio_days;
             let kept = keep_failed_transcription(&st.db, days, samples, &target.display_name(), duration_ms);
             if let Some(item) = kept.clone() {
-                let _ = app.emit("dictation://result", item);
+                emitir(item);
             }
             let msg = if kept.is_some() { format!("{e}. El audio queda en el historial para reintentar") } else { e };
             return Err(Failure::new(msg, None));
@@ -1047,7 +1384,7 @@ fn transcribe_and_paste(app: &AppHandle, st: &Arc<AppState>, samples: &[f32], du
         let days = st.settings.read().keep_audio_days;
         let kept = keep_emptied_dictation(&st.db, days, samples, &raw, &target.display_name(), duration_ms);
         if let Some(item) = kept.clone() {
-            let _ = app.emit("dictation://result", item);
+            emitir(item);
         }
         let msg = if kept.is_some() { "Se borró todo el dictado; queda en el historial" } else { "Se borró todo el dictado" };
         return Err(Failure::new(msg, None));
@@ -1058,7 +1395,7 @@ fn transcribe_and_paste(app: &AppHandle, st: &Arc<AppState>, samples: &[f32], du
         // «Reintentar» (rompedor 23-oct, dictado MEDIA 7).
         let days = st.settings.read().keep_audio_days;
         if let Some(item) = keep_failed_transcription(&st.db, days, samples, &target.display_name(), duration_ms) {
-            let _ = app.emit("dictation://result", item);
+            emitir(item);
             return Err(Failure::new(UNHEARD_KEPT, None));
         }
     }
@@ -1067,58 +1404,89 @@ fn transcribe_and_paste(app: &AppHandle, st: &Arc<AppState>, samples: &[f32], du
     }
     let settings = st.settings.read().clone();
     let tone = category_tone(&settings, text::category_for_app(&target.exe, &target.title));
-    let (polish, pasted) = finish_dictation(
+    let (polish, pasted) = finish_dictation_con(
         &st.db,
         &settings,
         samples,
         &raw,
         &processed,
+        &dictionary(st),
         tone,
         &target.display_name(),
         duration_ms,
+        piezas.as_deref().map(|p| (p, pulidor)),
         |item| {
-            let _ = app.emit("dictation://result", item);
+            emitir(item);
         },
-        |text| {
-            if !text.trim().is_empty() {
-                inject::paste_text(text).map_err(|e| Failure::new(format!("No se copió nada; el texto está en el historial ({e})"), Some("paste")))?;
-                if text.chars().count() >= inject::KEEP_IN_CLIPBOARD_CHARS {
-                    emit_notice(app, "Texto largo: también queda en el portapapeles (Ctrl+V)", None);
-                }
-            }
-            Ok(())
-        },
+        // Ya en el historial. Si se está grabando otro dictado, se espera a que acabe para pegar (en orden y
+        // sin el atajo pulsado); `pegar` sabe si esperó.
+        |text| if text.trim().is_empty() { Ok(()) } else { pegar(text, st.esperar_grabacion()) },
     );
     pasted?;
     if polish.failed {
         // Aviso suave, ya con el texto pegado.
-        emit_notice(app, "Pegado sin pulir: Ollama no respondió", None);
+        aviso("Pegado sin pulir: Ollama no respondió");
     }
-    if processed.press_enter {
-        // Margen para que la app procese el pegado antes del Enter.
-        std::thread::sleep(Duration::from_millis(150));
-        inject::press_enter();
-    }
-    Ok(())
+    Ok(processed.press_enter)
 }
 
 /// Tras transcribir: pulido (si toca, con plazo duro) -> historial + WAV -> `paste`. Se guarda ANTES
 /// de pegar (regla 5 de CLAUDE.md): aunque el pulido o el pegado fallen, el dictado queda en el
 /// historial con su audio. Si hubo pulido, `raw_text` es el texto local previo (permite deshacerlo).
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 fn finish_dictation(
     db: &Db,
     settings: &Settings,
     samples: &[f32],
     raw: &str,
     processed: &text::Processed,
+    words: &[crate::models::Word],
     tone: Tone,
     app_name: &str,
     duration_ms: i64,
     on_saved: impl FnOnce(HistoryItem),
     paste: impl FnOnce(&str) -> Result<(), Failure>,
 ) -> (polish::Outcome, Result<(), Failure>) {
-    let polish = polish::apply(settings, &processed.text, tone, processed.fixes_snippets);
+    finish_dictation_con(db, settings, samples, raw, processed, words, tone, app_name, duration_ms, None, on_saved, paste)
+}
+
+/// `finish_dictation` con el dictado partido en trozos (segmentos confirmados + cola, BELTR-PRT-16):
+/// el pulido reutiliza lo que el pulidor de fondo ya tiene y solo pule lo que falte.
+#[allow(clippy::too_many_arguments)]
+fn finish_dictation_con(
+    db: &Db,
+    settings: &Settings,
+    samples: &[f32],
+    raw: &str,
+    processed: &text::Processed,
+    words: &[crate::models::Word],
+    tone: Tone,
+    app_name: &str,
+    duration_ms: i64,
+    piezas: Option<(&[String], Option<&polish::Pulidor>)>,
+    on_saved: impl FnOnce(HistoryItem),
+    paste: impl FnOnce(&str) -> Result<(), Failure>,
+) -> (polish::Outcome, Result<(), Failure>) {
+    let mut polish = match piezas {
+        Some((p, pulidor)) if processed.fixes_snippets == 0 => polish::apply_pieces(settings, &processed.text, p, pulidor, tone),
+        _ => polish::apply(settings, &processed.text, tone, processed.fixes_snippets),
+    };
+    // El pulido no deshace el diccionario: si el modelo escribe «Beltran Labs» o «Github», vuelven
+    // a «BeltranLabs» y «GitHub» como las guardó el usuario (BELTR-PRT-11).
+    if polish.polished && !words.is_empty() {
+        let fixed = text::apply_dictionary(&polish.text, words);
+        // La guarda del pulido se repite tras el diccionario (regla 7): si el modelo metió «mi web» y un
+        // reemplazo la convierte en «beltranlabs.com», saldría un enlace que no se dijo → sin pulir.
+        if crate::anclaje::unanchored(&fixed, &crate::anclaje::Source::new(&processed.text)).is_some() {
+            eprintln!("[polish] descartado: tras el diccionario trae algo que no se dijo");
+            polish.text = processed.text.clone();
+            polish.polished = false;
+        } else {
+            polish.polished = fixed != processed.text;
+            polish.text = fixed;
+        }
+    }
     let entry = NewHistory {
         polished: polish.polished,
         text: &polish.text,
@@ -1342,6 +1710,69 @@ fn run_transform_job(st: &Arc<AppState>, id: i64, cancelled: &AtomicBool) -> Res
     }
 }
 
+/// Arranca el texto en vivo de un dictado (BELTR-PRT-10): cada tick transcribe lo que falta por fijar
+/// sin quitarle el motor a nadie (`Engine::transcribe_live`) y la Flow bar lo enseña (`dictation://live`).
+fn start_live(app: &AppHandle, st: &Arc<AppState>, tap: audio::Tap, vista: bool, pulidor: Option<Arc<polish::Pulidor>>) -> Option<crate::vivo::Sesion> {
+    let (st1, st2, st3, app) = (st.clone(), st.clone(), st.clone(), app.clone());
+    // La Flow bar enseña la vista con el diccionario ya aplicado (BELTR-PRT-11).
+    let words = dictionary(st);
+    // Segmentos confirmados (BELTR-PRT-16): cada uno se transcribe entero por el camino del dictado y, con
+    // el pulido encendido, se pule en segundo plano con la tubería de la app que tiene delante.
+    let whisper = st.engine.is_whisper();
+    let pulidor_anticipo = pulidor.clone();
+    let confirmar: crate::vivo::Confirmar = Box::new(move |s: &[f32]| {
+        let words = dictionary(&st3);
+        let (_, oido, _) = transcribe_heard(&st3.engine, &words, s, false).map_err(|e| eprintln!("[vivo] segmento sin confirmar: {e}")).ok()?;
+        if let Some(p) = &pulidor {
+            let target = inject::foreground_app();
+            let processed = run_pipeline_with(&st3, &oido, &words, &target.exe, &target.title);
+            if processed.fixes_snippets == 0 {
+                let settings = st3.settings.read().clone();
+                p.encolar(&processed.text, category_tone(&settings, text::category_for_app(&target.exe, &target.title)));
+            }
+        }
+        Some(oido)
+    });
+    // Texto anticipado al dejar de hablar (solo Parakeet: su decodificación no toma el turno del motor). Mismo
+    // resultado que `transcribe_heard` con Parakeet: transcripción + huella de voz.
+    let (st4, pulidor2) = (st.clone(), pulidor_anticipo);
+    let anticipar: crate::vivo::Confirmar = Box::new(move |s: &[f32]| {
+        let words = dictionary(&st4);
+        let timed = st4.engine.transcribe_live(s)?.ok()?;
+        let (oido, _) = voiceprint::correct(&words, s, &timed);
+        // Vacío no se anticipa: al soltar se transcribe la cola (regla 5, BELTR-PRT-30).
+        if oido.trim().is_empty() {
+            return None;
+        }
+        if let Some(p) = &pulidor2 {
+            let target = inject::foreground_app();
+            let processed = run_pipeline_with(&st4, &oido, &words, &target.exe, &target.title);
+            if processed.fixes_snippets == 0 {
+                let settings = st4.settings.read().clone();
+                p.encolar(&processed.text, category_tone(&settings, text::category_for_app(&target.exe, &target.title)));
+            }
+        }
+        Some(oido)
+    });
+    let opciones = crate::vivo::Opciones {
+        anticipar: (!whisper).then_some(anticipar),
+        vista,
+        confirmar: Some(confirmar),
+        minimo: if whisper { crate::vivo::SEG_MINIMO_WHISPER } else { crate::vivo::SEG_MINIMO },
+        tope: if whisper { crate::vivo::SEG_TOPE_WHISPER } else { crate::vivo::SEG_TOPE },
+    };
+    crate::vivo::Sesion::empezar_con(
+        tap,
+        // Whisper también lleva el diccionario como pista en los trozos en vivo.
+        Box::new(move || st1.engine.set_vocabulary(&vocabulary(&dictionary(&st1)))),
+        Box::new(move |s: &[f32]| st2.engine.transcribe_live(s)),
+        Box::new(move |v: &crate::vivo::Vista| {
+            let _ = app.emit("dictation://live", v.con_diccionario(&words));
+        }),
+        opciones,
+    )
+}
+
 /// Solo en depuración: si `PRONTO_FAKE_WAV` apunta a un WAV PCM16 mono a 16 kHz, el dictado usa
 /// ese audio en vez del micrófono. Sirve para probar de punta a punta (atajo → texto → pegado)
 /// sin hablar. En release no existe.
@@ -1354,6 +1785,24 @@ fn fake_wav() -> Option<Vec<f32>> {
     let samples = crate::audio::decode_wav(&bytes)?;
     eprintln!("[state] PRONTO_FAKE_WAV: {} muestras de {}", samples.len(), path.to_string_lossy());
     Some(samples)
+}
+
+/// Segmentos confirmados (BELTR-PRT-16): cuándo se pule por trozos y cuándo se vuelve al camino de siempre.
+#[cfg(test)]
+mod segmentos {
+    use super::*;
+
+    #[test]
+    fn el_texto_entero_se_parte_como_los_segmentos() {
+        let p = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        assert_eq!(partir_como("Hola equipo. Mañana a las 5:30.", &p(&["Hola equipo.", "Mañana a las 5:30."])), Some(p(&["Hola equipo.", "Mañana a las 5:30."])));
+        // En el corte cambian los signos o la mayúscula: los trozos salen del entero, tal cual.
+        assert_eq!(partir_como("Hola equipo, mañana vamos.", &p(&["Hola equipo.", "Mañana vamos."])), Some(p(&["Hola equipo,", "mañana vamos."])));
+        assert_eq!(partir_como("Hola  equipo.\nMañana.", &p(&["Hola equipo.", "Mañana."])), Some(p(&["Hola equipo.", "Mañana."])));
+        assert_eq!(partir_como("Escríbeme a ana@gmail.com", &p(&["Escríbeme a ana arroba", "Gmail.com."])), None, "un correo partido por el corte → todo junto");
+        assert_eq!(partir_como("Hola equipo de ventas", &p(&["Hola equipo"])), None, "sobran palabras");
+        assert_eq!(partir_como("", &[]), None);
+    }
 }
 
 /// Regla 5 de CLAUDE.md (un dictado nunca se pierde). La lanza
@@ -1401,7 +1850,7 @@ mod nsn_experiencia {
 
         // 1) El pegado falla (sin foco, portapapeles ocupado…).
         let mut saved = None;
-        let (_, pasted) = finish_dictation(&db, &defaults, &audio, "hola que tal", &processed("Hola, qué tal."), Tone::Casual, "Notepad", 1000, |it| saved = Some(it.id), |_| {
+        let (_, pasted) = finish_dictation(&db, &defaults, &audio, "hola que tal", &processed("Hola, qué tal."), &[], Tone::Casual, "Notepad", 1000, |it| saved = Some(it.id), |_| {
             Err(Failure::new("Copiado, pero no se pudo pegar: sin foco", Some("paste")))
         });
         assert!(pasted.is_err());
@@ -1411,7 +1860,7 @@ mod nsn_experiencia {
         let port = TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let polish_on = Settings { ai_polish: true, ollama_url: format!("http://127.0.0.1:{port}"), ai_polish_timeout_ms: 1000, ..Settings::default() };
         let mut saved = None;
-        let (outcome, pasted) = finish_dictation(&db, &polish_on, &audio, "vamos a cerrar el presupuesto", &processed("Vamos a cerrar el presupuesto."), Tone::Casual, "Outlook", 2000, |it| saved = Some(it.id), |_| {
+        let (outcome, pasted) = finish_dictation(&db, &polish_on, &audio, "vamos a cerrar el presupuesto", &processed("Vamos a cerrar el presupuesto."), &[], Tone::Casual, "Outlook", 2000, |it| saved = Some(it.id), |_| {
             Err(Failure::new("no se pudo pegar", Some("paste")))
         });
         assert!(outcome.failed && pasted.is_err());
@@ -1420,7 +1869,7 @@ mod nsn_experiencia {
         // 3) Todo va bien: también queda guardado (y se pega el mismo texto).
         let mut pegado = String::new();
         let mut saved = None;
-        let (_, pasted) = finish_dictation(&db, &defaults, &audio, "listo", &processed("Listo."), Tone::Casual, "Code", 500, |it| saved = Some(it.id), |t| {
+        let (_, pasted) = finish_dictation(&db, &defaults, &audio, "listo", &processed("Listo."), &[], Tone::Casual, "Code", 500, |it| saved = Some(it.id), |t| {
             pegado = t.to_string();
             Ok(())
         });
@@ -1443,6 +1892,33 @@ mod nsn_experiencia {
         assert!(!unheard_audio("", &[SILENCE_PEAK / 2.0; 1600]), "el micro mudo se avisa antes, por el pico");
         let item = keep_failed_transcription(&db, defaults.keep_audio_days, &flojo, "Notepad", 1000).expect("el dictado con voz floja se perdió");
         assert_kept(&db, item.id, "", flojo.len());
+    }
+
+    /// BELTR-PRT-11: el pulido no deshace el diccionario. Si el modelo escribe «Github» o «Beltran
+    /// Labs», se pega como lo guardó el usuario («GitHub», «BeltranLabs»).
+    #[test]
+    fn el_pulido_no_deshace_el_diccionario() {
+        let db = Db::open_memory().unwrap();
+        let audio = samples();
+        let (url, _prompts) = ollama::fake_server(vec!["Mañana lo subo a Github y se lo enseño a los de Beltran Labs.".to_string()]);
+        let s = Settings { ai_polish: true, ollama_url: url, ai_polish_timeout_ms: 5000, ..Settings::default() };
+        let word = |w: &str, r: Option<&str>| crate::models::Word { id: 1, word: w.into(), replacement: r.map(Into::into), created_at: String::new(), starred: false, source: "manual".into(), variants: Vec::new(), samples: Vec::new() };
+        let words = [word("BeltranLabs", None), word("Gihad", Some("GitHub"))];
+        let local = processed("mañana lo subo a GitHub y se lo enseño a los de BeltranLabs");
+        let (outcome, pasted) = finish_dictation(&db, &s, &audio, &local.text, &local, &words, Tone::Casual, "Notepad", 1000, |_| {}, |_| Ok(()));
+        assert!(pasted.is_ok());
+        assert_eq!(outcome.text, "Mañana lo subo a GitHub y se lo enseño a los de BeltranLabs.");
+        assert!(outcome.polished, "el pulido de puntuación se conserva");
+
+        // Regla 7 (revisión BELTR-PRT-11): el diccionario no puede colar tras el pulido un enlace que no
+        // se dijo. El modelo añade «de mi web» y un reemplazo lo haría «beltranlabs.com» → sin pulir.
+        let (url, _prompts) = ollama::fake_server(vec!["Te paso el presupuesto de mi web mañana sin falta.".to_string()]);
+        let s = Settings { ai_polish: true, ollama_url: url, ai_polish_timeout_ms: 5000, ..Settings::default() };
+        let words = [word("mi web", Some("beltranlabs.com"))];
+        let local = processed("te paso el presupuesto mañana sin falta");
+        let (outcome, _) = finish_dictation(&db, &s, &audio, &local.text, &local, &words, Tone::Casual, "Notepad", 1000, |_| {}, |_| Ok(()));
+        assert_eq!(outcome.text, "te paso el presupuesto mañana sin falta");
+        assert!(!outcome.polished && !outcome.text.contains("beltranlabs.com"));
     }
 
     /// Rompedor 22-oct-c, ALTA 1: «Eso es justo lo que quiero decir.» salía vacío de la tubería y
@@ -1852,6 +2328,23 @@ mod vista_previa {
 /// pruebas.
 #[cfg(test)]
 mod carga_transform {
+    /// BELTR-PRT-30: el atajo durante la transcripción del dictado anterior empieza otro (antes se ignoraba
+    /// y lo dicho se perdía); durante una grabación o una vista previa, no.
+    #[test]
+    fn nsn_experiencia_dictar_mientras_se_transcribe_el_anterior() {
+        use super::{fin_a_la_vista, puede_empezar, Phase};
+        assert!(puede_empezar(Phase::Idle) && puede_empezar(Phase::Pasting) && puede_empezar(Phase::Processing));
+        assert!(!puede_empezar(Phase::Listening { hands_free: false }) && !puede_empezar(Phase::Listening { hands_free: true }));
+        assert!(!puede_empezar(Phase::Preview) && !puede_empezar(Phase::Polishing));
+        // Un fin viejo con la cola vacía y sin Transform cierra «Transcribiendo» (atasco de la revisión del 22-nov).
+        use super::suelta_procesando;
+        assert!(suelta_procesando(7, 5, 0, false));
+        assert!(!suelta_procesando(7, 7, 0, false), "el del trabajo en curso lo cierra la rama normal");
+        assert!(!suelta_procesando(7, 5, 1, false) && !suelta_procesando(7, 5, 0, true));
+        // El final de un dictado se ve solo si no se graba otro ni queda otro detrás en la cola.
+        assert!(fin_a_la_vista(false, 1) && !fin_a_la_vista(true, 1) && !fin_a_la_vista(false, 2));
+    }
+
     use super::*;
     use std::sync::mpsc;
 
@@ -1944,5 +2437,417 @@ mod carga_transform {
         assert!(!db.get_history(viejo.id).unwrap().unwrap().has_audio);
         assert!(db.get_history(nuevo.id).unwrap().unwrap().has_audio);
         assert_eq!(AUDIO_PURGE_EVERY, Duration::from_secs(3600));
+    }
+}
+
+/// Regla 5 con el camino entero del dictado (`dictar_con`: transcribir → historial + WAV → pegar), con un
+/// motor de mentira (BELTR-PRT-30): vacío, que falla, lento (carga simulada), soltar mientras se confirma un
+/// segmento o se anticipa el texto, y Ollama colgado. Cuenta 0 dictados perdidos: cada uno está en el
+/// historial con su audio entero y, si había voz y el motor la entiende, con su texto.
+#[cfg(test)]
+mod nsn_experiencia_dictar {
+    use super::*;
+    use crate::asr::{Engine, Timed};
+    use crate::vivo::{Anticipado, Confirmados, Segmento};
+    use std::net::TcpListener;
+    use std::sync::Mutex;
+
+    const R: usize = 16_000;
+
+    /// `n` segundos de «voz» (un tono por encima de cualquier umbral de silencio).
+    fn voz(n: f32) -> Vec<f32> {
+        (0..(n * R as f32) as usize).map(|i| (i as f32 * 0.07).sin() * 0.3).collect()
+    }
+    fn silencio(n: f32) -> Vec<f32> {
+        vec![0.0; (n * R as f32) as usize]
+    }
+
+    /// Motor que «oye» una palabra por segundo de audio con voz y nada si el trozo está callado.
+    fn oye(s: &[f32]) -> Timed {
+        let voz = s.chunks(R).filter(|c| !crate::vivo::callado(c)).count();
+        Timed { text: (0..voz).map(|i| format!("palabra{i}")).collect::<Vec<_>>().join(" "), tokens: Vec::new() }
+    }
+
+    fn estado(engine: Engine, settings: Settings) -> Arc<AppState> {
+        let (tx, _rx) = crossbeam_channel::unbounded();
+        Arc::new(AppState::new(settings, Arc::new(Db::open_memory().unwrap()), Arc::new(engine), tx))
+    }
+
+    fn destino() -> AppInfo {
+        AppInfo { exe: "notepad.exe".into(), title: "Sin título".into() }
+    }
+
+    /// Un dictado por `dictar_con`: lo que se guardó (en orden), lo que se pegó y el resultado.
+    struct Salida {
+        guardados: Vec<HistoryItem>,
+        pegado: Option<String>,
+        /// Si esperó a que acabara una grabación antes de pegar.
+        espero: bool,
+        r: Result<bool, Failure>,
+    }
+
+    fn dictar(st: &Arc<AppState>, audio: &[f32], conf: Option<&Confirmados>, pegar_falla: bool) -> Salida {
+        let guardados = Mutex::new(Vec::new());
+        let pegado = Mutex::new(None);
+        let espero = AtomicBool::new(false);
+        let r = dictar_con(
+            st,
+            audio,
+            (audio.len() * 1000 / R) as i64,
+            &destino(),
+            conf,
+            None,
+            &|it| guardados.lock().unwrap().push(it),
+            &|_| {},
+            &|t, e| {
+                espero.store(e, Ordering::SeqCst);
+                if pegar_falla {
+                    return Err(Failure::new("No se copió nada", Some("paste")));
+                }
+                *pegado.lock().unwrap() = Some(t.to_string());
+                Ok(())
+            },
+        );
+        Salida { guardados: guardados.into_inner().unwrap(), pegado: pegado.into_inner().unwrap(), espero: espero.into_inner(), r }
+    }
+
+    /// El dictado está en el historial (lo dice la base, no solo el aviso) con su audio entero.
+    fn en_historial(st: &Arc<AppState>, s: &Salida, n: usize) -> HistoryItem {
+        let it = s.guardados.last().expect("el dictado no se guardó (regla 5)");
+        let fila = st.db.get_history(it.id).unwrap().expect("no está en la base");
+        assert!(fila.has_audio, "guardado sin audio");
+        let wav = std::fs::read(db::existing_audio_path(fila.id, &fila.created_at).expect("falta el WAV")).expect("WAV ilegible");
+        assert_eq!(audio::decode_wav(&wav).unwrap().len(), n, "el WAV no tiene el audio entero");
+        fila
+    }
+
+    #[test]
+    fn nsn_experiencia_motor_vacio_o_que_falla_no_pierde_el_dictado() {
+        // El motor no saca nada de un audio con voz (lo que pasaba con Whisper el 20-nov).
+        let st = estado(Engine::falso_para_tests(|_| Timed::default()), Settings::default());
+        let audio = voz(10.0);
+        let s = dictar(&st, &audio, None, false);
+        assert_eq!(s.r.as_ref().unwrap_err().message, UNHEARD_KEPT);
+        assert!(s.pegado.is_none());
+        en_historial(&st, &s, audio.len());
+
+        // El motor entra en pánico (GPU sin memoria, modelo dañado): queda para reintentar.
+        let st = estado(Engine::falso_para_tests(|_| panic!("GPU sin memoria")), Settings::default());
+        let s = dictar(&st, &audio, None, false);
+        assert!(s.r.as_ref().unwrap_err().message.contains("reintentar"), "{:?}", s.r.as_ref().err().map(|f| &f.message));
+        en_historial(&st, &s, audio.len());
+    }
+
+    #[test]
+    fn nsn_experiencia_carga_simulada_y_pegado_fallido_no_pierden_nada() {
+        // Motor lento (CPU/GPU saturadas): 8 dictados a la vez, todos guardados con su texto.
+        let st = estado(
+            Engine::falso_para_tests(|s| {
+                std::thread::sleep(Duration::from_millis(300));
+                oye(s)
+            }),
+            Settings::default(),
+        );
+        let hilos: Vec<_> = (0..8)
+            .map(|i| {
+                let st = st.clone();
+                std::thread::spawn(move || {
+                    let audio = voz(2.0 + i as f32 * 0.5);
+                    let s = dictar(&st, &audio, None, i % 3 == 0);
+                    let fila = en_historial(&st, &s, audio.len());
+                    assert!(!fila.text.is_empty(), "dictado {i} sin texto");
+                    if i % 3 == 0 {
+                        assert_eq!(s.r.as_ref().unwrap_err().kind, Some("paste"));
+                    } else {
+                        assert_eq!(s.pegado.as_deref(), Some(fila.text.as_str()));
+                    }
+                })
+            })
+            .collect();
+        for h in hilos {
+            h.join().expect("un dictado entró en pánico");
+        }
+        assert_eq!(st.db.list_history(None, 100, 0).unwrap().len(), 8, "se perdió algún dictado");
+    }
+
+    #[test]
+    fn nsn_experiencia_segmento_o_anticipo_vacios_con_voz_se_vuelven_a_transcribir() {
+        let st = estado(Engine::falso_para_tests(oye), Settings::default());
+        // 20 s de voz confirmados como segmento… pero vacío (el motor falló mientras se hablaba), y 3 s de cola.
+        let audio = voz(23.0);
+        let conf = Confirmados::default();
+        conf.empezar();
+        conf.acabar(Some(Segmento { inicio: 0, fin: 20 * R, crudo: String::new() }));
+        let s = dictar(&st, &audio, Some(&conf), false);
+        let fila = en_historial(&st, &s, audio.len());
+        assert_eq!(fila.text.split_whitespace().count(), 23, "se perdió el segmento vacío: «{}»", fila.text);
+
+        // Texto anticipado vacío con voz en la cola (y sin segmentos): la cola se transcribe al soltar.
+        let audio = [voz(4.0), silencio(1.0)].concat();
+        let conf = Confirmados::default();
+        conf.anticipar(0, audio.len(), 0.01);
+        conf.anticipado(Some(Anticipado::tests(0, audio.len(), "", 0.01)));
+        let s = dictar(&st, &audio, Some(&conf), false);
+        let fila = en_historial(&st, &s, audio.len());
+        assert!(!fila.text.is_empty(), "el anticipo vacío dejó el dictado sin texto");
+        assert!(s.r.is_ok());
+    }
+
+    #[test]
+    fn nsn_experiencia_soltar_mientras_se_confirma_o_se_anticipa() {
+        let st = estado(Engine::falso_para_tests(oye), Settings::default());
+        let audio = voz(27.0);
+
+        // 1) Se suelta mientras se confirma un segmento que acaba enseguida: se usa el segmento.
+        let conf = Arc::new(Confirmados::default());
+        conf.empezar();
+        let c2 = conf.clone();
+        let h = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(300));
+            c2.acabar(Some(Segmento { inicio: 0, fin: 25 * R, crudo: "segmento confirmado".into() }));
+        });
+        let s = dictar(&st, &audio, Some(&conf), false);
+        h.join().unwrap();
+        let fila = en_historial(&st, &s, audio.len());
+        assert!(fila.text.starts_with("Segmento confirmado"), "«{}»", fila.text);
+
+        // 2) La confirmación no acaba nunca (motor colgado con carga): pasado el plazo, el audio entero.
+        let conf = Confirmados::default();
+        conf.empezar();
+        let t0 = std::time::Instant::now();
+        let s = dictar(&st, &audio, Some(&conf), false);
+        assert!(t0.elapsed() < ESPERA_CONFIRMACION + Duration::from_secs(3), "esperó de más: {:?}", t0.elapsed());
+        let fila = en_historial(&st, &s, audio.len());
+        assert_eq!(fila.text.split_whitespace().count(), 27, "«{}»", fila.text);
+
+        // 3) Se suelta mientras se anticipa y el anticipo no llega: pasado el plazo se transcribe la cola.
+        let audio = [voz(3.0), silencio(1.0)].concat();
+        let conf = Confirmados::default();
+        conf.anticipar(0, audio.len(), 0.01);
+        let s = dictar(&st, &audio, Some(&conf), false);
+        let fila = en_historial(&st, &s, audio.len());
+        assert!(!fila.text.is_empty());
+
+        // 4) Se habló después del anticipo: no vale y se transcribe la cola entera.
+        let audio = voz(4.0);
+        let conf = Confirmados::default();
+        conf.anticipado(Some(Anticipado::tests(0, 2 * R, "solo la mitad", 0.01)));
+        let s = dictar(&st, &audio, Some(&conf), false);
+        let fila = en_historial(&st, &s, audio.len());
+        assert!(!fila.text.contains("mitad"), "usó un anticipo con voz después: «{}»", fila.text);
+    }
+
+    #[test]
+    fn nsn_experiencia_ollama_colgado_pega_sin_pulir_y_guarda() {
+        // Ollama acepta la conexión y no contesta nunca.
+        let l = TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let mut vivos = Vec::new();
+            for c in l.incoming().flatten().take(4) {
+                vivos.push(c);
+            }
+        });
+        let settings = Settings { ai_polish: true, ollama_url: format!("http://127.0.0.1:{port}"), ai_polish_timeout_ms: 800, ..Settings::default() };
+        let st = estado(Engine::falso_para_tests(oye), settings);
+        let audio = voz(3.0);
+        let t0 = std::time::Instant::now();
+        let s = dictar(&st, &audio, None, false);
+        assert!(t0.elapsed() < Duration::from_secs(4), "el pulido colgado bloqueó el dictado: {:?}", t0.elapsed());
+        let fila = en_historial(&st, &s, audio.len());
+        assert!(!fila.polished && !fila.text.is_empty());
+        assert_eq!(s.pegado.as_deref(), Some(fila.text.as_str()), "no pegó el texto sin pulir");
+    }
+
+    /// Cola única (BELTR-PRT-30, opción de Fable tras la revisión): un dictado anterior que acaba mientras se
+    /// graba otro queda en el historial ya, pero no pega hasta que se suelta el nuevo (con el atajo pulsado
+    /// el Ctrl+V no pegaría, y el orden tiene que ser el anterior y luego el nuevo).
+    #[test]
+    fn nsn_experiencia_el_anterior_espera_a_la_grabacion_nueva_para_pegar() {
+        let st = estado(Engine::falso_para_tests(oye), Settings::default());
+        st.grabando.store(true, Ordering::SeqCst);
+        let st2 = st.clone();
+        let h = std::thread::spawn(move || {
+            let s = dictar(&st2, &voz(3.0), None, false);
+            (s.pegado.clone(), s.espero, s.guardados.len())
+        });
+        std::thread::sleep(Duration::from_millis(500));
+        assert_eq!(st.db.list_history(None, 10, 0).unwrap().len(), 1, "el anterior tiene que estar ya en el historial");
+        assert!(!h.is_finished(), "pegó con una grabación en marcha");
+        st.grabando.store(false, Ordering::SeqCst);
+        let (pegado, espero, n) = h.join().unwrap();
+        assert!(pegado.is_some() && espero && n == 1, "al soltar el nuevo, el anterior pega una vez");
+        // Sin grabación en marcha, pega sin esperar.
+        let s = dictar(&st, &voz(2.0), None, false);
+        assert!(s.pegado.is_some() && !s.espero);
+    }
+
+    /// `active` (lo que mira el actualizador antes de instalar y cerrar Pronto) no se apaga mientras quede un
+    /// dictado por transcribir o pegar, ni con una grabación en marcha.
+    #[test]
+    fn nsn_experiencia_la_marca_de_ocupado_sigue_con_dictados_pendientes() {
+        let st = estado(Engine::falso_para_tests(oye), Settings::default());
+        st.active.store(true, Ordering::SeqCst);
+        st.pendientes.store(1, Ordering::SeqCst);
+        st.liberar();
+        assert!(st.active.load(Ordering::SeqCst), "se apagó con un dictado sin guardar");
+        st.pendientes.store(0, Ordering::SeqCst);
+        st.grabando.store(true, Ordering::SeqCst);
+        st.liberar();
+        assert!(st.active.load(Ordering::SeqCst), "se apagó grabando");
+        st.grabando.store(false, Ordering::SeqCst);
+        st.liberar();
+        assert!(!st.active.load(Ordering::SeqCst), "sin nada pendiente, se apaga");
+    }
+
+}
+
+/// BELTR-PRT-36: Win+Alt+Espacio (manos libres) la 2.ª vez terminaba y volvía a grabar. Las pulsaciones son
+/// las que manda `hotkey.rs`: Win+Alt da `HoldDown`, el Espacio con Win+Alt pulsadas da `HandsFree` y soltar
+/// da `HoldUp`. El simulador aplica cada `Gesto` como `Controller::on_hotkey` (empezar, fijar, parar, soltar).
+#[cfg(test)]
+mod atajos_dictar {
+    use super::{gesto, sigue_parado_con_mantener, Gesto, Phase};
+    use crate::hotkey::HotkeyEvent::{self, HandsFree, HoldDown, HoldUp};
+
+    struct Sim {
+        phase: Phase,
+        pending_tap: bool,
+        parado: bool,
+        /// Fase en que deja `stop()`: `Processing` con voz; `Idle` si fue un toque o silencio.
+        tras_parar: Phase,
+        grabaciones: usize,
+        paradas: usize,
+    }
+
+    impl Sim {
+        fn new() -> Self {
+            Sim { phase: Phase::Idle, pending_tap: false, parado: false, tras_parar: Phase::Processing, grabaciones: 0, paradas: 0 }
+        }
+        /// `largo`: para `HoldUp`, si se mantuvo ≥ 500 ms (si no, es un toque y se espera el segundo).
+        fn evento(&mut self, ev: HotkeyEvent, largo: bool) {
+            let g = gesto(ev, self.phase, self.pending_tap, self.parado);
+            self.parado = sigue_parado_con_mantener(ev, g, self.parado);
+            match g {
+                Gesto::Empezar { hands_free } => {
+                    self.phase = Phase::Listening { hands_free };
+                    self.pending_tap = false;
+                    self.grabaciones += 1;
+                }
+                Gesto::Fijar => {
+                    self.phase = Phase::Listening { hands_free: true };
+                    self.pending_tap = false;
+                }
+                Gesto::Parar => self.parar(),
+                Gesto::Soltar if largo => self.parar(),
+                Gesto::Soltar => self.pending_tap = true,
+                Gesto::Nada => {}
+            }
+        }
+        fn parar(&mut self) {
+            self.phase = self.tras_parar;
+            self.pending_tap = false;
+            self.paradas += 1;
+        }
+        fn win_alt_espacio(&mut self) {
+            self.evento(HoldDown, false);
+            self.evento(HandsFree, false);
+            self.evento(HoldUp, false);
+        }
+        fn mantener(&mut self, largo: bool) {
+            self.evento(HoldDown, false);
+            self.evento(HoldUp, largo);
+        }
+    }
+
+    #[test]
+    fn win_alt_espacio_la_segunda_vez_termina_y_no_vuelve_a_grabar() {
+        let mut s = Sim::new();
+        s.win_alt_espacio();
+        assert_eq!(s.phase, Phase::Listening { hands_free: true }, "la 1.ª vez empieza y queda fijada");
+        assert_eq!((s.grabaciones, s.paradas), (1, 0));
+
+        s.win_alt_espacio();
+        assert_eq!(s.phase, Phase::Processing, "la 2.ª vez termina y transcribe");
+        assert_eq!((s.grabaciones, s.paradas), (1, 1), "y no empieza otra grabación sola");
+
+        // Con el anterior aún transcribiéndose, una 3.ª vez sí empieza un dictado nuevo (BELTR-PRT-30).
+        s.win_alt_espacio();
+        assert_eq!(s.phase, Phase::Listening { hands_free: true });
+        assert_eq!((s.grabaciones, s.paradas), (2, 1));
+    }
+
+    #[test]
+    fn tampoco_vuelve_a_grabar_si_lo_grabado_era_silencio() {
+        // `stop()` con un toque o silencio deja `Idle`: ahí el Espacio ya rearrancaba antes de PRT-30.
+        let mut s = Sim::new();
+        s.tras_parar = Phase::Idle;
+        s.win_alt_espacio();
+        s.win_alt_espacio();
+        assert_eq!(s.phase, Phase::Idle);
+        assert_eq!((s.grabaciones, s.paradas), (1, 1));
+    }
+
+    #[test]
+    fn mantener_y_soltar_pega() {
+        let mut s = Sim::new();
+        s.mantener(true);
+        assert_eq!(s.phase, Phase::Processing);
+        assert_eq!((s.grabaciones, s.paradas), (1, 1));
+    }
+
+    #[test]
+    fn mantener_mientras_se_transcribe_el_anterior_graba_el_nuevo() {
+        // BELTR-PRT-30: también tras terminar un manos libres, en cuanto se suelta y se vuelve a pulsar.
+        let mut s = Sim::new();
+        s.win_alt_espacio();
+        s.win_alt_espacio();
+        assert_eq!(s.phase, Phase::Processing);
+        s.evento(HoldDown, false);
+        assert_eq!(s.phase, Phase::Listening { hands_free: false }, "Win+Alt en «Transcribiendo» empieza otro");
+        s.evento(HoldUp, true);
+        assert_eq!((s.grabaciones, s.paradas), (2, 2));
+    }
+
+    #[test]
+    fn doble_toque_de_win_alt_fija_y_win_alt_termina() {
+        let mut s = Sim::new();
+        s.mantener(false);
+        assert!(s.pending_tap, "un toque corto espera el segundo");
+        s.mantener(false);
+        assert_eq!(s.phase, Phase::Listening { hands_free: true }, "el segundo toque fija");
+        s.mantener(false);
+        assert_eq!(s.phase, Phase::Processing, "Win+Alt solo termina el manos libres");
+        assert_eq!((s.grabaciones, s.paradas), (1, 1));
+        // Y tras eso, Win+Alt+Espacio empieza uno nuevo: la marca se quitó al soltar.
+        s.win_alt_espacio();
+        assert_eq!(s.phase, Phase::Listening { hands_free: true });
+        assert_eq!(s.grabaciones, 2);
+    }
+
+    #[test]
+    fn manos_libres_con_un_atajo_sin_win_alt_sigue_igual() {
+        // Si el manos libres no empieza por el atajo «mantener» (p. ej. Ctrl+Espacio), solo llega `HandsFree`.
+        let mut s = Sim::new();
+        s.evento(HandsFree, false);
+        assert_eq!(s.phase, Phase::Listening { hands_free: true });
+        s.evento(HandsFree, false);
+        assert_eq!(s.phase, Phase::Processing);
+        s.evento(HandsFree, false);
+        assert_eq!(s.phase, Phase::Listening { hands_free: true }, "en «Transcribiendo» empieza otro (PRT-30)");
+        assert_eq!((s.grabaciones, s.paradas), (2, 1));
+    }
+
+    #[test]
+    fn la_marca_solo_frena_el_espacio_del_mismo_gesto() {
+        assert_eq!(gesto(HandsFree, Phase::Processing, false, true), Gesto::Nada);
+        assert_eq!(gesto(HandsFree, Phase::Idle, false, true), Gesto::Nada);
+        assert_eq!(gesto(HandsFree, Phase::Processing, false, false), Gesto::Empezar { hands_free: true });
+        // «mantener» no mira la marca: tras soltar y volver a pulsar, empieza.
+        assert_eq!(gesto(HoldDown, Phase::Processing, false, false), Gesto::Empezar { hands_free: false });
+        assert!(sigue_parado_con_mantener(HoldDown, Gesto::Parar, false));
+        assert!(sigue_parado_con_mantener(HandsFree, Gesto::Nada, true));
+        assert!(!sigue_parado_con_mantener(HoldUp, Gesto::Nada, true));
+        assert!(!sigue_parado_con_mantener(HoldDown, Gesto::Empezar { hands_free: false }, true));
     }
 }

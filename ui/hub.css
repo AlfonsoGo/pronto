@@ -796,7 +796,9 @@ mark{background:rgba(139,92,246,.35);color:inherit;border-radius:4px;padding:0 2
 .hero-howto .hero-tx{max-width:100%}
 .hero-howto .hero-deco{display:none}
 .hero-howto p{margin-bottom:16px;max-width:60ch}
-.howto-cfgs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.howto-cfgs{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+:is(.howto-polish,.howto-live) .switch{align-self:flex-start}
+:is(.howto-polish,.howto-live).on{border-color:var(--acento-t)}
 .howto-item{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:16px;background:var(--caja-bg);border:1px solid var(--hilo);min-width:0}
 .howto-ic{display:none}
 .howto-v{display:flex;flex-direction:column;gap:3px;min-width:0}

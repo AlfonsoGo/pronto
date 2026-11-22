@@ -38,6 +38,7 @@ const ESTADOS = [
   ['micrófono', 'hub.html?settings=general', async (p) => { await p.click('[data-act=mic]'); await espera(400); }],
   ['idiomas', 'hub.html?settings=general', async (p) => { await p.click('[data-act=langs]'); await espera(400); }],
   ['lo nuevo tras actualizar', 'hub.html?novedades', async (p) => { await p.waitForSelector('.nv-modal'); }],
+  ['aviso de estadísticas', 'hub.html?uso', async (p) => { await p.waitForSelector('.uso-modal'); }],
 ];
 
 test('06 accesibilidad: 0 violaciones graves o críticas (axe, WCAG 2.2 AA) en cada página del hub', { skip: saltar, timeout: 600_000 }, async () => {

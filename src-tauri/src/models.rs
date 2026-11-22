@@ -143,6 +143,9 @@ pub struct Settings {
     pub show_flow_bar: bool,
     pub sounds: bool,
     pub mute_music: bool,
+    /// «Texto en vivo» (BELTR-PRT-10): la Flow bar enseña las palabras mientras se habla y, al soltar,
+    /// solo queda por transcribir el último trozo (`vivo.rs`).
+    pub live_text: bool,
     /// Obsoletos: solo se leen para migrar a `cleanup_level`. Se mantienen por compatibilidad.
     pub remove_fillers: bool,
     pub backtrack: bool,
@@ -169,6 +172,8 @@ pub struct Settings {
     pub history_retention_days: u32,
     /// Buscar actualizaciones en GitHub al abrir y cada 4 horas (`updater.rs`).
     pub auto_update: bool,
+    /// Estadísticas de uso (`uso.rs`): `None` = aún no ha decidido, y sin un `Some(true)` no sale nada.
+    pub usage_stats: Option<bool>,
 }
 
 /// Modelo de IA local de fábrica (Ollama): pequeño, para que valga en cualquier PC.
@@ -201,6 +206,7 @@ impl Default for Settings {
             show_flow_bar: true,
             sounds: true,
             mute_music: true,
+            live_text: true,
             remove_fillers: true,
             backtrack: true,
             cleanup_level: CleanupLevel::Medium,
@@ -218,6 +224,7 @@ impl Default for Settings {
             styles: Styles::default(),
             history_retention_days: 0,
             auto_update: true,
+            usage_stats: None,
         }
     }
 }

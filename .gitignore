@@ -23,3 +23,5 @@ node_modules/
 rompedor-backup/
 e2e/results/*.png
 e2e/rompedor/capturas/
+tests/banco-entender/audio/
+tests/banco-formatos/audio/

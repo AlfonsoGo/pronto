@@ -1,4 +1,4 @@
-//! Tubería de texto: limpieza -> retroceso -> diccionario -> snippets -> estilo.
+//! Tubería de texto: limpieza -> formatos (correos, teléfonos, horas…) -> diccionario -> snippets -> estilo.
 //!
 //! Todo es determinista y local. Cada paso es una función pública para poder probarlo suelto;
 //! `process` los encadena en el orden del contrato.
@@ -76,6 +76,10 @@ pub fn process(raw: &str, o: &Options) -> Processed {
         text = t;
         out.press_enter = pressed;
     }
+    // Correos, teléfonos, horas, euros, % y símbolos dictados → escritos (BELTR-PRT-15). Antes del
+    // diccionario (que no toca lo pegado a un enlace o un correo) y antes del pulido (regla 7).
+    text = format_spoken(&text);
+    text = fix_domains(&text, o.words);
     let mut protected: Vec<String> = Vec::new();
     text = escape_markers(&text, &mut protected);
     text = dictionary_inner(&text, o.words, &mut protected, &mut out.fixes_dictionary);
@@ -868,7 +872,13 @@ fn dictionary_rules(words: &[Word]) -> Vec<Rule<'_>> {
         }
         let repl = w.replacement.as_deref().map(str::trim).filter(|r| !r.is_empty());
         match repl {
-            Some(r) => rules.push(Rule { from: word, to: r, kind: RuleKind::Fix }),
+            Some(r) => {
+                rules.push(Rule { from: word, to: r, kind: RuleKind::Fix });
+                // La palabra buena también ajusta sus mayúsculas: «github» → «GitHub» (BELTR-PRT-11).
+                if case_rule_ok(r) && !r.eq_ignore_ascii_case(word) {
+                    rules.push(Rule { from: r, to: r, kind: RuleKind::Case });
+                }
+            }
             None if case_rule_ok(word) => rules.push(Rule { from: word, to: word, kind: RuleKind::Case }),
             None => {}
         }
@@ -897,6 +907,7 @@ struct CompiledRule {
 struct CompiledDictionary {
     rules: Vec<CompiledRule>,
     sound: std::collections::HashMap<String, String>,
+    near: Vec<NearEntry>,
 }
 
 /// Lo que define un diccionario (palabra, reemplazo y variantes de cada entrada): su «versión».
@@ -921,7 +932,7 @@ fn compile_dictionary(words: &[Word]) -> CompiledDictionary {
             Some(CompiledRule { re, to: rule.to.to_string(), kind: rule.kind })
         })
         .collect();
-    CompiledDictionary { rules, sound: sound_map(words) }
+    CompiledDictionary { rules, sound: sound_map(words), near: near_entries(words) }
 }
 
 /// Las regex del diccionario se compilan una vez por versión del diccionario, no en cada dictado
@@ -961,6 +972,12 @@ fn dictionary_inner(text: &str, words: &[Word], protected: &mut Vec<String>, fix
         out = re
             .replace_all(&out, |caps: &regex::Captures| {
                 let found = &caps[0];
+                // Dentro de un correo, un dominio o una ruta no se toca nada («odoo@clientes.es»;
+                // revisión BELTR-PRT-11).
+                let m = caps.get(0).expect("coincidencia");
+                if glued_to_link(&out, m.start(), m.end()) {
+                    return found.to_string();
+                }
                 // «verá» no es «Vera»: el ajuste pone tildes, nunca las quita.
                 if kind == RuleKind::Case && drops_accent(found, to) {
                     return found.to_string();
@@ -985,7 +1002,8 @@ fn dictionary_inner(text: &str, words: &[Word], protected: &mut Vec<String>, fix
             .into_owned();
         *fixes += n;
     }
-    sound_pass(&out, &dict.sound, protected, fixes)
+    let out = sound_pass(&out, &dict.sound, protected, fixes);
+    near_pass(&out, &dict.near, protected, fixes)
 }
 
 /// Clave «suena igual» en español, sobre la forma sin tildes: tx y ch -> ch, ll -> y, v -> b,
@@ -1068,6 +1086,11 @@ fn sound_pass(text: &str, map: &std::collections::HashMap<String, String>, prote
     token
         .replace_all(text, |caps: &regex::Captures| {
             let found = &caps[0];
+            let m = caps.get(0).expect("coincidencia");
+            // Un dominio o una ruta no se tocan («sonet.es» no es «Sonnet.es»; revisión BELTR-PRT-11).
+            if glued_to_link(text, m.start(), m.end()) {
+                return found.to_string();
+            }
             let key = sound_key(found);
             let target = match map.get(&key).map(String::as_str).or_else(|| near_key(map, &key)) {
                 Some(t) if fold(found) != fold(t) && !is_common_phrase(found) && !is_real_word(found) => t,
@@ -1106,8 +1129,257 @@ fn near_key<'a>(map: &'a std::collections::HashMap<String, String>, key: &str) -
     }
 }
 
-/// Reemplazos del diccionario (palabra completa, insensible a mayúsculas). Paso suelto, para tests.
-#[allow(dead_code)]
+// ---------------------------------------------------------------- 3b. diccionario aproximado
+
+/// Una palabra del diccionario para la pasada aproximada (BELTR-PRT-11): la forma buena, sus claves
+/// «suena como» (la palabra, el «error» de un reemplazo, las variantes grabadas y cómo se lee en
+/// español una palabra inglesa).
+struct NearEntry {
+    target: String,
+    keys: Vec<String>,
+}
+
+/// Lecturas en español de una palabra escrita en inglés (sin tildes, minúsculas): «whisper» →
+/// «guisper», «parakeet» → «parakit», «sonnet» → «sonit», «claude» → «claud». Incluye la propia.
+fn english_readings(s: &str) -> Vec<String> {
+    type Lectura = fn(&str) -> Option<String>;
+    let rules: [Lectura; 10] = [
+        |w| w.contains("ee").then(|| w.replace("ee", "i")),
+        |w| w.contains("ea").then(|| w.replace("ea", "i")),
+        |w| w.contains("oo").then(|| w.replace("oo", "u")),
+        |w| w.contains('w').then(|| w.replace('w', "gu")),
+        |w| w.contains('w').then(|| w.replace('w', "u")),
+        |w| w.contains("sh").then(|| w.replace("sh", "ch")),
+        |w| w.contains("au").then(|| w.replace("au", "o")),
+        |w| w.strip_suffix('y').map(|b| format!("{b}i")),
+        |w| w.strip_suffix("et").map(|b| format!("{b}it")),
+        |w| w.strip_suffix('e').filter(|b| b.chars().last().is_some_and(|c| !"aeiou".contains(c))).map(str::to_string),
+    ];
+    let mut out = vec![s.to_string()];
+    for rule in rules {
+        for i in 0..out.len() {
+            if out.len() >= 12 {
+                break;
+            }
+            if let Some(v) = rule(&out[i]) {
+                if !out.contains(&v) {
+                    out.push(v);
+                }
+            }
+        }
+    }
+    out
+}
+
+fn near_entries(words: &[Word]) -> Vec<NearEntry> {
+    let mut out: Vec<NearEntry> = Vec::new();
+    for w in words {
+        let word = w.word.trim();
+        if word.is_empty() {
+            continue;
+        }
+        let repl = w.replacement.as_deref().map(str::trim).filter(|r| !r.is_empty());
+        let target = repl.unwrap_or(word);
+        // Nunca una palabra corriente («Pronto», «Mar») ni algo con cifras.
+        if is_common_phrase(target) || target.chars().any(char::is_numeric) {
+            continue;
+        }
+        let mut forms = vec![target.to_string()];
+        if repl.is_some() {
+            forms.push(word.to_string());
+        }
+        forms.extend(w.variants.iter().map(|v| v.heard.trim().to_string()).filter(|h| !h.is_empty()));
+        let mut keys: Vec<String> = Vec::new();
+        for f in &forms {
+            let joined: String = fold(&f.split_whitespace().collect::<String>()).chars().filter(|c| c.is_alphanumeric()).collect();
+            for spelled in english_readings(&joined) {
+                let k = sound_key(&spelled);
+                if k.chars().count() >= 3 && !keys.contains(&k) {
+                    keys.push(k);
+                }
+            }
+        }
+        if keys.is_empty() {
+            continue;
+        }
+        match out.iter_mut().find(|e| e.target == target) {
+            Some(e) => {
+                for k in keys {
+                    if !e.keys.contains(&k) {
+                        e.keys.push(k);
+                    }
+                }
+            }
+            None => out.push(NearEntry { target: target.to_string(), keys }),
+        }
+    }
+    out
+}
+
+/// Distancia de edición entre dos claves (letra a letra).
+fn key_distance(a: &str, b: &str) -> usize {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    for i in 1..=a.len() {
+        let mut cur = vec![i; b.len() + 1];
+        for j in 1..=b.len() {
+            cur[j] = (prev[j - 1] + usize::from(a[i - 1] != b[j - 1])).min(prev[j] + 1).min(cur[j - 1] + 1);
+        }
+        prev = cur;
+    }
+    prev[b.len()]
+}
+
+/// Holgura según lo larga que es la clave: 0 con menos de 5 letras, 1 con 5-7, 2 con 8 o más.
+fn near_allowance(key: &str) -> usize {
+    match key.chars().count() {
+        0..=4 => 0,
+        5..=7 => 1,
+        _ => 2,
+    }
+}
+
+/// ¿Vale `key` por la clave `k` del diccionario a distancia `d`? Igual, siempre. En claves largas (8+
+/// letras las dos), hasta la holgura (`near_allowance`). En claves de 5-7 letras, solo si lo único que
+/// cambia es una vocal: es lo que Parakeet confunde al oír palabras inglesas («Perakit», «Wispar»,
+/// «Sanit»), y deja fuera palabras de verdad a las que les falta o cambia una consonante («parquet»
+/// no es «Parakeet», «Obama» no es «Ollama», «Sonic» no es «Sonnet»; revisión BELTR-PRT-11).
+fn near_ok(key: &str, k: &str, d: usize) -> bool {
+    let (a, b): (Vec<char>, Vec<char>) = (key.chars().collect(), k.chars().collect());
+    let vowel = |c: char| "aeiou".contains(c);
+    d == 0
+        || (a.len() >= 8 && b.len() >= 8 && d <= near_allowance(key).min(near_allowance(k)))
+        || (d == 1 && a.len() == b.len() && a.len() >= 5 && a.iter().zip(&b).all(|(x, y)| x == y || (vowel(*x) && vowel(*y))))
+}
+
+/// La palabra del diccionario que suena como `key`: la más cercana dentro de la holgura de las dos
+/// claves (la más corta manda), que empiece por el mismo sonido y que gane a la segunda por al menos
+/// 1. Si dos empatan, ninguna.
+fn near_match<'a>(entries: &'a [NearEntry], key: &str) -> Option<(&'a NearEntry, usize)> {
+    let first = key.chars().next()?;
+    let mut scored: Vec<(&NearEntry, usize)> = entries
+        .iter()
+        .filter_map(|e| {
+            e.keys
+                .iter()
+                .filter(|k| k.starts_with(first))
+                .map(|k| (key_distance(key, k), k))
+                .filter(|(d, k)| near_ok(key, k, *d))
+                .map(|(d, _)| d)
+                .min()
+                .map(|d| (e, d))
+        })
+        .collect();
+    scored.sort_by_key(|(_, d)| *d);
+    match scored.as_slice() {
+        [] => None,
+        [one] => Some(*one),
+        [a, b, ..] if b.1 > a.1 => Some(*a),
+        _ => None,
+    }
+}
+
+/// ¿La palabra `text[a..b]` va pegada a un enlace, un correo, una ruta o un marcador («sonet.es»,
+/// «ana@x.com», «src/odoo»)? Entonces el diccionario no la toca.
+fn glued_to_link(text: &str, a: usize, b: usize) -> bool {
+    // Los dos puntos no: «Estimado Chonso: te escribo» sí se corrige (las URL ya llevan «/»).
+    let sticky = |c: char| "@/\\_#".contains(c) || is_marker_char(c);
+    let mut before = text[..a].chars().rev();
+    let mut after = text[b..].chars();
+    let (b1, b2) = (before.next(), before.next());
+    let (a1, a2) = (after.next(), after.next());
+    b1.is_some_and(sticky)
+        || a1.is_some_and(sticky)
+        || (a1 == Some('.') && a2.is_some_and(char::is_alphanumeric))
+        || (b1 == Some('.') && b2.is_some_and(char::is_alphanumeric))
+}
+
+/// Último paso del diccionario (BELTR-PRT-11): Parakeet parte una palabra guardada en dos o tres
+/// («Beltran Labs», «su pavase» → «Supabase») o la oye casi igual («Perakit» → «Parakeet», «Wispar»
+/// → «Whisper»). Se miran ventanas de 1 a 3 palabras seguidas (sin signos en medio) y se cambian por
+/// la del diccionario que suene igual o casi (`near_match`). Guardas contra inventar:
+/// - una palabra suelta que existe («olla», «sonata») nunca se toca;
+/// - al juntar palabras, la última no existe y tiene 3 letras o más; si alguna existe, tiene que sonar
+///   igual; con 2 palabras, una letra de diferencia como mucho; con 3, ninguna;
+/// - nada con cifras, ni pegado a un enlace, un correo, una ruta o lo ya protegido.
+fn near_pass(text: &str, entries: &[NearEntry], protected: &mut Vec<String>, fixes: &mut usize) -> String {
+    use std::sync::OnceLock;
+    static TOKEN: OnceLock<Regex> = OnceLock::new();
+    if entries.is_empty() {
+        return text.to_string();
+    }
+    let token = TOKEN.get_or_init(|| Regex::new(r"[\p{L}\p{N}]+").expect("regex palabra"));
+    let toks: Vec<(usize, usize)> = token.find_iter(text).map(|m| (m.start(), m.end())).collect();
+    let glued = |a: usize, b: usize| glued_to_link(text, a, b);
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    let mut i = 0;
+    while i < toks.len() {
+        let mut best: Option<(usize, &NearEntry, usize)> = None;
+        for n in 1..=3 {
+            if i + n > toks.len() {
+                break;
+            }
+            let span = &toks[i..i + n];
+            if n > 1 && !text[span[n - 2].1..span[n - 1].0].chars().all(char::is_whitespace) {
+                break;
+            }
+            let words: Vec<&str> = span.iter().map(|&(a, b)| &text[a..b]).collect();
+            if words.iter().any(|w| w.chars().any(char::is_numeric)) || glued(span[0].0, span[n - 1].1) {
+                break;
+            }
+            let joined: String = words.concat();
+            let key = sound_key(&joined);
+            let Some((e, d)) = near_match(entries, &key) else { continue };
+            let (folded, target) = (fold(&joined), fold(&e.target.split_whitespace().collect::<String>()));
+            // Ya está bien escrita (las mayúsculas las ajusta otra regla).
+            if n == 1 && folded == target {
+                continue;
+            }
+            // La palabra con letras de más es otra palabra: «chonsos», «beltranlabsx» (palabra completa).
+            let main = sound_key(&target);
+            if (folded != target && folded.contains(&target)) || (key.chars().count() > main.chars().count() && key.starts_with(main.as_str())) {
+                continue;
+            }
+            let real = |w: &&str| is_real_word(w) || is_common_phrase(w);
+            let ok = if n == 1 {
+                !real(&words[0])
+            } else {
+                // Al juntar palabras, la última es la que no existe y tiene 3 letras o más («Beltran Labs»,
+                // «su pavase»): así no se come una palabra dicha («Beltrán las veces», «Claquet a veces»,
+                // «para Keith»). Si alguna existe, tiene que sonar igual; con 2 palabras, una letra de
+                // diferencia como mucho; con 3, ninguna («Su pavo de» no es «Supabase»).
+                let last = words[n - 1];
+                !real(&last) && last.chars().count() >= 3 && d <= if words.iter().any(real) { 0 } else { [0, 1, 0][n - 1] }
+            };
+            if ok && best.is_none_or(|(_, _, bd)| d < bd) {
+                best = Some((n, e, d));
+            }
+        }
+        match best {
+            Some((n, e, _)) => {
+                let (a, b) = (toks[i].0, toks[i + n - 1].1);
+                out.push_str(&text[last..a]);
+                *fixes += 1;
+                let fixed = with_case_of(&e.target, &text[a..b]);
+                if e.target.chars().any(char::is_uppercase) {
+                    protected.push(fixed);
+                    out.push_str(&placeholder(protected.len() - 1));
+                } else {
+                    out.push_str(&fixed);
+                }
+                last = b;
+                i += n;
+            }
+            None => i += 1,
+        }
+    }
+    out.push_str(&text[last..]);
+    out
+}
+
+/// Reemplazos del diccionario (palabra completa, insensible a mayúsculas): la vista previa del texto
+/// en vivo y el texto ya pulido pasan por aquí (BELTR-PRT-11).
 pub fn apply_dictionary(text: &str, words: &[Word]) -> String {
     let mut protected = Vec::new();
     let t = escape_markers(text, &mut protected);
@@ -1602,9 +1874,10 @@ mod tests {
         ];
         let o = Options { cleanup: CleanupLevel::Medium, press_enter: false, tone: Tone::Formal, words: &w, snippets: &[] };
         let r = process("Hola Chonzo, mañana hablamos con el equipo de Beltranab sobre Perakit.", &o);
-        // «Beltranab» no se parece lo bastante a nada grabado: hay que grabarla otra vez.
-        assert_eq!(r.text, "Hola Txonso, mañana hablamos con el equipo de Beltranab sobre Parakeet.");
-        assert_eq!(r.fixes_dictionary, 2);
+        // «Beltranab» no coincide con nada grabado, pero suena casi igual que «BeltranLabs» (pasada
+        // aproximada, BELTR-PRT-11; antes había que grabarla otra vez).
+        assert_eq!(r.text, "Hola Txonso, mañana hablamos con el equipo de BeltranLabs sobre Parakeet.");
+        assert_eq!(r.fixes_dictionary, 3);
         assert_eq!(process("Lo instalé con Oyama.", &o).text, "Lo instalé con Ollama.");
         // Dentro de una frase Parakeet se come la vocal inicial: «Oyama» grabado, «Yama» dictado.
         assert_eq!(process("He instalado Yama y Kubernetes en el servidor.", &o).text, "He instalado Ollama y Kubernetes en el servidor.");
@@ -1879,5 +2152,855 @@ mod tests {
         let w = [word("Txonso", None)];
         let raw = "a \u{E000} b txonso c \u{E001}\u{E105}";
         assert_eq!(apply_dictionary(raw, &w), "a \u{E000} b Txonso c \u{E001}\u{E105}");
+    }
+}
+
+// ---------------------------------------------------------------- formatos (BELTR-PRT-15)
+//
+// Correos, webs, teléfonos, símbolos, horas, euros y porcentajes dictados → escritos, con reglas
+// locales y deterministas (ni red ni IA). Van ANTES del pulido: así la regla 7 (el pulido no añade
+// cifras, enlaces ni cuentas) ve «ana@gmail.com» ya en el texto local y no lo toma por un invento.
+// Trabajan sobre lo que escribe Parakeet de verdad, que ya pone muchas cifras («600123456», «15%»,
+// «gmail.com») pero deja «arroba», «barra», «y media» o «asterisco» en palabras. Cada regla pide un
+// contexto claro y deja el texto como estaba si duda («un asterisco», «la almohadilla nueva», «a las
+// cinco»). Las cifras sueltas de una palabra («veintiuna líneas») se quedan en letra, como pide la RAE.
+// Investigación (Wispr Flow, SuperWhisper, Dragon, RAE): `specs/features/pulido-en-directo.md`.
+
+/// Dominios de primer nivel que se aceptan al juntar «punto com», «punto es»… (sin ellos, «punto» es
+/// la palabra de siempre).
+const TLDS: &[&str] = &[
+    "com", "es", "net", "org", "app", "io", "dev", "eu", "info", "cat", "gal", "eus", "me", "co", "ai", "mx", "ar", "cl", "pe", "uy", "fr", "de",
+    "it", "pt", "uk", "us", "edu", "gob", "gov", "tv", "xyz", "biz", "online", "shop", "store", "tech", "ws", "ly", "to", "so",
+];
+
+/// Lo que va delante de «la»/«las» cuando sigue una hora («a las cinco», «son las diez»).
+const HOUR_LEAD: &[&str] = &["a", "hasta", "desde", "sobre", "de", "para", "hacia", "entre", "son", "es", "era", "eran", "y", "o", "antes", "después", "despues"];
+
+/// TLD que también son palabras corrientes.
+const AMBIGUOUS_TLDS: &[&str] = &["es", "de", "me", "co", "to", "so", "it", "eu", "tv", "ar", "cl", "pe"];
+
+/// Lo que va delante de «almohadilla» o «asterisco» cuando son la palabra de siempre («una
+/// almohadilla», «sin asterisco»): entonces no se cambian por el símbolo.
+const DETERMINERS: &[&str] = &[
+    "un", "una", "el", "la", "los", "las", "mi", "tu", "su", "mis", "tus", "sus", "esta", "este", "esa", "ese", "aquella", "aquel", "otra", "otro",
+    "nueva", "nuevo", "sin", "con", "cada", "la", "lleva", "llevan", "tiene", "tienen", "poner", "pon", "quita", "quitar", "nuestra", "nuestro", "vuestra",
+];
+
+/// ¿Palabra corriente del castellano (léxico, palabras de función o determinantes)?
+fn spanish_word(w: &str) -> bool {
+    let k = fold(w);
+    is_ordinary_word(w) || FUNCTION_WORDS.contains(&k.as_str()) || DETERMINERS.contains(&k.as_str()) || common_words().contains(k.as_str())
+}
+
+#[derive(Debug, Clone)]
+struct Tok {
+    pre: String,
+    core: String,
+    post: String,
+}
+
+impl Tok {
+    fn new(raw: &str) -> Self {
+        let lead: String = raw.chars().take_while(|c| "¿¡(«\"'“".contains(*c)).collect();
+        let rest = &raw[lead.len()..];
+        let tail_len: usize = rest.chars().rev().take_while(|c| ",;:!?)»\"'”….".contains(*c)).map(char::len_utf8).sum();
+        let (core, post) = rest.split_at(rest.len() - tail_len);
+        // «2.barra», «17.45», «gmail.com»: el punto de dentro es del token; el del final es puntuación.
+        Self { pre: lead, core: core.to_string(), post: post.to_string() }
+    }
+    fn key(&self) -> String {
+        fold(&self.core)
+    }
+    fn bare(&self) -> bool {
+        self.pre.is_empty() && self.post.is_empty()
+    }
+    fn render(&self) -> String {
+        format!("{}{}{}", self.pre, self.core, self.post)
+    }
+}
+
+fn digits_only(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_digit())
+}
+
+fn is_tld(s: &str) -> bool {
+    TLDS.contains(&fold(s).as_str())
+}
+
+/// ¿Parece un dominio («gmail.com», «elpaís.es», «www.x.com»)? Partes de letras/cifras/guiones
+/// separadas por puntos y la última un TLD conocido.
+fn looks_like_domain(s: &str) -> bool {
+    let parts: Vec<&str> = s.split('.').collect();
+    parts.len() >= 2
+        && parts.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_alphanumeric() || c == '-'))
+        && is_tld(parts[parts.len() - 1])
+        && !parts.iter().all(|p| p.chars().all(|c| c.is_ascii_digit()))
+}
+
+/// Un trozo de usuario o de dominio («maria», «lopez», «info-ventas», «maria.lopez»).
+fn addr_piece(t: &Tok) -> bool {
+    !t.core.is_empty() && t.core.chars().all(|c| c.is_alphanumeric() || "._-".contains(c)) && t.core.chars().any(char::is_alphanumeric)
+}
+
+/// Enlace o correo en minúsculas y sin tildes («Google.es» → «google.es», «elpaís.com» → «elpais.com»).
+fn addr_case(s: &str) -> String {
+    fold(s)
+}
+
+const UNITS: &[(&str, u64)] = &[
+    ("cero", 0), ("un", 1), ("uno", 1), ("una", 1), ("dos", 2), ("tres", 3), ("cuatro", 4), ("cinco", 5), ("seis", 6), ("siete", 7), ("ocho", 8),
+    ("nueve", 9), ("diez", 10), ("once", 11), ("doce", 12), ("trece", 13), ("catorce", 14), ("quince", 15), ("dieciseis", 16), ("diecisiete", 17),
+    ("dieciocho", 18), ("diecinueve", 19), ("veinte", 20), ("veintiun", 21), ("veintiuno", 21), ("veintiuna", 21), ("veintidos", 22), ("veintitres", 23),
+    ("veinticuatro", 24), ("veinticinco", 25), ("veintiseis", 26), ("veintisiete", 27), ("veintiocho", 28), ("veintinueve", 29),
+];
+const TENS: &[(&str, u64)] = &[("treinta", 30), ("cuarenta", 40), ("cincuenta", 50), ("sesenta", 60), ("setenta", 70), ("ochenta", 80), ("noventa", 90)];
+const HUNDREDS: &[(&str, u64)] = &[
+    ("cien", 100), ("ciento", 100), ("doscientos", 200), ("doscientas", 200), ("trescientos", 300), ("trescientas", 300), ("cuatrocientos", 400),
+    ("cuatrocientas", 400), ("quinientos", 500), ("quinientas", 500), ("seiscientos", 600), ("seiscientas", 600), ("setecientos", 700),
+    ("setecientas", 700), ("ochocientos", 800), ("ochocientas", 800), ("novecientos", 900), ("novecientas", 900),
+];
+
+fn lookup(t: &[(&str, u64)], k: &str) -> Option<u64> {
+    t.iter().find(|(w, _)| *w == k).map(|(_, v)| *v)
+}
+
+/// Una cifra de una sola palabra del 0 al 9 («seis», «6»).
+fn single_digit(k: &str) -> Option<u64> {
+    if k.len() == 1 && digits_only(k) {
+        return k.parse().ok();
+    }
+    lookup(UNITS, k).filter(|v| *v <= 9).filter(|_| k != "un" && k != "una")
+}
+
+/// Número en palabras o cifras desde `toks[i]` (claves ya en minúsculas y sin tildes). Para en la
+/// primera palabra que no encaja y devuelve (valor, tokens usados). Solo mira el núcleo: una coma o
+/// un punto pegados al último token lo cierran.
+fn parse_number(toks: &[Tok], i: usize) -> Option<(u64, usize)> {
+    let key = |j: usize| toks.get(j).map(Tok::key);
+    let open = |j: usize| toks.get(j).is_some_and(|t| t.post.is_empty());
+    let first = key(i)?;
+    if digits_only(&first) && first.len() <= 6 {
+        return Some((first.parse().ok()?, 1));
+    }
+    // Hasta 999.
+    let below_1000 = |j: usize| -> Option<(u64, usize)> {
+        let mut v = 0;
+        let mut n = 0;
+        let k = key(j)?;
+        if let Some(h) = lookup(HUNDREDS, &k) {
+            v += h;
+            n += 1;
+            if k == "cien" || !open(j) {
+                return Some((v, n));
+            }
+        }
+        let k = match key(j + n) {
+            Some(k) => k,
+            None => return (n > 0).then_some((v, n)),
+        };
+        if let Some(t) = lookup(TENS, &k) {
+            v += t;
+            n += 1;
+            if open(j + n - 1) && key(j + n).as_deref() == Some("y") && open(j + n) {
+                if let Some(u) = key(j + n + 1).and_then(|k| lookup(UNITS, &k)).filter(|u| (1..=9).contains(u)) {
+                    v += u;
+                    n += 2;
+                }
+            }
+        } else if let Some(u) = lookup(UNITS, &k) {
+            v += u;
+            n += 1;
+        }
+        (n > 0).then_some((v, n))
+    };
+    let (mut v, mut n) = if first == "mil" { (1, 0) } else { below_1000(i)? };
+    if key(i + n).as_deref() == Some("mil") && (n == 0 || open(i + n - 1)) {
+        v *= 1000;
+        n += 1;
+        if open(i + n - 1) {
+            if let Some((r, m)) = below_1000(i + n) {
+                v += r;
+                n += m;
+            }
+        }
+    }
+    (n > 0).then_some((v, n))
+}
+
+/// Pasa la lista a texto otra vez.
+fn join_toks(toks: &[Tok]) -> String {
+    toks.iter().map(Tok::render).filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" ")
+}
+
+/// Sustituye `toks[a..b]` por un token con `core`, el `pre` del primero y el `post` del último.
+fn splice(toks: &mut Vec<Tok>, a: usize, b: usize, core: String) {
+    let pre = toks[a].pre.clone();
+    let post = toks[b - 1].post.clone();
+    toks.splice(a..b, [Tok { pre, core, post }]);
+}
+
+/// Correos, webs, teléfonos, símbolos, horas, euros y % dictados → escritos (ver arriba).
+pub fn format_spoken(text: &str) -> String {
+    if text.trim().is_empty() {
+        return text.to_string();
+    }
+    let mut toks: Vec<Tok> = text.split_whitespace().map(Tok::new).collect();
+    plus_34(&mut toks);
+    spelled_digits(&mut toks);
+    urls(&mut toks);
+    emails(&mut toks);
+    phones(&mut toks);
+    symbols(&mut toks);
+    times(&mut toks);
+    money_and_percent(&mut toks);
+    join_toks(&toks)
+}
+
+/// «seis uno ocho cero» (4 o más cifras dichas una a una; con comas en medio, 7 o más) → «6180». Con
+/// menos se queda en letra: «uno, dos, tres» es contar.
+fn spelled_digits(toks: &mut Vec<Tok>) {
+    let mut i = 0;
+    while i < toks.len() {
+        let mut j = i;
+        let mut digits = String::new();
+        while j < toks.len() && toks[j].pre.is_empty() && (j == i || toks[j - 1].post.is_empty() || toks[j - 1].post == ",") {
+            let k = toks[j].key();
+            let Some(d) = single_digit(&k).filter(|_| !digits_only(&k)) else { break };
+            digits.push(char::from_digit(d as u32, 10).unwrap_or('0'));
+            j += 1;
+        }
+        let commas = j > i && toks[i..j - 1].iter().any(|t| t.post == ",");
+        if (j - i >= 4 && !commas) || j - i >= 7 {
+            // Las comas de en medio se pierden: las agrupa luego `phones`.
+            let post = toks[j - 1].post.clone();
+            toks.splice(i..j, [Tok { pre: String::new(), core: digits, post }]);
+        }
+        i += 1;
+    }
+}
+
+/// Webs: «https dos puntos barra barra», «www punto x punto com», «x punto es», «x.com barra y».
+fn urls(toks: &mut Vec<Tok>) {
+    // 1. «x punto y punto com» → «x.y.com» si acaba en un TLD conocido.
+    let mut i = 0;
+    while i + 2 < toks.len() {
+        if toks[i].post.is_empty() && addr_piece(&toks[i]) && !digits_only(&toks[i].core) && toks[i + 1].key() == "punto" && toks[i + 1].bare() {
+            let mut j = i;
+            let mut parts = vec![toks[i].core.clone()];
+            while j + 2 < toks.len() && toks[j + 1].key() == "punto" && toks[j + 1].bare() && toks[j].post.is_empty() && addr_piece(&toks[j + 2]) && toks[j + 2].pre.is_empty() {
+                parts.push(toks[j + 2].core.clone());
+                j += 2;
+            }
+            let cand = parts.join(".");
+            // «es», «de», «me»… también son palabras: «este punto es», «el punto de venta». Con solo dos
+            // trozos y uno de esos, el de delante tiene que ser un nombre raro («google punto es»).
+            let ambiguous = j == i + 2 && AMBIGUOUS_TLDS.contains(&fold(&parts[1]).as_str()) && spanish_word(&parts[0]);
+            if j > i && looks_like_domain(&cand) && !ambiguous {
+                splice(toks, i, j + 1, addr_case(&cand));
+            }
+        }
+        i += 1;
+    }
+    // 2. «https» + «dos puntos barra barra» (o lo que escribe Parakeet: «2.barra barra», «: //»).
+    let mut i = 0;
+    while i < toks.len() {
+        let k = toks[i].key();
+        if (k == "https" || k == "http") && toks[i].post.is_empty() {
+            let mut joined = String::new();
+            for n in 1..=4 {
+                let Some(t) = toks.get(i + n) else { break };
+                joined.push_str(&fold(&format!("{}{}", t.core, t.post)));
+                let ok = ["dospuntosbarrabarra", "2.barrabarra", "2puntosbarrabarra", ":barrabarra", "://", "dospuntos//", ":/barra"].contains(&joined.as_str());
+                if ok {
+                    let scheme = format!("{k}://");
+                    // Se pega al dominio que sigue.
+                    if let Some(next) = toks.get(i + n + 1).filter(|t| t.pre.is_empty()) {
+                        let core = format!("{scheme}{}", next.core);
+                        let post = next.post.clone();
+                        let pre = toks[i].pre.clone();
+                        toks.splice(i..i + n + 2, [Tok { pre, core, post }]);
+                    } else {
+                        splice(toks, i, i + n + 1, scheme);
+                    }
+                    break;
+                }
+            }
+        }
+        i += 1;
+    }
+    // 3. Un dominio ya escrito va en minúsculas y sin tildes; «barra x» detrás → «/x».
+    let mut i = 0;
+    while i < toks.len() {
+        let core = toks[i].core.clone();
+        let (scheme, host) = core.split_once("://").map(|(s, h)| (format!("{s}://"), h.to_string())).unwrap_or((String::new(), core.clone()));
+        let (host_only, path) = host.split_once('/').map(|(h, p)| (h.to_string(), format!("/{p}"))).unwrap_or((host.clone(), String::new()));
+        if looks_like_domain(&host_only) && !core.contains('@') {
+            let mut out = format!("{scheme}{}{path}", addr_case(&host_only));
+            let mut j = i;
+            // «barra economía» o «barraeconomía» pegado.
+            while toks[j].post.is_empty() {
+                let next = toks.get(j + 1);
+                let Some(n) = next.filter(|t| t.pre.is_empty()) else { break };
+                let nk = n.key();
+                if nk == "barra" && n.post.is_empty() {
+                    if let Some(seg) = toks.get(j + 2).filter(|t| t.pre.is_empty() && addr_piece(t)) {
+                        out.push('/');
+                        out.push_str(&addr_case(&seg.core));
+                        j += 2;
+                        continue;
+                    }
+                    break;
+                } else if let Some(rest) = nk.strip_prefix("barra").filter(|r| r.len() >= 2 && r.chars().all(char::is_alphanumeric)) {
+                    out.push('/');
+                    out.push_str(rest);
+                    j += 1;
+                    continue;
+                }
+                break;
+            }
+            splice(toks, i, j + 1, out);
+        }
+        i += 1;
+    }
+}
+
+/// Correos: «ana punto lopez arroba gmail punto com», «info guion ventas arroba x.es», «x arrobay.es».
+fn emails(toks: &mut Vec<Tok>) {
+    // Whisper pega la arroba con puntos: «Marta.ruiz.arroba.novalumen.com» (BELTR-PRT-30, voz de
+    // Txonso). Si a la derecha hay un dominio, es un correo.
+    for t in toks.iter_mut() {
+        let low = t.core.to_ascii_lowercase();
+        if let Some((p, n)) = [".arroba.", ".aroba."].iter().find_map(|a| low.find(a).map(|p| (p, a.len()))) {
+            let (user, domain) = (&t.core[..p], &t.core[p + n..]);
+            if !user.is_empty() && user.chars().all(|c| c.is_alphanumeric() || "._-".contains(c)) && looks_like_domain(&fold(domain)) {
+                t.core = format!("{}@{}", addr_case(user), addr_case(domain));
+            }
+        }
+    }
+    // Whisper con «arroba» en el diccionario la oye, pero entre comas: «marta.ruiz, arroba,
+    // novalumen.es» (BELTR-PRT-30). Si detrás viene un dominio (o «x punto y»), las comas sobran. «aroba»,
+    // como la escribe a veces, vale igual.
+    for i in 1..toks.len().saturating_sub(1) {
+        let k = toks[i].key();
+        if !(k == "arroba" || k == "aroba") || !toks[i].pre.is_empty() || !matches!(toks[i].post.as_str(), "" | ",") || !matches!(toks[i - 1].post.as_str(), "" | ",") {
+            continue;
+        }
+        let sigue_dominio = addr_piece(&toks[i + 1])
+            && toks[i + 1].pre.is_empty()
+            && (looks_like_domain(&fold(&toks[i + 1].core)) || toks.get(i + 2).is_some_and(|t| t.key() == "punto"));
+        if sigue_dominio && addr_piece(&toks[i - 1]) {
+            toks[i].core = "arroba".into();
+            toks[i].post.clear();
+            toks[i - 1].post.clear();
+        }
+    }
+    let mut i = 0;
+    while i < toks.len() {
+        let k = toks[i].key();
+        // «arroba» suelto, «@» suelto o pegado delante del dominio («arrobaempresa.es»).
+        let (is_at, glued) = if (k == "arroba" || k == "@") && toks[i].bare() {
+            (true, None)
+        } else if let Some(rest) = k.strip_prefix("arroba").filter(|r| looks_like_domain(r)).filter(|_| toks[i].pre.is_empty()) {
+            (true, Some(rest.to_string()))
+        } else {
+            (false, None)
+        };
+        if !is_at || i == 0 {
+            i += 1;
+            continue;
+        }
+        // Usuario hacia atrás: palabra (conector palabra)*.
+        let mut a = i - 1;
+        if !(addr_piece(&toks[a]) && toks[a].post.is_empty()) {
+            i += 1;
+            continue;
+        }
+        let mut user = toks[a].core.clone();
+        loop {
+            if a >= 2 && toks[a - 1].bare() && toks[a - 2].post.is_empty() && addr_piece(&toks[a - 2]) {
+                let c = toks[a - 1].key();
+                let sep = match c.as_str() {
+                    "punto" => Some("."),
+                    "guion" => Some("-"),
+                    _ => None,
+                };
+                if let Some(sep) = sep {
+                    user = format!("{}{sep}{user}", toks[a - 2].core);
+                    a -= 2;
+                    continue;
+                }
+                // «guion bajo» / «barra baja».
+                if a >= 3 && (c == "bajo" || c == "baja") && toks[a - 2].bare() && ["guion", "barra"].contains(&toks[a - 2].key().as_str()) && addr_piece(&toks[a - 3]) && toks[a - 3].post.is_empty() {
+                    user = format!("{}_{user}", toks[a - 3].core);
+                    a -= 3;
+                    continue;
+                }
+            }
+            break;
+        }
+        // Dominio hacia delante.
+        let (mut domain, mut b) = match &glued {
+            Some(d) => (d.clone(), i + 1),
+            None => match toks.get(i + 1).filter(|t| t.pre.is_empty() && addr_piece(t)) {
+                Some(t) => (t.core.clone(), i + 2),
+                None => {
+                    i += 1;
+                    continue;
+                }
+            },
+        };
+        while toks[b - 1].post.is_empty() && b + 1 < toks.len() + 1 {
+            let Some(c) = toks.get(b).filter(|t| t.bare()) else { break };
+            let sep = match c.key().as_str() {
+                "punto" => ".",
+                "guion" => "-",
+                _ => break,
+            };
+            let Some(n) = toks.get(b + 1).filter(|t| t.pre.is_empty() && addr_piece(t)) else { break };
+            domain = format!("{domain}{sep}{}", n.core);
+            b += 2;
+        }
+        // Dominio partido en dos palabras: «arroba nova lumen.com» → «novalumen.com» (BELTR-PRT-30).
+        if !looks_like_domain(&domain) && toks[b - 1].post.is_empty() {
+            if let Some(n) = toks.get(b).filter(|t| t.pre.is_empty() && addr_piece(t)).filter(|t| looks_like_domain(&fold(&format!("{domain}{}", t.core)))) {
+                domain = format!("{domain}{}", n.core);
+                b += 1;
+            }
+        }
+        if looks_like_domain(&domain) {
+            let core = format!("{}@{}", addr_case(&user), addr_case(&domain));
+            splice(toks, a, b, core);
+            i = a + 1;
+        } else {
+            i += 1;
+        }
+    }
+}
+
+/// «más treinta y cuatro» / «más 34» → «+34» (antes de juntar cifras dichas, que se comerían el 4).
+fn plus_34(toks: &mut Vec<Tok>) {
+    let mut i = 0;
+    while i + 1 < toks.len() {
+        if toks[i].key() == "mas" && toks[i].post.is_empty() {
+            if let Some((34, n)) = parse_number(toks, i + 1) {
+                // Solo si detrás viene el número (cifras o cifras dichas): «10 más 34» es una suma.
+                let sigue = toks.get(i + 1 + n).is_some_and(|t| digits_only(&t.core.replace('-', "")) || single_digit(&t.key()).is_some());
+                if sigue {
+                    splice(toks, i, i + 1 + n, "+34".into());
+                }
+            }
+        }
+        i += 1;
+    }
+}
+
+/// ¿Es un token que escribieron las reglas de formatos (correo, enlace, hora, «*101#», «#verano»)?
+/// El pulido tiene que dejarlo tal cual (`polish::formats_kept`).
+pub fn is_formatted_token(t: &str) -> bool {
+    let time = t.split_once(':').is_some_and(|(h, m)| digits_only(h) && h.len() <= 2 && digits_only(m) && m.len() == 2);
+    (t.contains('@') && t.contains('.')) || t.contains("://") || time || ((t.starts_with('*') || t.starts_with('#') || t.ends_with('#')) && t.chars().count() > 1)
+}
+
+/// Proveedores de correo conocidos: si Parakeet oye «otmail» o «jimeil» tras la arroba, se escriben bien.
+const MAIL_PROVIDERS: &[&str] = &["gmail", "hotmail", "outlook", "yahoo", "icloud", "protonmail", "gmx", "live"];
+
+/// Dominios casi iguales a uno conocido o a una palabra del diccionario («otmail.es» → «hotmail.es»,
+/// «www.beltranabs.com» → «www.beltranlabs.com» si «BeltranLabs» está guardada). Solo dentro de un correo
+/// o un enlace ya escrito, solo la parte de antes del TLD, y solo con una candidata clara: una letra de
+/// diferencia, o dos que faltan («gitu» → «github»; «gitlab» no se toca).
+pub fn fix_domains(text: &str, words: &[Word]) -> String {
+    let proveedores: Vec<String> = MAIL_PROVIDERS.iter().map(|s| s.to_string()).collect();
+    let mut cands: Vec<String> = proveedores.clone();
+    for w in words {
+        let v = w.replacement.clone().filter(|r| !r.trim().is_empty()).unwrap_or_else(|| w.word.clone());
+        let k: String = fold(&v).chars().filter(|c| c.is_alphanumeric()).collect();
+        if k.chars().count() >= 5 && !cands.contains(&k) {
+            cands.push(k);
+        }
+    }
+    let fix_label = |label: &str| -> Option<String> {
+        if label.chars().count() < 3 || cands.iter().any(|c| c == label) {
+            return None;
+        }
+        // Solo letras que faltan («otmail» → «hotmail», «beltranabs» → «beltranlabs»): un dominio real que
+        // se parece («mail.com», «email.com», «lime.com») no se toca. Palabras guardadas: también una letra
+        // cambiada si son largas. 5 letras o más (4 para las guardadas).
+        let (n, lista_propia) = (label.chars().count(), |c: &String| !proveedores.contains(c));
+        let mut best: Vec<(&String, usize)> = cands
+            .iter()
+            .map(|c| (c, key_distance(label, c)))
+            .filter(|(c, d)| {
+                let faltan = c.chars().count().saturating_sub(n);
+                let solo_faltan = *d == faltan && (1..=2).contains(d);
+                let largo = if lista_propia(c) { n >= 4 } else { n >= 5 };
+                largo && (solo_faltan || (lista_propia(c) && *d == 1 && n >= 7))
+            })
+            .collect();
+        best.sort_by_key(|x| x.1);
+        match best.as_slice() {
+            [one] => Some(one.0.clone()),
+            [a, b, ..] if b.1 > a.1 => Some(a.0.clone()),
+            _ => None,
+        }
+    };
+    text.split(' ')
+        .map(|tok| {
+            let t = Tok::new(tok);
+            let (head, host) = match t.core.split_once('@') {
+                Some((u, h)) => (format!("{u}@"), h.to_string()),
+                None => match t.core.split_once("://") {
+                    Some((s, h)) => (format!("{s}://"), h.to_string()),
+                    None => (String::new(), t.core.clone()),
+                },
+            };
+            let (host_only, path) = host.split_once('/').map(|(h, p)| (h.to_string(), format!("/{p}"))).unwrap_or((host.clone(), String::new()));
+            if !looks_like_domain(&host_only) || !host_only.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || ".-".contains(c)) {
+                return tok.to_string();
+            }
+            let mut parts: Vec<String> = host_only.split('.').map(str::to_string).collect();
+            let n = parts.len();
+            let li = if n >= 3 && parts[0] == "www" { 1 } else { n - 2 };
+            match fix_label(&parts[li]) {
+                Some(f) => {
+                    parts[li] = f;
+                    format!("{}{head}{}{path}{}", t.pre, parts.join("."), t.post)
+                }
+                None => tok.to_string(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Teléfonos de 9 cifras (con o sin +34): «618-785-522», «91 456 7890», «600123456» → «618 785 522».
+fn phones(toks: &mut Vec<Tok>) {
+    let digit_tok = |t: &Tok| t.pre.is_empty() && !t.core.is_empty() && t.core.chars().all(|c| c.is_ascii_digit() || c == '-') && t.core.chars().any(|c| c.is_ascii_digit());
+    let mut i = 0;
+    while i < toks.len() {
+        if !digit_tok(&toks[i]) {
+            i += 1;
+            continue;
+        }
+        let mut j = i;
+        let mut digits = String::new();
+        while j < toks.len() && digit_tok(&toks[j]) && (j == i || toks[j - 1].post.is_empty() || toks[j - 1].post == ",") {
+            digits.extend(toks[j].core.chars().filter(char::is_ascii_digit));
+            j += 1;
+            if digits.len() >= 9 {
+                break;
+            }
+        }
+        let starts_ok = digits.starts_with(['6', '7', '8', '9']);
+        if digits.len() == 9 && starts_ok && (j - i > 1 || toks[i].core.len() >= 9) {
+            let g = format!("{} {} {}", &digits[0..3], &digits[3..6], &digits[6..9]);
+            let prefixed = i > 0 && toks[i - 1].core == "+34" && toks[i - 1].post.is_empty() || i > 0 && toks[i - 1].core == "+34" && toks[i - 1].post == ",";
+            if prefixed {
+                splice(toks, i - 1, j, format!("+34 {g}"));
+                i = j - 1;
+            } else {
+                splice(toks, i, j, g);
+                i += 1;
+            }
+            continue;
+        }
+        i = j.max(i + 1);
+    }
+}
+
+/// «asterisco 101 almohadilla» → «*101#», «almohadilla 2» → «#2», «la etiqueta almohadilla verano»
+/// → «#verano». «Un asterisco» o «no lleva almohadilla.» se quedan en palabra.
+fn symbols(toks: &mut Vec<Tok>) {
+    let mut i = 0;
+    while i < toks.len() {
+        let k = toks[i].key();
+        let prev_det = i > 0 && DETERMINERS.contains(&toks[i - 1].key().as_str());
+        if k == "asterisco" && toks[i].post.is_empty() && !prev_det {
+            if let Some(n) = toks.get(i + 1).filter(|t| t.pre.is_empty() && digits_only(&t.core)) {
+                let mut core = format!("*{}", n.core);
+                let mut end = i + 2;
+                if n.post.is_empty() && toks.get(i + 2).is_some_and(|t| t.key() == "almohadilla" && t.pre.is_empty()) {
+                    core.push('#');
+                    end = i + 3;
+                }
+                splice(toks, i, end, core);
+            }
+        } else if k == "almohadilla" && toks[i].pre.is_empty() && !prev_det {
+            // Detrás de cifras: «33 almohadilla» → «33#».
+            if i > 0 && toks[i - 1].post.is_empty() && digits_only(toks[i - 1].core.trim_start_matches('*')) && !toks[i - 1].core.is_empty() {
+                let core = format!("{}#", toks[i - 1].core);
+                splice(toks, i - 1, i + 1, core);
+                continue;
+            }
+            if toks[i].post.is_empty() {
+                if let Some(n) = toks.get(i + 1).filter(|t| t.pre.is_empty()) {
+                    let nk = n.key();
+                    let word = n.core.chars().all(char::is_alphabetic) && n.core.chars().count() >= 3 && !FUNCTION_WORDS.contains(&nk.as_str());
+                    if digits_only(&n.core) {
+                        let core = format!("#{}", n.core);
+                        splice(toks, i, i + 2, core);
+                    } else if word {
+                        let core = format!("#{}", n.core.to_lowercase());
+                        splice(toks, i, i + 2, core);
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+}
+
+/// Horas: «a las cinco y media» → «a las 5:30», «a las 17.45» → «a las 17:45», «a las diez menos
+/// cuarto» → «a las 9:45», «a las doce y diez» → «a las 12:10». Sin minutos («a las cinco») no cambia.
+fn times(toks: &mut Vec<Tok>) {
+    let mut i = 0;
+    while i + 1 < toks.len() {
+        let k = toks[i].key();
+        // Solo «a las», «son las», «hasta las»…: «revisa la 1 y 2» o «las 3 y 4 son iguales» no son horas.
+        let antes = if i > 0 && toks[i - 1].post.is_empty() { toks[i - 1].key() } else { String::new() };
+        if !((k == "las" || k == "la") && toks[i].post.is_empty() && HOUR_LEAD.contains(&antes.as_str())) {
+            i += 1;
+            continue;
+        }
+        let h_at = i + 1;
+        // «17.45» / «17:45» de una vez.
+        let hc = toks[h_at].core.clone();
+        if let Some((h, m)) = hc.split_once(['.', ':']) {
+            if digits_only(h) && digits_only(m) && m.len() == 2 && h.len() <= 2 {
+                let (hv, mv): (u32, u32) = (h.parse().unwrap_or(99), m.parse().unwrap_or(99));
+                if hv <= 24 && mv <= 59 {
+                    toks[h_at].core = format!("{hv}:{m}");
+                }
+            }
+            i += 2;
+            continue;
+        }
+        let Some((h, hn)) = parse_number(toks, h_at).filter(|(h, _)| (1..=24).contains(h)) else {
+            i += 1;
+            continue;
+        };
+        let after = h_at + hn;
+        if !toks[after - 1].post.is_empty() || after >= toks.len() {
+            i += 1;
+            continue;
+        }
+        let key = |j: usize| toks.get(j).map(Tok::key).unwrap_or_default();
+        let open = |j: usize| toks.get(j).is_some_and(|t| t.post.is_empty() && t.pre.is_empty());
+        let mut found: Option<(u64, u64, usize)> = None; // (hora, minutos, fin)
+        match key(after).as_str() {
+            "y" if open(after) => match key(after + 1).as_str() {
+                "media" => found = Some((h, 30, after + 2)),
+                "cuarto" => found = Some((h, 15, after + 2)),
+                _ => {
+                    // «y diez», «y veinte», «y cuarenta y cinco»: minutos de reloj (de 5 en 5, o de dos cifras).
+                    if let Some((m, mn)) = parse_number(toks, after + 1).filter(|(m, _)| (1..=59).contains(m) && (m % 5 == 0 || *m >= 10)) {
+                        found = Some((h, m, after + 1 + mn));
+                    }
+                }
+            },
+            "menos" if open(after) => {
+                let prev = if h == 1 { 12 } else { h - 1 };
+                if key(after + 1) == "cuarto" {
+                    found = Some((prev, 45, after + 2));
+                } else if let Some((m, mn)) = parse_number(toks, after + 1).filter(|(m, _)| (1..=30).contains(m)) {
+                    found = Some((prev, 60 - m, after + 1 + mn));
+                }
+            }
+            "en" if open(after) && key(after + 1) == "punto" => found = Some((h, 0, after + 2)),
+            _ => {
+                // «diecisiete cuarenta y cinco»: minutos de dos cifras justo detrás (10..59).
+                if let Some((m, mn)) = parse_number(toks, after).filter(|(m, _)| (10..=59).contains(m)) {
+                    if !digits_only(&toks[after].core) || toks[after].core.len() == 2 {
+                        found = Some((h, m, after + mn));
+                    }
+                }
+            }
+        }
+        if let Some((hh, mm, end)) = found.filter(|(_, _, end)| *end <= toks.len()) {
+            splice(toks, h_at, end, format!("{hh}:{mm:02}"));
+            i = h_at + 1;
+            continue;
+        }
+        i += 1;
+    }
+}
+
+/// «3 euros con 50» → «3,50 euros», «tres coma cinco por ciento» → «3,5%», «quince por ciento» → «15%».
+fn money_and_percent(toks: &mut Vec<Tok>) {
+    let mut i = 0;
+    while i < toks.len() {
+        let Some((n, nn)) = parse_number(toks, i) else {
+            i += 1;
+            continue;
+        };
+        let after = i + nn;
+        let key = |j: usize| toks.get(j).map(Tok::key).unwrap_or_default();
+        let open = |j: usize| toks.get(j).is_some_and(|t| t.post.is_empty());
+        if !open(after - 1) {
+            i += 1;
+            continue;
+        }
+        // Decimal dicho: «tres coma cinco».
+        let mut value = n.to_string();
+        let mut end = after;
+        if key(after) == "coma" && open(after) {
+            if let Some((d, dn)) = parse_number(toks, after + 1) {
+                value = format!("{n},{d}");
+                end = after + 1 + dn;
+            }
+        }
+        let k1 = key(end);
+        if (k1 == "euros" || k1 == "euro") && open(end) && key(end + 1) == "con" && open(end + 1) {
+            if let Some((c, cn)) = parse_number(toks, end + 2).filter(|(c, _)| *c <= 99) {
+                splice(toks, i, end + 2 + cn, format!("{n},{c:02} euros"));
+                i += 1;
+                continue;
+            }
+        }
+        if k1 == "con" && open(end) && !value.contains(',') {
+            if let Some((c, cn)) = parse_number(toks, end + 1).filter(|(c, _)| *c <= 99) {
+                let e = end + 1 + cn;
+                if (key(e) == "euros" || key(e) == "euro") && open(e - 1) {
+                    splice(toks, i, e + 1, format!("{n},{c:02} euros"));
+                    i += 1;
+                    continue;
+                }
+            }
+        }
+        if k1 == "por" && open(end) && key(end + 1) == "ciento" {
+            splice(toks, i, end + 2, format!("{value}%"));
+            i += 1;
+            continue;
+        }
+        if end > after && value.contains(',') && (k1 == "euros" || k1 == "%") {
+            splice(toks, i, end, value);
+        }
+        i += 1;
+    }
+}
+
+#[cfg(test)]
+mod tests_formatos {
+    use super::format_spoken as f;
+
+    /// Lo que escribe Parakeet en el banco de formatos (tests/banco-formatos) y lo que debe salir.
+    #[test]
+    fn escribe_correos_webs_telefonos_simbolos_horas_euros_y_porcentajes() {
+        for (oido, bien) in [
+            ("Escríbeme alfonso arroba gmail.com", "Escríbeme alfonso@gmail.com"),
+            ("Mi correo es maria punto lopez arroba hotmail punto es.", "Mi correo es maria.lopez@hotmail.es."),
+            ("Mi correo es maria.lopez arroba hotmail.es", "Mi correo es maria.lopez@hotmail.es"),
+            ("El correo es info guion ventas arroba empresa punto es.", "El correo es info-ventas@empresa.es."),
+            ("El correo es info-ventas arrobaempresa.es.", "El correo es info-ventas@empresa.es."),
+            ("Contesta a juan guion bajo perez arroba yahoo punto es", "Contesta a juan_perez@yahoo.es"),
+            ("Pon soporte arroba pronto punto app, gracias", "Pon soporte@pronto.app, gracias"),
+            // Voz de Txonso con Whisper y Parakeet (BELTR-PRT-30, 20-nov-2026).
+            ("Marta.ruiz.arroba.novalumen.com", "marta.ruiz@novalumen.com"),
+            ("Marta.arroba.gmail.com", "marta@gmail.com"),
+            ("Marta punto Ruiz arroba nova lumen.com", "marta.ruiz@novalumen.com"),
+            ("Escríbeme a ana arroba mi empresa.es, gracias", "Escríbeme a ana@miempresa.es, gracias"),
+            ("Marta.ruiz, arroba, novalumen.es", "marta.ruiz@novalumen.es"),
+            ("Marta.ruiz.aroba.novalumen.es y marta.aroba.gmail.com", "marta.ruiz@novalumen.es y marta@gmail.com"),
+            ("Escribe a ana, arroba, gmail punto com.", "Escribe a ana@gmail.com."),
+            ("Mi teléfono es 618-785-522", "Mi teléfono es 618 785 522"),
+            ("Llámame al 600123456", "Llámame al 600 123 456"),
+            ("El fijo es 91 456 7890", "El fijo es 914 567 890"),
+            ("Llámame al seis cero cero uno dos tres cuatro cinco seis.", "Llámame al 600 123 456."),
+            ("Mi móvil es 618, 785, 522.", "Mi móvil es 618 785 522."),
+            ("El número es más treinta y cuatro 618 785 522", "El número es +34 618 785 522"),
+            ("El código postal es cuatro ocho cero cero uno.", "El código postal es 48001."),
+            ("Para ver el saldo marca asterisco 101 almohadilla", "Para ver el saldo marca *101#"),
+            ("Marca asterisco 33 Almohadilla.", "Marca *33#."),
+            ("Después pulsa Almohadilla 2", "Después pulsa #2"),
+            ("Usa la etiqueta Almohadilla Verano", "Usa la etiqueta #verano"),
+            ("Entra en www punto beltranlabs punto com", "Entra en www.beltranlabs.com"),
+            ("La web es pronto.app barra descargas.", "La web es pronto.app/descargas."),
+            ("Mira Google.es", "Mira google.es"),
+            ("Visita elpaís.com barraeconomia.", "Visita elpais.com/economia."),
+            ("Abre https 2.barra barra github.com", "Abre https://github.com"),
+            ("Abre https dos puntos barra barra github punto com", "Abre https://github.com"),
+            ("La reunión es a las 5 y media", "La reunión es a las 5:30"),
+            ("La reunión es a las cinco y media.", "La reunión es a las 5:30."),
+            ("El tren sale a las 17.45.", "El tren sale a las 17:45."),
+            ("El tren sale a las diecisiete cuarenta y cinco", "El tren sale a las 17:45"),
+            ("Te llamo a las nueve y cuarto", "Te llamo a las 9:15"),
+            ("Abrimos a las 10 menos cuarto", "Abrimos a las 9:45"),
+            ("La cita es a las doce y diez", "La cita es a las 12:10"),
+            ("Quedamos a la una y media", "Quedamos a la 1:30"),
+            ("Llego a las 8 en punto", "Llego a las 8:00"),
+            ("Cuesta 3 euros con 50", "Cuesta 3,50 euros"),
+            ("Cuesta tres euros con cincuenta.", "Cuesta 3,50 euros."),
+            ("La cuota es de cuarenta y nueve con noventa y nueve euros", "La cuota es de 49,99 euros"),
+            ("Tenemos un descuento del quince por ciento", "Tenemos un descuento del 15%"),
+            ("Ha subido un tres coma cinco por ciento.", "Ha subido un 3,5%."),
+            ("El presupuesto es de mil doscientos cincuenta por ciento", "El presupuesto es de 1250%"),
+        ] {
+            assert_eq!(f(oido), bien, "entrada: {oido}");
+        }
+    }
+
+    /// Trampas: texto corriente que no debe cambiar (la regla duda → lo deja).
+    #[test]
+    fn no_toca_texto_corriente() {
+        for t in [
+            "La nota lleva un asterisco al final.",
+            "Mi contraseña no lleva almohadilla.",
+            "Compré una almohadilla nueva para el sofá.",
+            "Pon el asterisco donde quieras.",
+            "Quedamos a las cinco en la plaza.",
+            "Wow, Matt Pocock, veintiuna líneas with Matt skills.",
+            "Uno, dos, tres, probando.",
+            "Tengo 3 hijos y 2 perros.",
+            "En este punto es donde fallamos.",
+            "El punto de venta abre a las diez.",
+            "Lo hicimos en 2024 con 15 personas.",
+            "Vamos a ver cómo funciona ahora. Me cago en diez, funciona de locos.",
+            "Ese es un punto importante, la verdad.",
+            "La barra del bar estaba llena.",
+            "Es la una.",
+            "Envíalo con arroba al final, no sé.",
+            "Su DNI es 12345678.",
+            "Pásate a las dos o a las tres.",
+            "Cuesta mil euros.",
+            "Te lo digo por ciento y una vez.",
+            "Llego a las cinco y diez minutos después empezamos.",
+            "Las 3 y 4 son iguales.",
+            "Revisa la 1 y 2 antes de enviar.",
+            "Uno, dos, tres, cuatro, cinco, seis.",
+            "Son 10 más 34 en total.",
+            "Escríbeme a ana@mail.com o a info@email.com.",
+            "Mira lime.com y live.com.",
+        ] {
+            let fuera = f(t);
+            // La última trampa sí lleva hora: lo que se comprueba es que no se coma «minutos».
+            if t.starts_with("Llego a las cinco y diez") {
+                assert_eq!(fuera, "Llego a las 5:10 minutos después empezamos.");
+                continue;
+            }
+            assert_eq!(fuera, t, "cambió texto corriente");
+        }
+    }
+
+    #[test]
+    fn arregla_dominios_casi_iguales_a_uno_conocido() {
+        use crate::banco_entender::leer_diccionario;
+        let w = leer_diccionario("BeltranLabs
+Gihad => GitHub
+");
+        let g = |t: &str| super::fix_domains(t, &w);
+        assert_eq!(g("Mi correo es maria.lopez@otmail.es"), "Mi correo es maria.lopez@hotmail.es");
+        assert_eq!(g("Entra en www.beltranabs.com."), "Entra en www.beltranlabs.com.");
+        assert_eq!(g("Manda a facturas@beltralabs.com"), "Manda a facturas@beltranlabs.com");
+        assert_eq!(g("Abre https://gitu.com"), "Abre https://github.com");
+        // Sin parecido claro o ya conocido: igual.
+        for t in ["Mira google.es", "Escribe a ana@gmail.com", "Abre gitlab.com", "La casa de beltran es grande", "Visita elpais.com/economia"] {
+            assert_eq!(g(t), t);
+        }
+    }
+
+    #[test]
+    fn respeta_signos_de_alrededor() {
+        assert_eq!(f("¿Me escribes a ana arroba gmail punto com?"), "¿Me escribes a ana@gmail.com?");
+        assert_eq!(f("(llama al 600 123 456)"), "(llama al 600 123 456)");
+        assert_eq!(f(""), "");
     }
 }

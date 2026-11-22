@@ -12,7 +12,7 @@
 use crate::asr::{Timed, TimedToken};
 use parking_lot::Mutex;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use whisper_rs::{DtwMode, DtwModelPreset, DtwParameters, FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState};
 
@@ -38,33 +38,11 @@ pub struct WhisperModel {
     pub speed: u8,
 }
 
-pub const DEFAULT_MODEL: &str = "large-v3-turbo";
+/// Medium: con la voz de Txonso es el Whisper que menos falla (BELTR-PRT-12: 11,2 % frente a 15,7 % de
+/// large-v3-turbo y 14,9 % de large-v3, que se quitaron).
+pub const DEFAULT_MODEL: &str = "medium";
 
-pub const MODELS: [WhisperModel; 5] = [
-    WhisperModel {
-        id: "large-v3-turbo",
-        name: "Whisper large-v3-turbo",
-        desc: "El más rápido de los grandes: casi la precisión de large-v3 a varias veces su velocidad. El recomendado con tarjeta gráfica.",
-        file: "ggml-large-v3-turbo-q5_0.bin",
-        sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
-        bytes: 574_041_195,
-        min_vram_gb: 3.0,
-        pair_vram_gb: 4.3,
-        wer: Some(4.2),
-        speed: 5,
-    },
-    WhisperModel {
-        id: "large-v3",
-        name: "Whisper large-v3",
-        desc: "El más grande de Whisper: el que mejor aguanta ruido y acentos. Dos o tres veces más lento que turbo y más pesado.",
-        file: "ggml-large-v3-q5_0.bin",
-        sha256: "d75795ecff3f83b5faa89d1900604ad8c780abd5739fae406de19f23ecd98ad1",
-        bytes: 1_081_140_203,
-        min_vram_gb: 4.0,
-        pair_vram_gb: 6.7,
-        wer: Some(3.8),
-        speed: 2,
-    },
+pub const MODELS: [WhisperModel; 3] = [
     WhisperModel {
         id: "medium",
         name: "Whisper medium",
@@ -130,11 +108,9 @@ impl WhisperModel {
     /// Cabezas de alineamiento de este modelo para los tiempos por token (DTW).
     fn dtw(&self) -> DtwModelPreset {
         match self.id {
-            "large-v3" => DtwModelPreset::LargeV3,
-            "medium" => DtwModelPreset::Medium,
             "small" => DtwModelPreset::Small,
             "base" => DtwModelPreset::Base,
-            _ => DtwModelPreset::LargeV3Turbo,
+            _ => DtwModelPreset::Medium,
         }
     }
 
@@ -153,8 +129,26 @@ impl WhisperModel {
 
 /// Trozo máximo por inferencia: la ventana de Whisper es de 30 s.
 pub const MAX_CHUNK_SECS: usize = 28;
-/// Un segmento con más probabilidad de «no hay voz» que esto se descarta.
+/// Un segmento con más probabilidad de «no hay voz» que esto se descarta… si además su texto es poco
+/// seguro (`LOGPROB_SILENCIO`).
 const NO_SPEECH_MAX: f32 = 0.6;
+/// Log-probabilidad media de los tokens por debajo de la cual un segmento con «no hay voz» alto se da por
+/// silencio: las dos cosas a la vez, como en Whisper original (OpenAI, que usa −1). Aquí −0,6, medido con
+/// Whisper medium e idioma «automático» (BELTR-PRT-30, 22-nov-2026): la voz de Txonso con «no hay voz» alto
+/// va de −0,17 a −0,46 (53 dictados reales); el ruido sin voz que se inventa frases («¡Suscríbete!»,
+/// «www.gmail.com» con un zumbido de 50 Hz), de −0,76 a −0,90.
+const LOGPROB_SILENCIO: f32 = -0.6;
+/// Texto tan inseguro que es basura aunque «no hay voz» salga bajo (ceros digitales: «Turno a laальных…»
+/// a −4,8; silencio corto: «hotter intentionally.» a −9,4). La voz real nunca bajó de −0,8.
+const LOGPROB_BASURA: f32 = -2.0;
+
+/// ¿Es silencio este segmento? Antes bastaba «no hay voz» > 0,6, y con el idioma «automático» (español
+/// o inglés) whisper.cpp da 0,62-0,86 a frases dichas con voz clara (y texto muy seguro, −0,06 a −0,37):
+/// se tiraban enteras y el dictado salía vacío (BELTR-PRT-30, 6 de 32 dictados de Txonso el 20-nov).
+/// El silencio que inventa frases da log-probabilidades de −6 o menos.
+fn es_silencio(no_speech: f32, logprob_media: f32) -> bool {
+    (no_speech > NO_SPEECH_MAX && logprob_media < LOGPROB_SILENCIO) || logprob_media < LOGPROB_BASURA
+}
 
 /// `%APPDATA%\Pronto2\models\whisper`.
 pub fn model_dir() -> PathBuf {
@@ -278,14 +272,20 @@ const STYLE_PROMPT: &str = "Hola, ¿qué tal? Vale, te cuento: mañana lo revisa
 /// Palabras del diccionario que caben en el texto previo (el de Whisper no pasa de ~220 tokens).
 const PROMPT_WORDS: usize = 40;
 
+/// Palabras que van siempre en el texto previo, tras las del diccionario: sin ellas, Whisper se come la
+/// «arroba» de los correos dichos con la voz de Txonso («marta.ruiz.com»: 1 de 7 bien; con ellas,
+/// 5 de 7; BELTR-PRT-30). Las reglas de `text.rs` escriben luego el correo.
+const PROMPT_FIJAS: &[&str] = &["arroba", "Gmail", "Hotmail"];
+
 /// Texto previo para `words` (las del diccionario, las más importantes primero).
 pub fn prompt_for(words: &[String]) -> String {
-    let words: Vec<&str> = words.iter().map(|w| w.trim()).filter(|w| !w.is_empty()).take(PROMPT_WORDS).collect();
-    if words.is_empty() {
-        STYLE_PROMPT.to_string()
-    } else {
-        format!("{STYLE_PROMPT} {}.", words.join(", "))
+    let mut words: Vec<&str> = words.iter().map(|w| w.trim()).filter(|w| !w.is_empty()).take(PROMPT_WORDS).collect();
+    for f in PROMPT_FIJAS {
+        if !words.iter().any(|w| w.eq_ignore_ascii_case(f)) {
+            words.push(f);
+        }
     }
+    format!("{STYLE_PROMPT} {}.", words.join(", "))
 }
 
 impl Whisper {
@@ -392,6 +392,30 @@ impl Whisper {
         }
     }
 
+    /// Como `decode_timed`, pero se corta en cuanto `esperando` pasa de 0 (texto en vivo: al soltar el
+    /// atajo, el dictado no espera al tick a medias). Cortado, devuelve vacío.
+    ///
+    /// Con el `abort_callback` crudo de whisper.cpp: `set_abort_callback_safe` de whisper-rs 0.16 guarda la
+    /// closure como `Box<dyn FnMut>` pero la llama como si fuera la closure misma (cortaba siempre, error -8).
+    pub fn decode_abortable(&self, samples: &[f32], language: &str, esperando: &AtomicUsize) -> Timed {
+        unsafe extern "C" fn cortar(datos: *mut std::ffi::c_void) -> bool {
+            // SAFETY: `datos` apunta a `esperando`, que vive más que `state.full` (la llamada es síncrona).
+            unsafe { (*(datos as *const AtomicUsize)).load(Ordering::SeqCst) > 0 }
+        }
+        let poner = |p: &mut FullParams| {
+            // SAFETY: ver `cortar`; whisper.cpp solo lee el puntero mientras dura la inferencia.
+            unsafe {
+                p.set_abort_callback(Some(cortar));
+                p.set_abort_callback_user_data(esperando as *const AtomicUsize as *mut std::ffi::c_void);
+            }
+        };
+        match (&self.fast, self.fast.is_none().then(|| self.precise()).flatten()) {
+            (Some(fast), _) => self.run(fast, samples, language, poner),
+            (None, Some(ctx)) => self.run(&ctx, samples, language, poner),
+            (None, None) => Timed::default(),
+        }
+    }
+
     /// Una inferencia en `ctx`, con `tweak` aplicado a los parámetros al final (bancos de medida).
     fn run(&self, ctx: &Ctx, samples: &[f32], language: &str, tweak: impl FnOnce(&mut FullParams)) -> Timed {
         let mut p = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
@@ -420,17 +444,16 @@ impl Whisper {
         }
         let mut segments: Vec<(String, Vec<TimedToken>)> = Vec::new();
         for seg in state.as_iter() {
-            if seg.no_speech_probability() > NO_SPEECH_MAX {
-                continue;
-            }
             // (texto, inicio, fin) en centésimas: el inicio, por DTW si lo hay.
             let mut raw: Vec<(String, i64, i64)> = Vec::new();
+            let mut logprob = (0.0f32, 0usize);
             for i in 0..seg.n_tokens() {
                 let Some(tok) = seg.get_token(i) else { continue };
                 // Fuera los especiales ([_BEG_], marcas de tiempo, fin de texto…).
                 if tok.token_id() >= self.eot {
                     continue;
                 }
+                logprob = (logprob.0 + tok.token_data().plog, logprob.1 + 1);
                 let Ok(text) = tok.to_str_lossy() else { continue };
                 if text.is_empty() {
                     continue;
@@ -438,6 +461,9 @@ impl Whisper {
                 let d = tok.token_data();
                 let start = if d.t_dtw >= 0 { d.t_dtw } else { d.t0 };
                 raw.push((text.into_owned(), start, d.t1.max(d.t0)));
+            }
+            if es_silencio(seg.no_speech_probability(), logprob.0 / logprob.1.max(1) as f32) {
+                continue;
             }
             // Cada token dura hasta que empieza el siguiente (el último, hasta su fin de Whisper).
             let mut tokens = Vec::with_capacity(raw.len());
@@ -482,7 +508,8 @@ pub fn drop_hallucinations(segments: Vec<(String, Vec<TimedToken>)>) -> Vec<(Str
         let f = fold(&text);
         let bare: String = f.chars().filter(|c| c.is_alphanumeric() || c.is_whitespace() || *c == '.').collect();
         let bare = bare.split_whitespace().collect::<Vec<_>>().join(" ");
-        if bare.is_empty() || KNOWN.iter().any(|k| bare.contains(k) && bare.len() <= k.len() + 40) {
+        // Sin una letra ni una cifra («...», «.»: ruido blanco largo, BELTR-PRT-30) tampoco es nada dicho.
+        if !bare.chars().any(char::is_alphanumeric) || KNOWN.iter().any(|k| bare.contains(k) && bare.len() <= k.len() + 40) {
             continue;
         }
         // El mismo segmento dos veces seguidas: el segundo sobra.
@@ -525,6 +552,76 @@ fn collapse_loops(text: &str) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// BELTR-PRT-30: valores medidos con la voz de Txonso (20-nov) y con silencio.
+    #[test]
+    fn nsn_experiencia_la_voz_clara_no_se_tira_por_no_speech() {
+        // Voz clara con «automático»: «no hay voz» alto, texto muy seguro → se queda.
+        for (ns, lp) in [(0.86, -0.37), (0.79, -0.22), (0.62, -0.17), (0.70, -0.24), (0.76, -0.24), (0.62, -0.31), (0.62, -0.46), (0.22, -0.79), (0.0, -0.9)] {
+            assert!(!es_silencio(ns, lp), "se tiraba voz clara: no_speech {ns}, logprob {lp}");
+        }
+        // Ruido sin voz con frase inventada (zumbido, respiración, teclado, ruido blanco): fuera.
+        for (ns, lp) in [(0.94, -0.90), (0.93, -0.87), (0.92, -0.83), (0.72, -0.86), (0.91, -0.76), (0.9, -6.66)] {
+            assert!(es_silencio(ns, lp), "pasaba ruido: no_speech {ns}, logprob {lp}");
+        }
+        // Basura aunque «no hay voz» salga bajo (ceros digitales, silencio corto).
+        assert!(es_silencio(0.0, -4.79) && es_silencio(0.0, -9.41));
+    }
+
+    /// Los dictados reales que salían vacíos (BELTR-PRT-30). Fuera del repo (voz de Txonso):
+    /// `PRONTO_VACIOS_DIR` con `N.wav` + `N.txt` (un trozo que tiene que salir) y `silencio-*.wav`
+    /// (tiene que salir vacío). Sin carpeta o sin modelo medium, no mide (`VACIOS_OMITIDO`).
+    #[test]
+    fn whisper_no_deja_vacia_la_voz_real() {
+        let Ok(dir) = std::env::var("PRONTO_VACIOS_DIR") else {
+            println!("VACIOS_OMITIDO: falta PRONTO_VACIOS_DIR");
+            return;
+        };
+        let m = model("medium");
+        if !m.present() {
+            println!("VACIOS_OMITIDO: no está Whisper medium");
+            return;
+        }
+        let w = Whisper::load(m, true).expect("cargar Whisper");
+        // Con el texto previo de fábrica y con palabras de diccionario (el eco del texto previo es lo que se
+        // inventa en el ruido: «www.gmail.com», revisión del 22-nov), en «automático» y en español.
+        let dic: Vec<String> = ["BeltranLabs", "GitHub", "Claqueta", "Parakeet", "Txonso", "Ollama", "Supabase", "Odoo"].map(String::from).to_vec();
+        let mut fallos = Vec::new();
+        let mut n = 0;
+        let mut casos = Vec::new();
+        for e in std::fs::read_dir(&dir).expect("carpeta").flatten() {
+            let p = e.path();
+            if p.extension().and_then(|x| x.to_str()) == Some("wav") {
+                casos.push(p);
+            }
+        }
+        casos.sort();
+        for (prompt, lang) in [(prompt_for(&[]), "auto"), (prompt_for(&dic), "auto"), (prompt_for(&dic), "es")] {
+          w.set_prompt(prompt.clone());
+          for p in &casos {
+            let stem = p.file_stem().unwrap().to_string_lossy().into_owned();
+            let audio = crate::audio::decode_wav(&std::fs::read(p).unwrap()).expect("wav");
+            let texto = w.decode_timed(&audio, lang).text;
+            n += 1;
+            let stem = format!("{stem} ({lang}{})", if prompt.contains("Txonso") { ", diccionario" } else { "" });
+            println!("VACIOS_MUESTRA {stem}: «{texto}»");
+            if stem.starts_with("silencio") {
+                // (el nombre lleva ya el idioma: se mira el del fichero)
+                if !texto.trim().is_empty() {
+                    fallos.push(format!("{stem}: silencio con texto «{texto}»"));
+                }
+                continue;
+            }
+            let trozo = std::fs::read_to_string(p.with_extension("txt")).unwrap_or_default();
+            if texto.trim().is_empty() || !fold(&texto).contains(&fold(trozo.trim())) {
+                fallos.push(format!("{stem}: «{texto}» sin «{}»", trozo.trim()));
+            }
+          }
+        }
+        println!("VACIOS_TOTAL={n} VACIOS_FALLOS={}", fallos.len());
+        assert!(n > 0, "no hay WAV en {dir}");
+        assert!(fallos.is_empty(), "dictados con voz que salen vacíos o mal:\n{}", fallos.join("\n"));
+    }
+
     fn seg(t: &str) -> (String, Vec<TimedToken>) {
         (t.to_string(), vec![TimedToken { text: format!(" {t}"), start: 0.0, end: 1.0 }])
     }
@@ -541,6 +638,7 @@ mod tests {
         let texts: Vec<&str> = out.iter().map(|s| s.0.as_str()).collect();
         assert_eq!(texts, ["Vale, mañana lo miramos.", "Y luego qué pasa con el servidor."]);
         // Una frase normal que contiene «gracias» no se toca; tres repeticiones tampoco (pueden ser reales).
+        assert!(drop_hallucinations(vec![seg("..."), seg(" . ")]).is_empty(), "solo signos es ruido");
         let keep = drop_hallucinations(vec![seg("Muchas gracias por ver el presupuesto tan rápido, de verdad, me has salvado la semana."), seg("Sí, sí, sí.")]);
         assert_eq!(keep.len(), 2);
     }
@@ -695,17 +793,16 @@ mod tests {
         assert!(wrong.is_empty(), "idioma equivocado con «auto»: {wrong:?}");
     }
 
-    /// Tarjetas de 4, 6 y 8 GB (lo que dice Vulkan: GiB): con turbo caben los dos contextos y el
-    /// latido desde 4 GB; con large-v3, desde 6 GB.
+    /// Tarjetas de 4, 5 y 8 GB (lo que dice Vulkan: GiB): con medium caben los dos contextos y el latido
+    /// desde 5 GB.
     #[test]
     fn caben_los_dos_segun_la_tarjeta() {
         let gib = |g: u64| g * 1_073_741_824;
-        let turbo = model("large-v3-turbo");
-        let large = model("large-v3");
-        assert!(!fits_two(turbo, gib(3)));
-        assert!(fits_two(turbo, gib(4)));
-        assert!(!fits_two(large, gib(4)));
-        assert!(fits_two(large, gib(6)));
+        let medium = model("medium");
+        assert_eq!(model("").id, "medium", "el de fábrica es medium");
+        assert_eq!(model("large-v3-turbo").id, "medium", "un modelo quitado pasa al de fábrica");
+        assert!(!fits_two(medium, gib(4)));
+        assert!(fits_two(medium, gib(5)));
         for m in &MODELS {
             assert!(m.pair_vram_gb > m.min_vram_gb.min(2.0), "{}: el par no puede ocupar menos que uno", m.id);
             assert!(fits_two(m, gib(8)), "{} no cabe ni en 8 GB", m.id);
@@ -837,3 +934,5 @@ mod tests {
         }
     }
 }
+
+

@@ -163,12 +163,14 @@ fn key_down(vk: u32) -> bool {
 
 /// Espera a que se suelten Win, Alt, Shift y Ctrl: si siguieran pulsadas, el Ctrl+V llegaría
 /// a la app como Win+Alt+Ctrl+V (p. ej. al parar el modo manos libres sin soltar el atajo).
-fn wait_modifiers_released(max: Duration) {
+/// Devuelve si se soltaron a tiempo (con alguna aún pulsada, un Ctrl+V llegaría como Win+Alt+Ctrl+V).
+fn wait_modifiers_released(max: Duration) -> bool {
     const MODS: [u32; 8] = [0x5B, 0x5C, 0xA4, 0xA5, 0xA0, 0xA1, 0xA2, 0xA3];
     let t0 = Instant::now();
     while MODS.iter().any(|&v| key_down(v)) && t0.elapsed() < max {
         std::thread::sleep(Duration::from_millis(15));
     }
+    !MODS.iter().any(|&v| key_down(v))
 }
 
 // ------------------------------------------------------------------ portapapeles entero
@@ -409,7 +411,20 @@ pub fn paste_text(text: &str) -> Result<(), String> {
         return Err(format!("no se pudo escribir en el portapapeles: {e}"));
     }
 
-    wait_modifiers_released(Duration::from_millis(2000));
+    if !wait_modifiers_released(Duration::from_millis(2000)) {
+        // Sin Ctrl+V: no pegaría y diría que sí (BELTR-PRT-30). El portapapeles del usuario vuelve ya; el
+        // texto está en el historial y el aviso lo dice.
+        let original = {
+            let mut pending = PENDING.lock();
+            if pending.as_ref().is_some_and(|p| p.token == token) {
+                pending.take().and_then(|p| p.original)
+            } else {
+                None
+            }
+        };
+        restore_clipboard(original);
+        return Err("hay teclas pulsadas (Win, Alt, Ctrl o Mayús)".into());
+    }
     if cfg!(debug_assertions) {
         let fg = foreground_app();
         let held: Vec<String> = [0x5Bu32, 0x5C, 0xA4, 0xA5, 0xA0, 0xA1, 0xA2, 0xA3, 0x12, 0x11, 0x10]
@@ -531,7 +546,7 @@ mod tests {
 
 /// Pulsa Enter (para «pulsa enter» al final de un dictado).
 pub fn press_enter() {
-    wait_modifiers_released(Duration::from_millis(1000));
+    let _ = wait_modifiers_released(Duration::from_millis(1000));
     send_keys(&[(0x0D, false), (0x0D, true)]);
 }
 
@@ -561,7 +576,7 @@ pub fn capture_selection() -> Result<String, String> {
     };
     // SAFETY: sin precondiciones.
     let before = unsafe { GetClipboardSequenceNumber() };
-    wait_modifiers_released(Duration::from_millis(2000));
+    let _ = wait_modifiers_released(Duration::from_millis(2000));
     send_keys(&[(0x11, false), (0x43, false), (0x43, true), (0x11, true)]);
 
     // Esperamos a que la app publique la selección: lo sabemos porque cambia el número de secuencia.

@@ -44,6 +44,18 @@ export async function loadSettings() {
   return state.settings;
 }
 
+/** La decisión sobre las estadísticas de uso va por su comando: `save_settings` no puede cambiarla. */
+export async function setUsageStats(enabled) {
+  try {
+    await invoke('set_usage_stats', { enabled });
+    state.settings = { ...state.settings, usageStats: enabled };
+    notify('settings');
+  } catch (e) {
+    toast(errText(e) || t('No se pudo guardar.'), { kind: 'err' });
+    throw e;
+  }
+}
+
 /** Guarda un cambio parcial: optimista, con reversión si el backend falla. */
 export async function saveSettings(patch) {
   const prev = state.settings;
@@ -103,7 +115,7 @@ export async function refreshStats() {
 const UPDATE_BUSY = ['downloading', 'verifying', 'installing'];
 export const updateBusy = () => UPDATE_BUSY.includes(state.update.state);
 
-/** Estado completo (`update_status` / `update_check`) -> estado compartido. */
+/** Estado completo (`update_status` / `update_check` / `update://changed`) -> estado compartido. */
 export function applyUpdateStatus(s) {
   if (!s) return;
   state.update = { ...state.update, ...s };
@@ -160,4 +172,5 @@ export function dismissUpdate() {
   const v = state.update.info && state.update.info.version;
   state.update = { ...state.update, dismissed: v || null };
   notify('update');
+  invoke('update_dismiss').catch(() => { /* */ }); // la Flow bar deja de respirar
 }

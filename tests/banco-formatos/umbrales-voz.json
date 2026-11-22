@@ -1,0 +1,9 @@
+{
+  "_nota": "Peor resultado admitido (correos bien escritos) con la voz de Txonso, por conjunto y motor-diccionario. Solo se sube con medida nueva, nunca a peor para que pase (BELTR-PRT-30). Antes (21-nov-2026, sin arreglos): correos-noche parakeet 2/7, whisper-medium 1/7 sin «arroba» en el diccionario y 0/7 con ella. Tras las reglas nuevas de text.rs y «arroba, Gmail, Hotmail» fijas en el texto previo de Whisper: 2/7 y 5/7. Sin cifra = solo se mide (correos-voz, hasta que Txonso grabe).",
+  "correos-noche": {
+    "parakeet-base": 2,
+    "parakeet-correos": 2,
+    "whisper-medium-base": 5,
+    "whisper-medium-correos": 5
+  }
+}

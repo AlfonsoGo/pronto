@@ -51,6 +51,7 @@ const NOTES_MAX_LINES: usize = 12;
 
 const EV_AVAILABLE: &str = "update://available";
 const EV_PROGRESS: &str = "update://progress";
+const EV_CHANGED: &str = "update://changed";
 
 const HELPER_SCRIPT: &str = include_str!("update_helper.ps1");
 
@@ -539,6 +540,8 @@ pub struct UpdateStatus {
     pub total_bytes: u64,
     pub percent: u32,
     pub error: Option<String>,
+    /// Versión a la que se dijo «Más tarde»: ni la tarjeta del hub ni la Flow bar la anuncian.
+    pub dismissed: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -579,9 +582,10 @@ struct Inner {
     done: u64,
     total: u64,
     error: Option<String>,
+    dismissed: Option<String>,
 }
 
-static INNER: Mutex<Inner> = Mutex::new(Inner { state: "idle", release: None, checked_at: None, done: 0, total: 0, error: None });
+static INNER: Mutex<Inner> = Mutex::new(Inner { state: "idle", release: None, checked_at: None, done: 0, total: 0, error: None, dismissed: None });
 static CHECKING: AtomicBool = AtomicBool::new(false);
 static INSTALLING: AtomicBool = AtomicBool::new(false);
 
@@ -605,6 +609,7 @@ fn snapshot(g: &Inner) -> UpdateStatus {
         total_bytes: g.total,
         percent: percent(g.done, g.total),
         error: g.error.clone(),
+        dismissed: g.dismissed.clone(),
     }
 }
 
@@ -616,6 +621,21 @@ pub fn status() -> UpdateStatus {
 pub fn pending_version() -> Option<String> {
     let g = INNER.lock();
     matches!(g.state, "available" | "error").then(|| g.release.as_ref().map(|r| r.version.to_string())).flatten()
+}
+
+/// «Más tarde»: calla la versión pendiente hasta reiniciar Pronto o pulsar «Buscar ahora».
+pub fn dismiss(app: &AppHandle) {
+    {
+        let mut g = INNER.lock();
+        g.dismissed = g.release.as_ref().map(|r| r.version.to_string());
+    }
+    let _ = app.emit(EV_CHANGED, status());
+}
+
+/// «Buscar ahora»: buscar a mano vuelve a mostrar el aviso.
+pub fn clear_dismissed(app: &AppHandle) {
+    INNER.lock().dismissed = None;
+    let _ = app.emit(EV_CHANGED, status());
 }
 
 fn busy_state(state: &str) -> bool {
@@ -723,6 +743,7 @@ pub fn check(app: &AppHandle) -> Result<UpdateStatus, CheckError> {
     }
     if before != announce.as_ref().map(|i| i.version.clone()) {
         refresh_tray(app);
+        let _ = app.emit(EV_CHANGED, status());
     }
     Ok(status())
 }
@@ -1691,10 +1712,11 @@ mod tests {
         let r = parse_release(REAL_RELEASE).unwrap().unwrap();
         let s = UpdateStatus {
             current_version: "2.0.0".into(), state: "available", checking: false, checked_at: None, info: Some(info_of(&r)),
-            done_bytes: 0, total_bytes: 0, percent: 0, error: None,
+            done_bytes: 0, total_bytes: 0, percent: 0, error: None, dismissed: Some("2.0.1".into()),
         };
         let j = serde_json::to_value(&s).unwrap();
         assert_eq!(j["currentVersion"], "2.0.0");
+        assert_eq!(j["dismissed"], "2.0.1");
         assert_eq!(j["state"], "available");
         assert_eq!(j["info"]["version"], "2.0.1");
         assert_eq!(j["info"]["assetName"], "Pronto-Setup-2.0.1.exe");

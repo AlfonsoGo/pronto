@@ -1,6 +1,6 @@
 // Configuración: modal 960x640 con sidebar interna. [spec §2.4]
 import { icon } from '../../shared/icons.js';
-import { invoke, listen, state, saveSettings, subscribe, notify, applySettingsEffects, IS_MOCK, checkUpdate, installUpdate, updateBusy, startModelDownload } from '../api.js';
+import { invoke, listen, state, saveSettings, setUsageStats, subscribe, notify, applySettingsEffects, IS_MOCK, checkUpdate, installUpdate, updateBusy, startModelDownload } from '../api.js';
 import {
   t, esc, $, $$, toast, errText, openModal, confirmDialog, keysHtml, hotkeyText, sameHotkey, getLang,
 } from '../util.js';
@@ -87,12 +87,8 @@ const PARAKEET = {
 const MEDIDO = {
   parakeet: { tag: 'Recomendado · el más probado', cls: 'ok', juez: 12.4, reu: 5.7, frase: '0,35-0,55 s',
     tip: 'El de fábrica: funciona en cualquier PC, sin tarjeta gráfica, y es el que más tiempo lleva en Pronto. Falla algo más que los Whisper grandes.' },
-  'large-v3-turbo': { tag: 'El más rápido', cls: 'vio', juez: 9.9, reu: 4.2, frase: '0,2 s',
-    tip: 'Si tienes una gráfica potente, este es el mejor para ti: el más rápido y con menos errores que Parakeet.' },
   medium: { tag: 'Menos errores', cls: 'vio', juez: 8.1, reu: 3.4, frase: '0,24-0,29 s',
-    tip: 'El que menos falló en las pruebas, con dictados y con reuniones. Un poco más lento que turbo.' },
-  'large-v3': { tag: 'Solo con gráfica grande', cls: '', juez: 8.7, reu: 3.8, frase: '0,37-0,48 s',
-    tip: 'Acierta casi como medium, pero tarda casi el doble que turbo y ocupa el doble de memoria de vídeo. En una prueba repitió una frase en bucle.' },
+    tip: 'El Whisper que menos falla, con dictados y con reuniones. Necesita tarjeta gráfica.' },
   small: { tag: 'Para gráficas pequeñas', cls: '', juez: null, reu: 4.0, frase: null,
     tip: 'Ligero (1 GB de memoria de vídeo). En reuniones de prueba falló poco, pero no se ha medido con dictados reales.' },
   base: { tag: 'Sin probar', cls: '', juez: null, reu: null, frase: null,
@@ -107,7 +103,7 @@ function measured(m) {
   return d.frase ? `${errs} · ${t('{s} por frase', { s: d.frase })}` : errs;
 }
 function engineInUse(s) {
-  return s.asrEngine === 'whisper' ? (s.whisperModel || 'large-v3-turbo') : 'parakeet';
+  return s.asrEngine === 'whisper' ? (s.whisperModel || 'medium') : 'parakeet';
 }
 function modelRow(m, s) {
   const chosen = engineInUse(s) === m.id;
@@ -242,6 +238,7 @@ const VIEWS = {
       row(t('Nombre'), t('Se usa en el saludo de la pantalla de inicio.'),
         `<input class="input" data-text="firstName" maxlength="40" value="${esc(s.firstName || '')}" placeholder="${esc(t('Tu nombre'))}" aria-label="${esc(t('Nombre'))}" autocomplete="off" spellcheck="false">`),
       row(t('Decir «pulsa enter»'), t('Si acabas un dictado diciendo «pulsa enter», Pronto pulsa Enter por ti (por ejemplo, para enviar un mensaje).'), switchHtml('pressEnterCommand', s.pressEnterCommand, t('Decir «pulsa enter»'))),
+      row(t('Texto en vivo'), t('Ves tus palabras en la barra mientras hablas. Al soltar, el texto llega antes porque ya está casi todo escrito.'), switchHtml('liveText', s.liveText !== false, t('Texto en vivo'))),
     ].join(''));
   },
   engine(s) {
@@ -300,7 +297,7 @@ const VIEWS = {
     const days = [0, 7, 30, 90, 180, 365].map((n) => ({ value: n, label: n === 0 ? t('Siempre') : t('{n} días', { n }) }));
     const audio = [0, 1, 7, 14, 30].map((n) => ({ value: n, label: n === 0 ? t('No guardar audio') : n === 1 ? t('1 día') : t('{n} días', { n }) }));
     return `<div class="aviso verde"><div class="in"><span class="ic-l">${icon('lock', 20)}</span>
-      <div class="tx"><b>${esc(t('100 % local'))}</b><span>${esc(t('Tu voz, tus transcripciones, el diccionario y las notas viven solo en este equipo. Pronto no envía nada a Internet.'))}</span></div></div></div>` +
+      <div class="tx"><b>${esc(t('Voz y texto, 100 % locales'))}</b><span>${esc(t('Tu voz, tus transcripciones, el diccionario y las notas viven solo en este equipo y nunca salen de él.'))}</span></div></div></div>` +
       group(t('Historial'), [
         row(t('Conservar el historial'), s.historyRetentionDays ? t('Los dictados de más de {n} días se borran solos.', { n: s.historyRetentionDays }) : t('Se guardan todos tus dictados, en este PC.'), selectHtml('historyRetentionDays', days, s.historyRetentionDays, { label: t('Conservar el historial') })),
         row(t('Audio guardado'), t('Cuántos días se guarda la grabación de tu voz, para volver a escucharla o volver a pasarla a texto.'), selectHtml('keepAudioDays', audio, s.keepAudioDays, { label: t('Audio guardado') })),
@@ -308,6 +305,10 @@ const VIEWS = {
       ].join('')) +
       group(t('Motor de voz'), [
         row(t('Estado del motor'), esc(state.engine.error || t('Elige el motor y el modelo en Configuración → Reconocimiento de voz.')), `<span id="eng-chip">${engineChip()}</span>`),
+      ].join('')) +
+      group(t('Estadísticas de uso'), [
+        row(t('Enviar estadísticas de uso'), t('Una vez al día: palabras, tiempo de dictado, dictados, reuniones, versión y programa principal. Nunca lo que dices o escribes.'), switchHtml('usageStats', s.usageStats === true, t('Enviar estadísticas de uso'))),
+        ...(s.usageStats === true ? [row(t('Tu código de estadísticas'), t('Si quieres que borremos tus cifras, escribe a info@beltranlabs.es con este código.'), '<code id="uso-id"></code>')] : []),
       ].join('')) +
       group(t('Registro de errores'), [
         row(t('Registro de errores'), t('Si algo falla, Pronto lo apunta en un fichero de este equipo: fecha, versión y qué falló, sin tus dictados ni tus textos. No se envía a ningún sitio.'),
@@ -342,6 +343,21 @@ export function openSettings(tab = 'general', opts = {}) {
   ctl.modal.setAttribute('aria-labelledby', 'set-title');
   let active = tab, offAi = null, offCleanup = null;
 
+  // Al retirar el permiso se borra el código: se enseña antes, porque sin él no se puede pedir que borremos lo ya enviado.
+  async function changeUsage(enabled) {
+    if (!enabled) {
+      const id = await invoke('usage_id').catch(() => null);
+      const ok = await confirmDialog({
+        title: t('¿Dejar de enviar estadísticas?'),
+        body: esc(t('Se borrará tu código de este equipo. Lo ya enviado se conserva 24 meses. Si quieres que lo borremos antes, apunta este código y escribe a info@beltranlabs.es: {id}', { id: id || '' })),
+        confirmText: t('Sí, dejar de enviar'), danger: false,
+      });
+      if (!ok) return;
+    }
+    try { await setUsageStats(enabled); } catch (_) { /* ya avisado */ }
+    renderTab();
+  }
+
   function renderTab() {
     const info = flat().find((x) => x.id === active);
     title.textContent = info.label;
@@ -368,6 +384,7 @@ export function openSettings(tab = 'general', opts = {}) {
     }
     if (active === 'experimental' || active === 'meetings') ollamaCheck(false);
     if (active === 'system') loadMonitors(body);
+    if (active === 'data' && state.settings.usageStats === true) invoke('usage_id').then((id) => { const c = $('#uso-id', body); if (c) c.textContent = id || ''; }).catch(() => {});
     if (active === 'engine') loadAsr(body);
     if (offAi) offAi();
     offAi = aiMount(body, (kind) => { if (kind === 'ready') { ollamaCheck(false); if (offCleanup) offCleanup.recheck(); } });
@@ -444,6 +461,7 @@ export function openSettings(tab = 'general', opts = {}) {
     const sw = e.target.closest('[data-switch]');
     if (sw) {
       const k = sw.dataset.switch, v = !state.settings[k];
+      if (k === 'usageStats') { await changeUsage(v); return; }
       sw.setAttribute('aria-checked', v);
       changeSetting(k, v);
       return;

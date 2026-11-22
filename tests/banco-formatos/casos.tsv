@@ -1,0 +1,44 @@
+# Banco de formatos (BELTR-PRT-15): 40 dictados con correos, teléfonos, símbolos, webs, horas, euros y %.
+# Columnas (tabulador): id  categoría  frase dicha  aceptados (uno vale; separados por « || »)  prohibidos (opcional)
+# Un caso está bien si el texto final contiene alguno de los aceptados (tal cual, sin mirar mayúsculas)
+# y ninguno de los prohibidos. Las frases las dice una voz local (generar.py); nunca suenan por los altavoces.
+01	correo	Escríbeme a alfonso arroba gmail punto com.	alfonso@gmail.com
+02	correo	Mi correo es maria punto lopez arroba hotmail punto es.	maria.lopez@hotmail.es
+03	correo	Manda la factura a facturas arroba beltranlabs punto com.	facturas@beltranlabs.com
+04	correo	El correo es info guion ventas arroba empresa punto es.	info-ventas@empresa.es
+05	correo	Contesta a juan guion bajo perez arroba yahoo punto es.	juan_perez@yahoo.es
+06	correo	Pon como contacto soporte arroba pronto punto app.	soporte@pronto.app
+07	correo	Escribe a pedro arroba gmail punto com antes del lunes.	pedro@gmail.com
+08	correo	El email de recepción es hola arroba clinica punto es.	hola@clinica.es
+09	telefono	Mi teléfono es seis uno ocho, siete ocho cinco, cinco dos dos.	618 785 522 || 618785522
+10	telefono	Llámame al seis cero cero uno dos tres cuatro cinco seis.	600 123 456 || 600123456
+11	telefono	El fijo es nueve uno, cuatro cinco seis, siete ocho, nueve cero.	91 456 78 90 || 914 567 890 || 914567890
+12	telefono	El número es más treinta y cuatro, seis uno ocho, siete ocho cinco, cinco dos dos.	+34 618 785 522 || +34618785522
+13	telefono	Apunta el seiscientos dieciocho, setenta y ocho, cincuenta y cinco, veintidós.	618 78 55 22 || 618785522 || 618 785 522
+14	telefono	Llama al nueve cero dos, uno dos tres, cuatro cinco seis.	902 123 456 || 902123456
+15	telefono	El código postal es cuatro ocho cero cero uno.	48001
+16	telefono	La extensión es dos cuatro siete.	247
+17	simbolo	Marca asterisco treinta y tres almohadilla.	*33#
+18	simbolo	Después pulsa almohadilla dos.	#2 || # 2
+19	simbolo	Para ver el saldo marca asterisco uno cero uno almohadilla.	*101#
+20	simbolo	La nota lleva un asterisco al final.	un asterisco	*
+21	simbolo	Usa la etiqueta almohadilla verano.	#verano
+22	simbolo	Mi contraseña no lleva almohadilla.	almohadilla	#
+23	web	Entra en www punto beltranlabs punto com.	www.beltranlabs.com
+24	web	La web es pronto punto app barra descargas.	pronto.app/descargas
+25	web	Mira google punto es.	google.es
+26	web	Abre https dos puntos barra barra github punto com.	https://github.com
+27	web	Visita elpais punto com barra economia.	elpais.com/economia
+28	hora	La reunión es a las cinco y media.	5:30
+29	hora	El tren sale a las diecisiete cuarenta y cinco.	17:45
+30	hora	Te llamo a las nueve y cuarto.	9:15
+31	hora	Abrimos a las diez menos cuarto.	9:45
+32	hora	La cita es a las doce y diez.	12:10
+33	euro	Son veinte euros.	20 € || 20 euros || 20 €
+34	euro	El presupuesto es de mil doscientos cincuenta euros.	1250 € || 1.250 € || 1250 euros || 1.250 euros || 1250 € || 1.250 €
+35	euro	Cuesta tres euros con cincuenta.	3,50 € || 3,50 euros || 3,50 €
+36	euro	La cuota es de cuarenta y nueve con noventa y nueve euros.	49,99 € || 49,99 euros || 49,99 €
+37	porcentaje	Tenemos un descuento del quince por ciento.	15 % || 15% || 15 %
+38	porcentaje	El IVA es del veintiuno por ciento.	21 % || 21% || 21 %
+39	porcentaje	Ha subido un tres coma cinco por ciento.	3,5 % || 3,5% || 3,5 %
+40	porcentaje	La batería está al ochenta por ciento.	80 % || 80% || 80 %

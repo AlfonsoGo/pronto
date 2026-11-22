@@ -1,11 +1,11 @@
 // Dictado (home): bienvenida, banner, historial por días y columna de estadísticas. [spec §2.3 Dictation]
 import { icon } from '../../shared/icons.js';
-import { invoke, listen, state, subscribe, refreshModel, startModelDownload } from '../api.js';
+import { invoke, listen, state, subscribe, refreshModel, startModelDownload, saveSettings } from '../api.js';
 import {
   t, esc, $, $$, toast, errText, debounce, formatTime, dayLabel, dayKey, formatCompact, formatInt, formatDec,
   keysHtml, openMenu, confirmDialog,
 } from '../util.js';
-import { emptyState, heroBanner, waveDeco, searchBtn, searchBar, highlight } from '../ui.js';
+import { emptyState, heroBanner, waveDeco, searchBtn, searchBar, highlight, switchHtml } from '../ui.js';
 import { openSettingsDialog } from './settings.js';
 
 const PAGE = 40;
@@ -62,6 +62,22 @@ export default {
     // Siempre a la vista (24-oct-2026): ninguno de los tres primerizos supo cómo dictar desde aquí; el cartel de antes
     // hablaba de estilos. Debajo, la tecla, el micrófono y el idioma, cada uno con su botón.
     const LANG = () => ({ auto: t('Español e inglés'), es: t('Solo español'), en: t('Solo inglés') });
+    // Pulido con IA a un clic (BELTR-PRT-17): antes vivía en Configuración → Limpieza e IA (3 clics). El modelo y el
+    // plazo siguen allí; aquí solo encender y apagar, con su estado a la vista.
+    function polishItem(st) {
+      const on = !!st.aiPolish;
+      return `<div class="howto-item howto-polish ${on ? 'on' : ''}"><span class="howto-ic" aria-hidden="true">${icon('wand-sparkles', 16)}</span>
+        <span class="howto-v"><small>${esc(t('Pulir con IA local'))}</small><b id="h-polish-state">${esc(on ? t('Activado') : t('Desactivado'))}</b></span>
+        ${switchHtml('aiPolish', on, t('Pulir cada dictado con IA local'))}</div>`;
+    }
+    // Texto en vivo a un clic (BELTR-PRT-30): antes solo en Configuración → General (3 clics). Es el mismo ajuste.
+    function liveItem(st) {
+      const on = st.liveText !== false;
+      return `<div class="howto-item howto-live ${on ? 'on' : ''}"><span class="howto-ic" aria-hidden="true">${icon('message-square', 16)}</span>
+        <span class="howto-v"><small>${esc(t('Texto en vivo'))}</small><b id="h-live-state">${esc(on ? t('Activado') : t('Desactivado'))}</b></span>
+        ${switchHtml('liveText', on, t('Ver el texto en la barra mientras hablas'))}</div>`;
+    }
+
     function renderHero() {
       const st = s();
       const cfg = (act, ic, label, value, btn) => `<div class="howto-item"><span class="howto-ic" aria-hidden="true">${icon(ic, 16)}</span>
@@ -74,6 +90,8 @@ export default {
           ${cfg('cfg-keys', 'keyboard', t('Tecla'), keysHtml(st.hotkeyHold), t('Cambiar tecla'))}
           ${cfg('cfg-mic', 'mic', t('Micrófono'), esc(st.micName || t('El que use Windows')), t('Cambiar micrófono'))}
           ${cfg('cfg-lang', 'globe', t('Idioma'), esc(LANG()[st.language] || st.language), t('Cambiar idioma'))}
+          ${polishItem(st)}
+          ${liveItem(st)}
         </div>`,
         deco: waveDeco(), cls: 'hero-howto',
       });
@@ -253,6 +271,28 @@ export default {
     }
 
     root.addEventListener('click', async (e) => {
+      const sw = e.target.closest('[data-switch=aiPolish]');
+      if (sw) {
+        const on = !state.settings.aiPolish;
+        sw.setAttribute('aria-checked', String(on));
+        try {
+          await saveSettings({ aiPolish: on });
+          toast(on ? t('Pulido con IA activado') : t('Pulido con IA desactivado'));
+        } catch (_) { sw.setAttribute('aria-checked', String(!on)); }
+        renderHero();
+        return;
+      }
+      const vivo = e.target.closest('[data-switch=liveText]');
+      if (vivo) {
+        const on = state.settings.liveText === false;
+        vivo.setAttribute('aria-checked', String(on));
+        try {
+          await saveSettings({ liveText: on });
+          toast(on ? t('Texto en vivo activado') : t('Texto en vivo desactivado'));
+        } catch (_) { vivo.setAttribute('aria-checked', String(!on)); }
+        renderHero();
+        return;
+      }
       const b = e.target.closest('[data-act]');
       if (!b) return;
       const act = b.dataset.act;

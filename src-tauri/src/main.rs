@@ -29,8 +29,12 @@ mod summary;
 mod text;
 mod tray;
 mod updater;
+mod uso;
+mod vivo;
 mod voiceprint;
 mod whisper;
+#[cfg(test)]
+mod banco_entender;
 #[cfg(test)]
 mod rompedor_sondas;
 #[cfg(test)]
@@ -110,6 +114,14 @@ fn fix_stored_settings(db: &Db, settings: &mut models::Settings) -> Option<Strin
             changed = true;
         }
     }
+    match db.usage_reconcile(settings.usage_stats) {
+        Ok(fixed) if fixed != settings.usage_stats => {
+            settings.usage_stats = fixed;
+            changed = true;
+        }
+        Ok(_) => {}
+        Err(e) => errlog::error("main", format!("estadísticas de uso: {e}")),
+    }
     if changed {
         if let Err(e) = db.save_settings(settings) {
             errlog::error("main", format!("no se pudieron guardar los ajustes corregidos al arrancar: {e}"));
@@ -141,6 +153,8 @@ fn main() {
             commands::app_info,
             commands::get_settings,
             commands::save_settings,
+            commands::set_usage_stats,
+            commands::usage_id,
             commands::list_mics,
             commands::get_stats,
             commands::list_history,
@@ -170,6 +184,7 @@ fn main() {
             commands::update_status,
             commands::update_check,
             commands::update_install,
+            commands::update_dismiss,
             commands::ai_setup_start,
             commands::ai_setup_cancel,
             commands::ai_setup_status,
@@ -296,6 +311,7 @@ fn main() {
                 errlog::error("main", format!("no se pudo crear el icono de bandeja: {e}"));
             }
             updater::spawn_background(handle.clone(), st_for_init.clone());
+            uso::spawn_background(st_for_init.clone());
 
             // El hub se muestra al arrancar, salvo si Windows nos lanzó al iniciar sesión.
             if !std::env::args().any(|a| a == autostart::HIDDEN_FLAG) {

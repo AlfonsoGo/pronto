@@ -1,0 +1,12 @@
+# Diccionario del banco: una palabra guardada por línea, como las guarda un usuario en Pronto.
+# «palabra» sola, o «oído => palabra» si se guardó con reemplazo (Txonso tiene «Gihad => Github»).
+BeltranLabs
+Gihad => GitHub
+Claqueta
+Parakeet
+Txonso
+Ollama
+Supabase
+Odoo
+Sonnet
+Whisper

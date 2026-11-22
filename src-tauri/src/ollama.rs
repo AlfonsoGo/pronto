@@ -28,10 +28,30 @@ static PRELOADED: parking_lot::Mutex<Option<(String, std::time::Instant)>> = par
 /// Cada cuánto, como mucho, se vuelve a precargar el mismo modelo (`keep_alive` del pulido = 30 min).
 const PRELOAD_EVERY: Duration = Duration::from_secs(20 * 60);
 
-/// Carga `model` en Ollama en segundo plano (una petición sin texto, solo `keep_alive`), para que el
-/// primer pulido no tenga que esperar a que se cargue. No manda nada del usuario. Se llama al
-/// empezar a dictar: mientras se habla, el modelo se carga.
-pub fn preload_async(url: &str, model: &str, keep_alive: &'static str) {
+/// Cómo precargar para un uso concreto (el pulido): con el mismo `num_ctx` que usará (si cambia entre
+/// peticiones, Ollama recarga el modelo) y con su prompt fijo, del que genera un solo token para dejarlo
+/// en caché. Solo texto de Pronto, nunca del usuario.
+#[derive(Clone, Copy, Debug)]
+pub struct Preload {
+    pub num_ctx: u32,
+    pub prompt: &'static str,
+}
+
+/// Cuerpo de la petición de precarga: sin `preload`, solo `keep_alive` (carga el modelo, no genera).
+pub(crate) fn preload_body(model: &str, keep_alive: &str, preload: Option<Preload>) -> serde_json::Value {
+    match preload {
+        None => json!({ "model": model, "keep_alive": keep_alive }),
+        Some(p) => json!({
+            "model": model, "keep_alive": keep_alive, "prompt": p.prompt, "stream": false, "think": false,
+            "options": { "num_ctx": p.num_ctx, "num_predict": 1, "temperature": 0.0 },
+        }),
+    }
+}
+
+/// Carga `model` en Ollama en segundo plano (una petición sin texto del usuario), para que el
+/// primer pulido no tenga que esperar a que se cargue. Se llama al empezar a dictar: mientras se
+/// habla, el modelo se carga.
+pub fn preload_async(url: &str, model: &str, keep_alive: &'static str, preload: Option<Preload>) {
     if model.trim().is_empty() || circuit::is_open(url) {
         return;
     }
@@ -44,7 +64,7 @@ pub fn preload_async(url: &str, model: &str, keep_alive: &'static str) {
     }
     let (endpoint, model) = (format!("{}/api/generate", base(url)), model.to_string());
     let _ = std::thread::Builder::new().name("pronto-ollama-precarga".into()).spawn(move || {
-        if let Err(e) = agent(Duration::from_secs(120)).post(&endpoint).send_json(json!({ "model": model, "keep_alive": keep_alive })) {
+        if let Err(e) = agent(Duration::from_secs(120)).post(&endpoint).send_json(preload_body(&model, keep_alive, preload)) {
             // Si no se pudo, que el próximo dictado lo vuelva a intentar.
             *PRELOADED.lock() = None;
             eprintln!("[ollama] precarga de {model}: {e}");

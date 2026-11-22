@@ -1,0 +1,17 @@
+{
+  "_nota": "Peor resultado admitido por las pruebas del pulido en directo (tests/velocidad-pulido.test.mjs, tests/banco-internet.test.mjs y tests/lento/). Solo se cambia con una medida nueva y nunca a peor para que pase. Línea base en linea-base-2026-11-20.md. Medidas con Ollama qwen3:1.7b; 20-nov-2026 con un juego abierto: 15 s p50 1518 / p90 1595 ms, WER 7,2 %; 2 min p50 2387 / p90 3833 ms (antes 12 465 / 13 972), WER 5,4 %; ms en el PC de Txonso (Ryzen 7 5800X3D + RTX 4070 Ti). 21-nov-2026 sin carga (BELTR-PRT-30): 15 s p50 1073 / p90 1148 ms, WER 7,2 %; 2 min p50 1880 / p90 2455 ms, WER 5,3 %. Umbrales de 2 min bajados a esa medida con margen; los de 15 s se quedan en 1500/2000 ms (el contrato de BELTR-PRT-10): tests/velocidad-pulido.test.mjs mide con menos dictados y da hasta 1406 ms sin carga.",
+  "quince": {
+    "p50Max": 1500,
+    "p90Max": 2000,
+    "werDirectoMax": 8.0
+  },
+  "largos": {
+    "p50Max": 2400,
+    "p90Max": 3200,
+    "werDirectoMax": 5.42,
+    "werMax": 5.4
+  },
+  "cortos": {
+    "werMax": 6.2
+  }
+}

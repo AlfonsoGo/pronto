@@ -341,16 +341,30 @@ fn commit_migration(tx: rusqlite::Transaction) -> Result<()> {
     Ok(())
 }
 
+/// Sube la base a la v10 en UNA transacción `BEGIN IMMEDIATE`, con la versión leída dentro de ella.
+/// Antes cada paso era su propia transacción diferida y la versión se leía una sola vez, fuera: dos
+/// arranques a la vez sobre una base nueva (o dos procesos subiendo la misma base) leían los dos la
+/// v0; el segundo repetía el paso 1 (`CREATE TABLE IF NOT EXISTS`, no falla) y dejaba `user_version`
+/// en 1 sobre una base ya en v10, y desde ahí cada arranque fallaba con «duplicate column name»: la
+/// base no volvía a abrir (rompedor_sondas, dos arranques a la vez, 21-nov). Ahora el segundo espera
+/// al candado (el `busy_timeout` de 5 s que pone rusqlite al abrir), ve la v10 y no toca nada; y un
+/// corte a mitad deja la base en su versión de antes, entera, en vez de a medio subir.
 fn migrate(conn: &mut Connection) -> Result<()> {
-    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    // Base al día (lo normal): ni se pide el candado de escritura.
+    if conn.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))? >= 10 {
+        return ensure_v10_columns(conn);
+    }
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    let version: i64 = tx.query_row("PRAGMA user_version", [], |r| r.get(0))?;
+    if version >= 10 {
+        // Otro arranque la subió mientras este esperaba el candado.
+        tx.rollback()?;
+        return ensure_v10_columns(conn);
+    }
     if version < 1 {
-        let tx = conn.transaction()?;
         tx.execute_batch(SCHEMA_V1)?;
-        tx.execute_batch("PRAGMA user_version = 1")?;
-        commit_migration(tx)?;
     }
     if version < 2 {
-        let tx = conn.transaction()?;
         tx.execute_batch(MIGRATION_V2)?;
         let now = now_iso();
         for (name, prompt, idx) in [("Polish", POLISH_PROMPT, 1), ("Prompt Engineer", PROMPT_ENGINEER_PROMPT, 2)] {
@@ -359,66 +373,37 @@ fn migrate(conn: &mut Connection) -> Result<()> {
                 params![name, prompt, idx, now],
             )?;
         }
-        tx.execute_batch("PRAGMA user_version = 2")?;
-        commit_migration(tx)?;
     }
     if version < 3 {
-        let tx = conn.transaction()?;
         tx.execute_batch(MIGRATION_V3)?;
-        tx.execute_batch("PRAGMA user_version = 3")?;
-        commit_migration(tx)?;
     }
     if version < 4 {
-        let tx = conn.transaction()?;
         tx.execute_batch(MIGRATION_V4)?;
-        tx.execute_batch("PRAGMA user_version = 4")?;
-        commit_migration(tx)?;
     }
     if version < 5 {
-        let tx = conn.transaction()?;
         tx.execute_batch(MIGRATION_V5)?;
-        tx.execute_batch("PRAGMA user_version = 5")?;
-        commit_migration(tx)?;
     }
     if version < 6 {
-        let tx = conn.transaction()?;
         tx.execute_batch(MIGRATION_V6)?;
-        tx.execute_batch("PRAGMA user_version = 6")?;
-        commit_migration(tx)?;
     }
     if version < 7 {
-        let tx = conn.transaction()?;
         tx.execute_batch(MIGRATION_V7)?;
-        tx.execute_batch("PRAGMA user_version = 7")?;
-        commit_migration(tx)?;
     }
     if version < 8 {
-        let tx = conn.transaction()?;
         tx.execute_batch(MIGRATION_V8)?;
-        tx.execute_batch("PRAGMA user_version = 8")?;
-        commit_migration(tx)?;
     }
     if version < 9 {
-        let tx = conn.transaction()?;
         tx.execute_batch(MIGRATION_V9)?;
-        tx.execute_batch("PRAGMA user_version = 9")?;
-        commit_migration(tx)?;
     }
-    if version < 10 {
-        // Solo las columnas que falten: una base que vuelve de una versión posterior (o que bajó de
-        // versión a mano) puede tenerlas ya, y `ADD COLUMN` repetido fallaría ("duplicate column").
-        let tx = conn.transaction()?;
-        if v10_missing(&tx)? == (true, true) {
-            tx.execute_batch(MIGRATION_V10)?;
-        } else {
-            add_v10_columns(&tx)?;
-        }
-        tx.execute_batch("PRAGMA user_version = 10")?;
-        commit_migration(tx)?;
+    // v10. Solo las columnas que falten: una base que vuelve de una versión posterior (o que bajó de
+    // versión a mano) puede tenerlas ya, y `ADD COLUMN` repetido fallaría ("duplicate column").
+    if v10_missing(&tx)? == (true, true) {
+        tx.execute_batch(MIGRATION_V10)?;
     } else {
-        ensure_v10_columns(conn)?;
+        add_v10_columns(&tx)?;
     }
-    Ok(())
+    tx.execute_batch("PRAGMA user_version = 10")?;
+    commit_migration(tx)
 }
 
 /// (falta `meeting_actions.cita`, falta `meetings.decision_citas`).
@@ -445,12 +430,19 @@ fn add_v10_columns(conn: &Connection) -> Result<()> {
 
 /// Una base marcada como v10 o posterior que no tiene las columnas de las citas (otra rama, una
 /// prueba que simula una versión futura): se completan en vez de fallar al leer las notas. Solo
-/// añade columnas; no toca filas.
+/// añade columnas; no toca filas. Con el candado de escritura (`IMMEDIATE`) y mirado otra vez dentro:
+/// dos arranques a la vez no añaden la misma columna dos veces (ver `migrate`).
 fn ensure_v10_columns(conn: &mut Connection) -> Result<()> {
-    if !table_exists(conn, "meetings")? || !table_exists(conn, "meeting_actions")? || v10_missing(conn)? == (false, false) {
+    let falta = |c: &Connection| -> Result<bool> {
+        Ok(table_exists(c, "meetings")? && table_exists(c, "meeting_actions")? && v10_missing(c)? != (false, false))
+    };
+    if !falta(conn)? {
         return Ok(());
     }
-    let tx = conn.transaction()?;
+    let tx = conn.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+    if !falta(&tx)? {
+        return Ok(()); // la completó otro arranque mientras se esperaba el candado
+    }
     add_v10_columns(&tx)?;
     commit_migration(tx)
 }
@@ -638,6 +630,7 @@ fn fold_contains(hay: &str, needle: &str) -> bool {
 /// y con ella el `base_id` de su base; `borrado_masivo`, la fecha del último «Borrar historial» o
 /// purga por retención hecha desde Pronto (MEDIA 6).
 const META_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT)";
+const USAGE_META_DELETE: &str = "DELETE FROM meta WHERE key IN ('uso_id', 'uso_hasta')";
 
 fn table_exists(conn: &Connection, name: &str) -> rusqlite::Result<bool> {
     conn.query_row("SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)", params![name], |r| r.get(0))
@@ -692,6 +685,7 @@ fn ensure_identity(conn: &Connection) -> rusqlite::Result<()> {
             write_meta(&tx, "restaurada_de", &cur)?;
             write_meta(&tx, "adoptada", &id)?;
             write_meta(&tx, "restaurada_en", &now_iso())?;
+            tx.execute(USAGE_META_DELETE, [])?;
             tx.commit()?;
         }
         Some(_) => {}
@@ -1383,6 +1377,24 @@ fn lineage(conn: &Connection) -> rusqlite::Result<Option<String>> {
 }
 
 /// Datos de un dictado nuevo.
+/// Recuentos de un día para las estadísticas de uso. `apps` lleva los nombres del historial: no sale
+/// nunca tal cual, `uso.rs` solo lo usa para elegir el programa principal de su lista cerrada.
+#[derive(Debug, Default)]
+pub struct DayUsage {
+    pub words: i64,
+    pub dictation_ms: i64,
+    pub dictations: i64,
+    pub meetings: i64,
+    pub meeting_ms: i64,
+    pub apps: Vec<(String, i64)>,
+}
+
+impl DayUsage {
+    pub fn has_use(&self) -> bool {
+        self.dictations > 0 || self.meetings > 0
+    }
+}
+
 pub struct NewHistory<'a> {
     pub polished: bool,
     pub text: &'a str,
@@ -1479,7 +1491,22 @@ impl Db {
         // `journal_size_limit`: tras un volcado el -wal se recorta a 4 MB como mucho; sin él, uno que
         // creció a 24 MB («Borrar historial» de 100 000 filas) se quedaba así para siempre (rompedor
         // 22-oct-c, datos BAJA 8).
-        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA journal_size_limit = 4194304;")?;
+        // Pasar a WAL pide el candado exclusivo y SQLite no llama al `busy_timeout` si otra conexión
+        // está a la vez en ello: de dos arranques a la vez sobre una base nueva, uno fallaba al
+        // instante con «database is locked» (rompedor_sondas, 21-nov). Se reintenta hasta 5 s.
+        let t0 = std::time::Instant::now();
+        loop {
+            match conn.execute_batch("PRAGMA journal_mode = WAL") {
+                Err(rusqlite::Error::SqliteFailure(f, _))
+                    if matches!(f.code, rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+                        && t0.elapsed() < std::time::Duration::from_secs(5) =>
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(20))
+                }
+                r => break r?,
+            }
+        }
+        conn.execute_batch("PRAGMA synchronous = NORMAL; PRAGMA journal_size_limit = 4194304;")?;
         register_fold(&conn)?;
         let before: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
         migrate(&mut conn)?;
@@ -1562,6 +1589,11 @@ impl Db {
         let (mut settings, rejected) = settings_from_value(&value);
         if !rejected.is_empty() {
             eprintln!("[db] ajustes que esta versión no entiende (toman su valor de fábrica): {}", rejected.join(", "));
+        }
+        // Un modelo de Whisper que ya no existe (large-v3 y large-v3-turbo, quitados en BELTR-PRT-12)
+        // pasa al de fábrica (medium).
+        if !crate::whisper::MODELS.iter().any(|m| m.id == settings.whisper_model) {
+            settings.whisper_model = crate::whisper::DEFAULT_MODEL.into();
         }
         if value.get("cleanupLevel").is_none() {
             let fillers = value.get("removeFillers").and_then(|v| v.as_bool());
@@ -1842,6 +1874,7 @@ impl Db {
             let tx = c.transaction()?;
             let new_id = new_base_id(&tx)?;
             write_meta(&tx, "base_id", &new_id)?;
+            tx.execute(USAGE_META_DELETE, [])?; // el código de estadísticas no viaja en las copias
             if let Some(l) = &id {
                 write_meta(&tx, "copia_de", l)?;
             }
@@ -1963,6 +1996,88 @@ impl Db {
             top_apps,
             fixes,
         })
+    }
+
+    // ------------------------------------------------------------ estadísticas de uso (`uso.rs`)
+
+    /// Con el «sí»: código nuevo, y hoy cuenta como enviado: lo dictado antes de aceptar no sale nunca.
+    pub fn usage_start(&self, today: NaiveDate) -> Result<()> {
+        let conn = self.conn.lock();
+        let id = new_base_id(&conn)?;
+        write_meta(&conn, "uso_hasta", &today.to_string())?;
+        write_meta(&conn, "uso_id", &id)?;
+        Ok(())
+    }
+
+    /// Lleva el código al estado de la decisión, solo cuando la decisión cambia.
+    pub fn usage_sync(&self, old: Option<bool>, new: Option<bool>, today: NaiveDate) -> Result<()> {
+        match (old == new, new) {
+            (true, _) => Ok(()),
+            (false, Some(true)) => self.usage_start(today),
+            (false, _) => self.usage_stop(),
+        }
+    }
+
+    /// Al arrancar, decisión guardada y código tienen que cuadrar (copia restaurada, cierre a medias):
+    /// un «sí» sin código se vuelve a preguntar y un código sin «sí» se borra.
+    pub fn usage_reconcile(&self, stored: Option<bool>) -> Result<Option<bool>> {
+        match (stored == Some(true), self.usage_state()?.is_some()) {
+            (true, false) => {
+                self.usage_stop()?;
+                Ok(None)
+            }
+            (false, _) if self.usage_id()?.is_some() => {
+                self.usage_stop()?;
+                Ok(stored)
+            }
+            _ => Ok(stored),
+        }
+    }
+
+    pub fn usage_stop(&self) -> Result<()> {
+        self.conn.lock().execute(USAGE_META_DELETE, [])?;
+        Ok(())
+    }
+
+    pub fn usage_id(&self) -> Result<Option<String>> {
+        Ok(read_meta(&self.conn.lock(), "uso_id")?)
+    }
+
+    /// Código y último día enviado. `None` si no hay permiso o el dato está dañado: no se envía.
+    pub fn usage_state(&self) -> Result<Option<(String, NaiveDate)>> {
+        let conn = self.conn.lock();
+        let Some(id) = read_meta(&conn, "uso_id")? else { return Ok(None) };
+        Ok(read_meta(&conn, "uso_hasta")?.and_then(|d| d.parse().ok()).map(|d| (id, d)))
+    }
+
+    /// Solo si ese código sigue vivo: retirar el permiso con un envío en vuelo no deja restos.
+    pub fn usage_mark_sent(&self, id: &str, day: NaiveDate) -> Result<()> {
+        self.conn.lock().execute(
+            "UPDATE meta SET value = ?1 WHERE key = 'uso_hasta' AND EXISTS (SELECT 1 FROM meta WHERE key = 'uso_id' AND value = ?2)",
+            params![day.to_string(), id],
+        )?;
+        Ok(())
+    }
+
+    pub fn usage_day(&self, day: NaiveDate) -> Result<DayUsage> {
+        let conn = self.conn.lock();
+        // Por rango y no con `substr`: usan los índices y no frenan el guardado de un dictado.
+        let (from, to) = (day.to_string(), (day + Duration::days(1)).to_string());
+        let (words, dictation_ms, dictations) = conn.query_row(
+            "SELECT COALESCE(SUM(words),0), COALESCE(SUM(duration_ms),0), COUNT(*) FROM history WHERE transform IS NULL AND created_at >= ?1 AND created_at < ?2",
+            params![from, to],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        let (meetings, meeting_ms) = conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(duration_ms),0) FROM meetings WHERE started_at >= ?1 AND started_at < ?2",
+            params![from, to],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let mut stmt = conn.prepare(
+            "SELECT app, SUM(words) FROM history WHERE transform IS NULL AND app != '' AND created_at >= ?1 AND created_at < ?2 GROUP BY app",
+        )?;
+        let apps = stmt.query_map(params![from, to], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<_>>()?;
+        Ok(DayUsage { words, dictation_ms, dictations, meetings, meeting_ms, apps })
     }
 
     // ------------------------------------------------------------ diccionario

@@ -1,0 +1,10 @@
+{
+  "nombre": "Pronto 2",
+  "comando": "npm test",
+  "vigilado": [
+    "src-tauri/src",
+    "ui",
+    "tests"
+  ],
+  "minutos": 30
+}

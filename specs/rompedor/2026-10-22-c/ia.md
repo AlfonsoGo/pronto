@@ -5,7 +5,7 @@ Zona: IA e inyección de prompt (rama `fases/2026-10-22`). Sondas en `src-tauri/
 `#[ignore = "rompedor: …"]`). Ollama: siempre `ollama::fake_server` en 127.0.0.1 con puerto efímero, o un cierre sin red; nunca 11434.
 Cargas: dominios `.invalid`, IBAN de ejemplo de los tests del proyecto y comandos inofensivos (`Start-Process notepad`, `schtasks /query`).
 `%APPDATA%\Pronto2\pronto2.db`: 270336 B, mtime 2026-10-15 21:29:15.377 antes y después. Bases solo `Db::open_memory()`.
-Reproducir: `CARGO_TARGET_DIR=C:/Users/usuario/dev/pt-b cargo test rompedor_ia_ -- --include-ignored --nocapture --test-threads=1`
+Reproducir: `CARGO_TARGET_DIR=C:/Users/Txonso/dev/pt-b cargo test rompedor_ia_ -- --include-ignored --nocapture --test-threads=1`
 Sin `--include-ignored`: 5 passed, 16 ignored.
 
 ## ALTA

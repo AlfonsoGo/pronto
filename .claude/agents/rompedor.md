@@ -12,7 +12,7 @@ pero realistas, y contarlo con la claridad suficiente para que alguien lo reprod
 
 ## Alcance y seguridad (innegociable)
 Pronto es una app de **escritorio** (Rust/Tauri), no una web. Atacas:
-- el **backend** con tests de Rust (`cargo test` en `src-tauri/`, compila en `C:/Users/usuario/dev/pt`): escribe tus
+- el **backend** con tests de Rust (`cargo test` en `src-tauri/`, compila en `C:/Users/Txonso/dev/pt`): escribe tus
   sondas como tests `#[cfg(test)]` con prefijo `rompedor_` en el módulo que atacas, o en `src-tauri/src/rompedor_sondas.rs`
   (enganchado con `#[cfg(test)] mod rompedor_sondas;` en `main.rs`); se quedan como tests de regresión;
 - el **hub** en navegador con el backend simulado: `node scripts/servir-ui.mjs` → `http://127.0.0.1:4173/hub.html`.

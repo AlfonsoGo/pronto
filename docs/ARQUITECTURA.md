@@ -103,6 +103,7 @@ argumentos en camelCase desde JS (`invoke('add_word', { word, replacement })`).
 |---|---|
 | `dictation://state` | `{ state: "idle" \| "listening" \| "handsfree" \| "processing" \| "done" \| "cancelled" \| "error", message?: string }` |
 | `dictation://level` | `{ level: number }` 0..1, ~30 por segundo mientras graba |
+| `dictation://live` | `{ fixed: string, partial: string }` texto en vivo mientras graba, cada ~0,7 s si cambia (Contrato v15) |
 | `dictation://result` | `HistoryItem` (cada dictado nuevo, para que el hub lo pinte arriba) |
 | `engine://status` | `EngineStatus` |
 | `settings://changed` | `Settings` |
@@ -122,6 +123,7 @@ Settings = {
   showFlowBar: boolean,        // Flow bar visible en reposo (Wispr: «Show Flow bar at all times»)
   sounds: boolean,
   muteMusic: boolean,
+  liveText: boolean,           // texto en vivo en la Flow bar (Contrato v15); de fábrica, true
   removeFillers: boolean,
   backtrack: boolean,
   styles: { personal: Tone, work: Tone, email: Tone, other: Tone },  // Tone = "formal"|"casual"|"veryCasual"
@@ -916,6 +918,9 @@ hasta ~20 s a que `pronto.exe` quede libre.
    tooltip «Pronto · actualizar a X.Y.Z» en la bandeja. No hay notificación nativa de Windows (haría falta un
    plugin y su permiso; con el hub cerrado el aviso es el menú y el tooltip de la bandeja). Pulsar el
    elemento abre el hub e inicia la instalación.
+   La Flow bar en reposo se vuelve violeta y respira (4 s, solo transform y opacidad) mientras la versión siga
+   pendiente; al pasar el ratón dice «Actualización lista» y un botón abre el hub. «Más tarde» (`update_dismiss`)
+   lo calla hasta reiniciar o «Buscar ahora». Dictando, grabando o descargando no respira.
 4. **Instalar** (`update_install`, solo si hay una versión pendiente y nadie dicta ni hay una reunión
    grabándose): hilo `pronto-update`:
    - descarga a `%TEMP%\pronto-update\<asset>.part` (solo URLs `https` de `github.com`, `*.github.com` o
@@ -955,6 +960,7 @@ hasta ~20 s a que `pronto.exe` quede libre.
 |---|---|---|
 | `update_status` | — | `UpdateStatus` (sin red) |
 | `update_check` | — | `UpdateStatus`; `Err(String)` si no hay conexión / GitHub limita / respuesta ilegible |
+| `update_dismiss` | — | `()`; «Más tarde»: calla la versión pendiente hasta reiniciar o «Buscar ahora» |
 | `update_install` | — | `()` (vuelve enseguida; avance por `update://progress`). `Err` en los rechazos previos (dictando, reunión en curso, sin versión pendiente, compilación de desarrollo); el mismo texto sale por `update://progress` con `state: "error"` |
 
 ## Eventos
@@ -963,6 +969,7 @@ hasta ~20 s a que `pronto.exe` quede libre.
 |---|---|
 | `update://available` | `UpdateInfo` (cada consulta que encuentra una versión nueva; la UI lo deduplica por versión) |
 | `update://progress` | `UpdateProgress` (~8/s al descargar; uno al verificar; `installing` justo antes de cerrar; `error`) |
+| `update://changed` | `UpdateStatus` (cambia la versión pendiente, «Más tarde» o «Buscar ahora»; la Flow bar lo usa para respirar o dejar de hacerlo) |
 
 ## Tipos
 
@@ -1305,7 +1312,7 @@ Pedido de Txonso: más velocidad sin perder calidad. Medidas en `specs/velocidad
   graba, con tope de 2 min; `Controller::finish_recording` lo suelta antes de transcribir.
 - `src-tauri/vendor/whisper-rs-sys` (con `[patch.crates-io]`): whisper.cpp no repite el encoder tras la detección
   de idioma con «auto» (`PRONTO.md`). Carpeta de compilación corta obligatoria (MAX_PATH): con
-  `CARGO_TARGET_DIR=C:/Users/usuario/dev/pt-v` falla; `pt` o `v` sí.
+  `CARGO_TARGET_DIR=C:/Users/Txonso/dev/pt-v` falla; `pt` o `v` sí.
   `whisper::tests::vendor_whisper_sin_cambios_ajenos` fija la huella SHA-256 del árbol vendor (sin `PRONTO.md` ni
   `.cargo-ok`, saltos de línea normalizados) y que Cargo.lock lo tome de la ruta: con `[patch]` por ruta Cargo no
   guarda checksum. Al actualizar el vendor a propósito, se cambia la constante.
@@ -1326,3 +1333,166 @@ elija solo entre español e inglés, con español cuando dude. Medidas en `specs
 - Pruebas: `whisper::tests::automatico_es_espanol_o_ingles` y el banco `banco_idioma`
   (`PRONTO_WAVS=…; PRONTO_IDIOMA_ESPERADO=es|en cargo test --release banco_idioma -- --ignored --nocapture --test-threads=1`).
 
+# Contrato v15 · Texto en vivo (BELTR-PRT-10, 19-nov-2026, sin publicar)
+
+Como Wispr Flow o SuperWhisper: mientras se mantiene el atajo, la Flow bar enseña las palabras según se
+dicen. Es solo una vista previa: al soltar, el texto final sale del audio entero, como sin texto en vivo,
+con los dos motores. Ajuste `liveText` (de fábrica, `true`): «Texto en vivo» en Configuración → General.
+Apagado, el dictado es exactamente el de antes.
+
+- **`vivo.rs`** (nuevo). Al empezar a grabar (`state::start`, con el motor listo) arranca el hilo
+  `pronto-vivo`. Cada `TICK` (0,7 s) lee lo grabado desde lo fijado (`audio::Tap`, una vista del búfer del
+  `Recorder` sin pararlo), lo remuestrea a 16 kHz y lo transcribe con `Engine::transcribe_live`.
+  - **Fijar**: `Fijador::corte` busca la última pausa de ≥ 600 ms (energía por tramos de 20 ms con el ruido
+    de fondo aprendido, como `segment.rs`) tras ≥ 160 ms de voz y con ≥ 1,5 s de tramo; corta en su mitad.
+    Ese tramo se transcribe una última vez y queda fijado (`Pieza`): no se vuelve a transcribir, así cada
+    tick transcribe pocos segundos. Sin pausas, a los 4 s (`TRAMO_MAXIMO`; antes 8) se corta por el tramo
+    más silencioso de los últimos 3 s (sin el último medio segundo); si ese tramo no tiene voz
+    (`Fijador::voz_hasta`), se fija sin transcribirlo (Whisper inventa «Gracias.» en el ruido). Un tramo con
+    voz que el motor devuelve sin texto no se fija (se perdería de la vista): va con lo que sigue, no se
+    vuelve a transcribir hasta que el corte avance medio segundo y, pasado el tope, se fija. Con 300 ms se
+    fijaba también en las comas y el motor cerraba con punto («venir. Que me avise»): en `dictado-15s.wav`
+    las comas llevan pausas de 400-560 ms y los puntos de 920-940 ms.
+  - **Ceder el motor**: `transcribe_live` usa `busy.try_lock()` y no espera nunca; si el motor lo tiene otro
+    (un trozo de reunión que estaba a medias, un reintento del hub) o hay un dictado esperando turno, el tick
+    se salta. No marca `last_dictation_end`. La fase 2 de las reuniones ya no empieza trozos mientras se
+    graba un dictado (`wait_dictation_released`), así que no se pisan. Si un tick tarda más de 0,7 s, el
+    siguiente se salta (`proximo_tick`).
+  - Al soltar, el dictado no espera al tick a medias (regla 3). Con Parakeet el tick suelta `busy` antes de
+    decodificar y los dos van a la vez sobre el mismo reconocedor (sherpa-onnx lo admite; mismo texto,
+    medido); su decodificación no se puede cortar, por eso los ticks son de 4 s como mucho. Con Whisper el
+    tick se queda el turno pero se corta en cuanto un dictado lo espera (`Whisper::decode_abortable`, el
+    `abort_callback` crudo de whisper.cpp: el `set_abort_callback_safe` de whisper-rs 0.16 llama mal a la
+    closure y cortaba siempre). Cada llamada al motor mira antes `parar`: tras soltar no empieza ninguna.
+  - Silencio digital (pico < 0,0005, el umbral de micro mudo) no llama al motor.
+  - La vista previa solo transcribe voz (`Fijador::voz_hasta`: ≥ 160 ms por encima del umbral de voz) y
+    corta el silencio de detrás dejando 200 ms: antes la barra enseñaba «Gracias.» al empezar y tras cada
+    pausa.
+  - La vista (`Vista { fixed, partial }`) sale por `dictation://live` solo si cambió y no se ha soltado.
+- **Al soltar** (`state::stop`): `finish_recording` suelta la `Sesion` lo primero (marca `parar`), antes de
+  cerrar la grabación. El hilo no se espera: si había un tick a medias, acaba solo (o se corta, con
+  Whisper), no empieza otra decodificación y su vista ya no se enseña. `transcribe_and_paste` transcribe el
+  audio entero con prioridad (`state::transcribe_heard`, el mismo camino que sin texto en vivo y que el
+  reintento) y sigue la tubería de siempre (huella, texto, pulido, historial con el WAV, pegado).
+  - **Por qué el audio entero** (19-nov, 12 WAV de Txonso, `vivo::banco_vivo`): unir lo fijado con la cola
+    salía peor. Whisper large-v3-turbo inventaba frases en las colas cortas o con silencio y puntuaba cada
+    corte: «Va toda hostia esto.» → «… ¡Gracias!»; «¿Cómo puede ir tan rápido?» → «… Baja, ¿qué tal?» (con el
+    diccionario de pista); «Wow, esto es una pasada, como mola estar así.» → «Whoa. Esto es una pasada, como
+    mola... Estar así. No se hagan nada.». Parakeet solo daba lo mismo en 7 de 12: perdía palabras («Sí,
+    sí.» al final, «Wow» al principio), cambiaba otras («¿verdad?» → «ahora», «Y» → «Yeah») y ponía punto y
+    mayúscula en cada corte, con cualquier pausa (600-1800 ms). Regla: el texto final nunca es peor que el
+    del audio entero.
+- **Flow bar**: `#vivo` encima de la píldora (donde la tarjeta): lo fijado en tinta y lo provisional en gris,
+  dos líneas como mucho (se ve el final). Solo con `listening`/`handsfree`; sigue visible en `processing` y se
+  borra con `done`, `cancelled`, `error` o `idle`. `polishing` no cuenta: solo lo emite un Transform, que
+  enseñaba encima el dictado anterior. Una tarjeta o la vista previa mandan sobre él.
+  `aria-hidden` (cambia cada 0,7 s: el lector oye el resultado final), `pointer-events: none` (no cambia el
+  rectángulo pulsable), todo con `textContent`. Demo: `flowbar.html?demo&vivo`.
+- **Pulido**: el plazo (`aiPolishTimeoutMs`, 6 s de fábrica) y su degradación no cambian. La precarga del
+  pulido (`polish::warm_up` → `ollama::preload_async` con `Preload`) usa ahora el mismo `num_ctx` (4096) que el
+  pulido: sin él Ollama cargaba el modelo con su contexto por defecto y, si no era ese, lo recargaba en el
+  primer pulido, gastando el plazo. Y deja en su caché las instrucciones fijas del prompt (`PROMPT_HEAD`,
+  un token generado; nada del usuario), así el pulido solo lee el dictado.
+- **Medido** (20-nov, Ryzen 7 5800X3D, `cargo test`). `nsn_vivo_soltar_hasta_texto`, `dictado-15s.wav`, de soltar
+  a texto con el tick más largo recién empezado: con ticks de hasta 8 s, p50 1005-1071 ms frente a 966-969 sin
+  texto en vivo (+4-10 %, y 1146 ms en un WAV real de 15,6 s con un tick de 9,1 s); con ticks de hasta 4 s
+  (≈ 305 ms), p50 988 y 1034 ms frente a 938 y 978 (+5-6 %). Esperando al tick serían +300-400 ms. Mismo texto
+  palabra a palabra. Con Whisper, cortando el tick: +27-65 ms (antes, esperándolo, +70-260 ms). Un
+  reconocedor aparte de 1 hilo para la vista previa no compensa: otra copia del modelo (≈ 670 MB), un tick de 3 s tarda 555 ms y
+  el dictado no va más rápido (medido). Banco con los 13 WAV de Txonso (`vivo::banco_vivo`, `--release`,
+  ticks de 8 s): 13/13 iguales al audio entero con Parakeet y con Whisper.
+- Pruebas: `vivo::tests` (cortes, ticks saltados, motor ocupado, tramo con voz sin texto, corte forzado sin
+  voz, soltar sin esperar al tick, nada de motor tras soltar), `asr::tests::el_texto_en_vivo_no_espera_al_motor_ni_cuenta_como_dictado`,
+  `polish::tests::la_precarga_prepara_el_mismo_contexto_y_prompt_que_el_pulido`, `tests/flowbar-vivo.test.mjs`
+  (barra, Transform y ajuste del hub), el segundo test de `tests/no-se-negocia/03-velocidad.test.mjs`,
+  `vivo::vivo_whisper` (`tests/vivo-whisper.test.mjs`) y, a mano con los WAV de Txonso, `vivo::banco_vivo`.
+- Sin probar con micrófono de verdad (las baterías no usan el micro): los umbrales de pausa se midieron con voz
+  sintética de Windows y los 13 WAV de Txonso.
+
+
+# Contrato v16 · Entender y diccionario (BELTR-PRT-11, 20-nov-2026, sin publicar)
+
+Spec y contrato de «hecho»: `specs/features/entender-y-diccionario.md`. Sin cambios de IPC ni de datos.
+
+- **Pasada aproximada del diccionario** (`text::near_pass`, tras `sound_pass` en `dictionary_inner`): ventanas
+  de 1 a 3 palabras seguidas sin signos en medio, unidas y comparadas por clave fonética con distancia de
+  edición (holgura 0 con <5 letras de clave, 1 con 5-7, 2 con ≥8; mismo primer sonido; una sola candidata
+  que gane por ≥1). Cada palabra guardada lleva además claves de cómo se lee en español si está en inglés
+  (`english_readings`: «whisper» → «guisper», «parakeet» → «parakit», «sonnet» → «sonit»). Guardas: una
+  palabra suelta que existe no se toca; al juntar palabras, la última no existe y tiene ≥3 letras, y si alguna
+  existe tiene que sonar igual; 2 palabras, ≤1 letra de diferencia; 3, ninguna; nada con cifras; una palabra
+  con letras de más es otra («chonsos»). Nada del diccionario (tampoco las reglas de antes) toca lo pegado a
+  un enlace, un correo, una ruta o un marcador (`glued_to_link`: «sonet.es», «odoo@x.es»).
+- Tras el pulido se repite la guarda de anclas: si el diccionario convirtiera algo añadido por el modelo en un
+  enlace o una cifra no dichos, se pega sin pulir (regla 7).
+- La palabra buena de un reemplazo también ajusta mayúsculas («github» → «GitHub»).
+- **Vista previa con diccionario**: `vivo::Vista::con_diccionario`; `state::start_live` emite
+  `dictation://live` ya corregido (solo texto, 0 ms de modelo).
+- **El pulido no deshace el diccionario**: `state::finish_dictation` vuelve a pasar `text::apply_dictionary`
+  sobre el texto pulido.
+- **Banco** (`banco_entender.rs`, `tests/banco-entender.test.mjs` en `npm test`): WER, palabras del
+  diccionario bien escritas, inventadas y ms de soltar a texto, en el texto final y en la vista previa, con 20
+  frases TTS (`tests/banco-entender/`) y las 13 grabaciones de Txonso (solo en su PC). Umbrales en
+  `umbrales.json`. Prueba en contra: `texto-corriente.txt` (62 frases con trampas) no cambia nada.
+- Medidas (Parakeet, 20-nov): diccionario 12/25 → 21/25; vista previa 6/25 → 20/25; WER sintéticas 12,2 % →
+  5,6 %; inventadas 8 → 4; voz real sin cambios (WER 10,4 %, 0 inventadas); tiempo igual (p50 ~290 ms, frases
+  de 4 s). Descartado por ahora: palabras con prioridad en el motor (búsqueda en haz de sherpa-onnx): sin
+  `bpe.vocab` no codifica las palabras, quita puntos y mayúsculas y añade 3-25 % de tiempo (consulta a Fable).
+
+# Contrato v16.1 · Whisper solo medium (BELTR-PRT-12, 20-nov-2026, sin publicar)
+
+- Motores: Parakeet (de fábrica) y Whisper medium, small y base. Se quitan large-v3-turbo y large-v3: con la voz
+  de Txonso fallan más que medium (15,7 % y 14,9 % frente a 11,2 %; se comen palabras), ver
+  `tests/banco-entender/whisper-modelos-2026-11-20.txt`. `whisper::DEFAULT_MODEL = "medium"`.
+- Ajustes guardados con un modelo que ya no existe pasan a medium al cargar (`db::load_settings`). Los `.bin`
+  viejos que haya en `%APPDATA%\Pronto2\models\whisper` no se borran.
+
+# Contrato v16 · Pulido en directo, formatos e interruptor a mano (BELTR-PRT-10, 20-nov-2026, sin publicar)
+
+Contrato de «hecho», medidas y decisiones: `specs/features/pulido-en-directo.md`. Línea base:
+`tests/banco-pulido/linea-base-2026-11-20.md`.
+
+- **Segmentos confirmados** (`vivo.rs`). El hilo `pronto-vivo` arranca siempre que el motor está listo (antes,
+  solo con «Texto en vivo»); la vista previa sigue dependiendo de `liveText` (`Opciones::vista`). Antes de
+  cada tick mira lo pendiente desde el último segmento (`Fijador::corte_segmento`): con ≥ 20 s
+  (`SEG_MINIMO`; Whisper 15 s) y una pausa de ≥ 600 ms tras voz, corta en su mitad; sin pausa, a los 40 s
+  (`SEG_TOPE`; Whisper 28 s) en lo más silencioso de los últimos 6 s. Ese trozo se transcribe en el mismo
+  hilo por el camino del dictado (`state::transcribe_heard`, con el turno del motor y la huella de voz) y queda
+  en `Confirmados`. Un dictado de menos de 20 s no se corta nunca.
+  - Por qué 20 s y 600 ms (`banco_pulido::banco_segmentos`, sin tiempo real): con cortes desde 10 s el
+    % de palabras mal de los dictados de ~15 s de FLEURS sube de 8,0 a 9,1 (con 6 s, a 15,2); con 20/600/40
+    los 10 dictados de 2 min de MLS quedan en 5,42 % frente a 5,38 % del audio entero.
+- **Texto anticipado** (solo Parakeet). Si lo pendiente acaba en ≥ 300 ms de silencio tras voz nueva
+  (`Fijador::fin_de_voz`, `FIN_PAUSA`), se transcribe entero en segundo plano con `transcribe_live` (sin el
+  turno: no hace esperar a nadie) + huella de voz, que con Parakeet es lo mismo que `transcribe_heard`. Al
+  soltar (`Confirmados::al_soltar_con`) vale como cola si empieza donde acaba el último segmento y después no
+  hubo voz (≥ 160 ms sobre el umbral de ese momento); si se está anticipando y no se habló después, se espera.
+- **Pulidor de fondo** (`polish::Pulidor`, hilo `pronto-pulidor`, una petición a Ollama cada vez, solo con el
+  pulido encendido): cada segmento confirmado y cada texto anticipado, ya pasados por la tubería local con la
+  app que se tiene delante, se pulen en cuanto existen. Clave: sus palabras sin signos (`words_key`).
+- **Al soltar** (`state::transcribe_and_paste`): espera la confirmación a medias (como mucho 5 s; si no, camino
+  de siempre), transcribe solo la cola (o usa la anticipada) y pasa la tubería por el texto ENTERO, como
+  siempre. `partir_como` lo parte en los mismos trozos (mismas palabras; signos y mayúsculas del entero); si no
+  casan (un snippet o un correo que cruza un corte), se pule todo junto. `polish::apply_pieces` reutiliza lo
+  ya pulido, pule a la vez lo que falte y aplica la regla 7 en dos capas: `accept` por trozo y anclaje +
+  formatos sobre el entero. El plazo (`aiPolishTimeoutMs`) cuenta desde que se suelta. Si algo falla
+  (segmentos con huecos, la cola no se transcribe) se sigue el camino de siempre; el WAV entero se guarda igual
+  (regla 5).
+- **Formatos** (`text::format_spoken` + `text::fix_domains`, en `text::process` antes del diccionario y del
+  pulido; también en la vista previa): correos («arroba», «punto», «guion», «guion bajo», «arrobaempresa.es»),
+  webs («https dos puntos barra barra», «x punto com», «barra x», dominios en minúsculas y sin tildes),
+  teléfonos de 9 cifras («618-785-522», «91 456 7890», cifras dichas una a una, «más treinta y cuatro») en
+  grupos de 3, «asterisco»/«almohadilla» junto a cifras o una palabra («*101#», «#2», «#verano»), horas tras
+  «la»/«las» («5:30», «17:45», «9:45» para «diez menos cuarto»), «N euros con M» → «N,MM euros», «N por
+  ciento» → «N%». Cada regla pide contexto y, si duda, no toca nada («un asterisco», «una almohadilla nueva»,
+  «este punto es», «uno, dos, tres», «veintiuna líneas»). `fix_domains`: tras «@» o en un enlace, un nombre a 1
+  letra (o al que le faltan 2) de un proveedor de correo conocido o de una palabra del diccionario se corrige
+  («otmail» → «hotmail», «gitu» → «github»). El pulido no puede cambiar lo que escribieron (`formats_kept`).
+- **Interruptor** (`ui/hub/pages/home.js`): cuarta casilla de «Mantén pulsadas … y habla» en Dictado, con
+  `switchHtml('aiPolish')`; un clic guarda `aiPolish`. La Flow bar (`flowbar.js`, `#hot[data-polish]`) pinta
+  un punto violeta en la píldora, y su `aria-label` y el aviso de reposo dicen «pulido con IA».
+- **Pruebas**: `npm test` añade `banco-formatos`, `banco-internet` (30 FLEURS), `velocidad-pulido` (4
+  dictados de ~15 s, en directo frente a antes en la misma tanda) y `pulido-interruptor`; `npm run
+  test:lento` mide los 10 de ~15 s y los 10 de 2 min a ritmo real con Ollama de verdad. Audios de internet
+  fuera del repo (`PRONTO_INTERNET`, por defecto `C:\Users\Txonso\dev\pronto-pruebas\datos\internet`, con su
+  `MANIFIESTO.md`).

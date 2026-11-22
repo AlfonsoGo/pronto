@@ -5,7 +5,7 @@ Zona: IA, segunda pasada (rama `fases/2026-10-22`, 2f78f7f). Objetivo: el **ancl
 Sondas nuevas: `src-tauri/src/rompedor_ia.rs`, sección «Segunda pasada», 23 tests `rompedor_ia2_*`, todos con `#[ignore = "rompedor: …"]` porque los 23 reproducen.
 
 Reproducir:
-- `CARGO_TARGET_DIR=C:/Users/usuario/dev/pt-e cargo test rompedor_ia2_ -- --include-ignored --nocapture --test-threads=1` → 23 failed.
+- `CARGO_TARGET_DIR=C:/Users/Txonso/dev/pt-e cargo test rompedor_ia2_ -- --include-ignored --nocapture --test-threads=1` → 23 failed.
 - `cargo test rompedor_ia` (sin `--include-ignored`) → 22 passed (las de la primera pasada), 23 ignored.
 
 Cargas: dominios `.invalid`, IBAN de ejemplo de los tests del proyecto, comandos inofensivos.

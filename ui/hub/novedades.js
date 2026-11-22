@@ -11,6 +11,37 @@ export const WEB = 'pronto.beltranlabs.com';
 
 export const RELEASES = [
   {
+    version: '2.3.2', month: '2026-11',
+    es: { title: 'Ningún dictado perdido', intro: 'Arreglos tras probar Pronto con el ordenador muy cargado: lo que dices ya no se pierde, y los correos salen mejor escritos.' },
+    en: { title: 'No dictation lost', intro: 'Fixes after testing Pronto on a very busy computer: what you say is no longer lost, and email addresses come out better.' },
+    highlights: [
+      { icon: 'shield-check',
+        probar: { page: 'home', hint: { es: 'Dicta como siempre: si algo falla, el dictado queda en el historial con su audio.', en: 'Dictate as usual: if something fails, the dictation stays in your history with its audio.' } },
+        es: { t: 'Lo que dices no se pierde', d: 'Con el motor Whisper, algunas frases dichas con voz clara salían vacías. Ya no. Y si vuelves a pulsar el atajo mientras se escribe lo anterior, se graba lo nuevo y salen los dos, en orden.', breve: 'ningún dictado se queda vacío ni sin grabar' },
+        en: { t: 'What you say is not lost', d: 'With the Whisper engine, some clearly spoken sentences came out empty. Not anymore. And if you press the shortcut again while the previous one is being written, the new one is recorded and both come out, in order.', breve: 'no dictation comes out empty or unrecorded' } },
+      { icon: 'mic',
+        probar: { page: 'home', hint: { es: 'Di «ana punto lopez arroba gmail punto com».', en: 'Say “ana punto lopez arroba gmail punto com”.' } },
+        es: { t: 'Correos mejor escritos', d: 'Cuando dices un correo con «arroba» y «punto», Pronto lo escribe como correo más veces, también con Whisper.', breve: 'correos dichos con «arroba» mejor escritos' },
+        en: { t: 'Email addresses written better', d: 'When you say an address with “arroba” and “punto”, Pronto writes it as an email more often, Whisper included.', breve: 'spoken email addresses written better' } },
+      { icon: 'sparkles',
+        probar: { page: 'home', hint: { es: 'Está junto al pulido, en la página Dictado.', en: 'It is next to polish, on the Dictation page.' } },
+        es: { t: 'Texto en vivo a un clic', d: 'Enciende o apaga ver tus palabras en la barra mientras hablas desde la página Dictado.', breve: 'enciéndelo o apágalo desde la página Dictado' },
+        en: { t: 'Live text in one click', d: 'Turn seeing your words in the bar while you speak on or off from the Dictation page.', breve: 'turn it on or off from the Dictation page' } },
+    ],
+    improved: [
+      { es: 'La barra dice «Transcribiendo…» cuando el texto tarda en llegar.', en: 'The bar says “Transcribing…” when the text takes a while.' },
+      { es: 'El candado de la barra ya no se esconde antes de llegar a él con el ratón.', en: 'The bar’s lock no longer hides before your mouse reaches it.' },
+      { es: 'Win + Alt + Espacio termina el manos libres a la segunda pulsación.', en: 'Win + Alt + Space ends hands-free on the second press.' },
+      { es: 'La barra avisa cuando hay una versión nueva lista para instalar.', en: 'The bar tells you when a new version is ready to install.' },
+      { es: 'Estadísticas de uso, solo si dices que sí: números y nombres de programas, nunca lo que dictas.', en: 'Usage statistics, only if you say yes: numbers and program names, never what you dictate.' },
+    ],
+    fixed: [
+      { es: 'Con un ruido de fondo y sin hablar, Whisper ya no se inventa frases.', en: 'With background noise and no speech, Whisper no longer makes up sentences.' },
+      { es: 'Dos arranques a la vez ya no pueden dejar la base de datos sin abrir.', en: 'Two starts at once can no longer leave the database unable to open.' },
+      { es: 'Si sigues pulsando teclas, el texto no se pega a medias: queda en el historial y te avisa.', en: 'If keys are still held down, text is not half-pasted: it stays in history and you are told.' },
+    ],
+  },
+  {
     version: '2.3.1', month: '2026-10',
     es: { title: 'Arreglos de la 2.3', intro: 'Una versión pequeña tras revisar la 2.3.0 con usuarios nuevos y pruebas de rotura.' },
     en: { title: '2.3 fixes', intro: 'A small release after reviewing 2.3.0 with new users and break-it tests.' },

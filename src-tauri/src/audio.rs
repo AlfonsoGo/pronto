@@ -51,25 +51,65 @@ pub(crate) fn pick_device(host: &cpal::Host, name: Option<&str>) -> Option<cpal:
 pub struct Recorder {
     stop_tx: Sender<()>,
     join: Option<JoinHandle<Vec<f32>>>,
+    tap: Tap,
+}
+
+/// Vista de solo lectura del audio que se está grabando, para el texto en vivo (`vivo.rs`): copia lo
+/// grabado desde una posición sin parar la grabación. El audio va a la frecuencia nativa del micro.
+#[derive(Clone)]
+pub struct Tap {
+    buf: Arc<Mutex<Vec<f32>>>,
+    rate: u32,
+}
+
+impl Tap {
+    /// Frecuencia nativa del micrófono.
+    pub fn rate(&self) -> u32 {
+        self.rate
+    }
+
+    /// Copia de lo grabado desde la muestra nativa `from` (vacía si aún no hay tanto, o si ya se paró).
+    pub fn since(&self, from: usize) -> Vec<f32> {
+        let b = self.buf.lock();
+        b.get(from..).map(<[f32]>::to_vec).unwrap_or_default()
+    }
+
+    /// Una vista sobre audio ya grabado (pruebas).
+    #[cfg(test)]
+    pub fn from_samples(samples: Vec<f32>, rate: u32) -> Self {
+        Self { buf: Arc::new(Mutex::new(samples)), rate }
+    }
+
+    /// Un micrófono falso que va creciendo: el test añade audio al búfer devuelto a su ritmo (pruebas).
+    #[cfg(test)]
+    pub fn creciente(rate: u32) -> (Self, Arc<Mutex<Vec<f32>>>) {
+        let buf = Arc::new(Mutex::new(Vec::new()));
+        (Self { buf: buf.clone(), rate }, buf)
+    }
 }
 
 impl Recorder {
     /// Abre el micrófono y empieza a grabar. Devuelve cuando el stream ya está en marcha.
     pub fn start(mic: Option<String>, on_level: LevelFn) -> Result<Self, String> {
         let (stop_tx, stop_rx) = bounded::<()>(1);
-        let (ready_tx, ready_rx) = bounded::<Result<(), String>>(1);
+        let (ready_tx, ready_rx) = bounded::<Result<Tap, String>>(1);
         let join = std::thread::Builder::new()
             .name("pronto-audio".into())
             .spawn(move || run(mic, on_level, stop_rx, ready_tx))
             .map_err(|e| format!("no se pudo lanzar el hilo de audio: {e}"))?;
         match ready_rx.recv_timeout(Duration::from_secs(6)) {
-            Ok(Ok(())) => Ok(Self { stop_tx, join: Some(join) }),
+            Ok(Ok(tap)) => Ok(Self { stop_tx, join: Some(join), tap }),
             Ok(Err(e)) => Err(e),
             Err(_) => {
                 let _ = stop_tx.send(());
                 Err("el micrófono no respondió".into())
             }
         }
+    }
+
+    /// Lo grabado hasta ahora, sin parar (texto en vivo).
+    pub fn tap(&self) -> Tap {
+        self.tap.clone()
     }
 
     /// Para y devuelve el audio mono a 16 kHz.
@@ -86,7 +126,7 @@ impl Drop for Recorder {
     }
 }
 
-fn run(mic: Option<String>, on_level: LevelFn, stop_rx: crossbeam_channel::Receiver<()>, ready_tx: Sender<Result<(), String>>) -> Vec<f32> {
+fn run(mic: Option<String>, on_level: LevelFn, stop_rx: crossbeam_channel::Receiver<()>, ready_tx: Sender<Result<Tap, String>>) -> Vec<f32> {
     let host = cpal::default_host();
     let Some(device) = pick_device(&host, mic.as_deref()) else {
         let _ = ready_tx.send(Err("No se encontró ningún micrófono".into()));
@@ -125,7 +165,7 @@ fn run(mic: Option<String>, on_level: LevelFn, stop_rx: crossbeam_channel::Recei
         let _ = ready_tx.send(Err(format!("No se pudo iniciar la captura: {e}")));
         return Vec::new();
     }
-    let _ = ready_tx.send(Ok(()));
+    let _ = ready_tx.send(Ok(Tap { buf: buf.clone(), rate }));
 
     // Bloquea hasta `stop` (o hasta que se descarte el Recorder).
     let _ = stop_rx.recv();

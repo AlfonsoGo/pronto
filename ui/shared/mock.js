@@ -130,15 +130,15 @@ let settings = {
   hotkeyTransform: hk({ alt: true, shift: true, key: 'P' }),
   micName: null, language: 'auto', appLanguage: qs.get('lang') === 'en' ? 'en' : 'es',
   modelDir: 'C:\\Users\\Alfonso\\AppData\\Roaming\\Pronto\\Pronto\\models\\parakeet',
-  asrEngine: 'parakeet', whisperModel: 'large-v3-turbo',
-  launchAtLogin: true, showFlowBar: true, sounds: true, muteMusic: true,
+  asrEngine: 'parakeet', whisperModel: 'medium',
+  launchAtLogin: true, showFlowBar: true, sounds: true, muteMusic: true, liveText: true,
   removeFillers: true, backtrack: true,
   styles: { personal: 'casual', work: 'casual', email: 'formal', other: 'casual' },
   historyRetentionDays: 0, firstName: 'Alfonso', cleanupLevel: 'medium', pressEnterCommand: false,
   ollamaUrl: 'http://localhost:11434', ollamaModel: 'qwen3:1.7b', keepAudioDays: 14,
   theme: qs.get('theme') === 'light' ? 'light' : 'dark', flowBarHiddenUntil: null,
   flowBarMonitor: qs.get('pinned') ? `\\\\.\\DISPLAY${qs.get('pinned')}` : null, flowBarMonitorRect: null,
-  autoUpdate: true,
+  autoUpdate: true, usageStats: qs.has('uso') ? null : false,
   hotkeyMeeting: hk({ win: true, alt: true, key: 'M' }), meetingAuto: qs.get('auto') === 'ask' ? 'ask' : 'auto', meetingAutoConfirmed: false, meetingKeepAudio: false,
   aiPolish: qs.get('polish') === 'on', aiPolishModel: 'qwen3:1.7b', aiPolishTimeoutMs: 6000,
 };
@@ -168,9 +168,7 @@ let model = {
 };
 // Modelos de Whisper (como `whisper::MODELS` + `present`). La descarga simulada los marca presentes.
 const WHISPER = [
-      { id: 'large-v3-turbo', name: 'Whisper large-v3-turbo', desc: 'El más rápido de los grandes: casi la precisión de large-v3 a varias veces su velocidad. El recomendado con tarjeta gráfica.', file: 'ggml-large-v3-turbo-q5_0.bin', mb: 574, present: true, available: true, reason: null, minVramGb: 3, wer: 4.2, speed: 5 },
-      { id: 'large-v3', name: 'Whisper large-v3', desc: 'El más grande de Whisper: el que mejor aguanta ruido y acentos. Dos o tres veces más lento que turbo y más pesado.', file: 'ggml-large-v3-q5_0.bin', mb: 1081, present: false, available: true, reason: null, minVramGb: 4, wer: 3.8, speed: 2 },
-      { id: 'medium', name: 'Whisper medium', desc: 'El que menos se equivocó en las pruebas de reuniones, pero lento. Para tarjetas de 2 GB.', file: 'ggml-medium-q5_0.bin', mb: 539, present: false, available: true, reason: null, minVramGb: 2, wer: 3.4, speed: 2 },
+      { id: 'medium', name: 'Whisper medium', desc: 'El que menos se equivocó en las pruebas de reuniones, pero lento. Para tarjetas de 2 GB.', file: 'ggml-medium-q5_0.bin', mb: 539, present: true, available: true, reason: null, minVramGb: 2, wer: 3.4, speed: 2 },
       { id: 'small', name: 'Whisper small', desc: 'Ligero y rápido, para tarjetas pequeñas (1 GB). Algo menos preciso que los grandes.', file: 'ggml-small-q5_1.bin', mb: 190, present: false, available: true, reason: null, minVramGb: 1, wer: 4.0, speed: 4 },
       { id: 'base', name: 'Whisper base', desc: 'El mínimo: 60 MB y muy rápido, pero el que más se equivoca. Para equipos muy justos.', file: 'ggml-base-q5_1.bin', mb: 59, present: false, available: true, reason: null, minVramGb: 1, wer: null, speed: 5 },
 ];
@@ -813,9 +811,11 @@ const commands = {
   // Como el backend (commands.rs): Ollama solo en este PC (decisión de Txonso, 23-oct-2026), una dirección de otro equipo se rechaza y no se guarda.
   save_settings: ({ settings: s }) => {
     if (s.ollamaUrl !== settings.ollamaUrl && !ollamaUrlIsLocal(s.ollamaUrl)) throw 'Pronto solo usa Ollama en este PC (localhost o 127.0.0.1). La dirección «' + String(s.ollamaUrl || '').trim().slice(0, 80) + '» no es de este equipo y tus dictados y reuniones tendrían que salir del PC para llegar a ella.';
-    settings = { ...settings, ...clone(s) }; emit('settings://changed', settings);
+    settings = { ...settings, ...clone(s), usageStats: settings.usageStats }; emit('settings://changed', settings);
   },
+  set_usage_stats: ({ enabled }) => { settings = { ...settings, usageStats: enabled }; emit('settings://changed', settings); },
   open_error_log: () => {},
+  usage_id: () => (settings.usageStats === true ? 'b7f3c9d2-4e1a-4c8b-9f60-2d1e7a5c3b10' : null),
   app_info: () => ({ version: '2.3.1', test: new URLSearchParams(location.search).has('pruebas') }),
   list_mics: () => ['Micrófono (Realtek High Definition Audio)', 'Auriculares (Jabra Evolve2 65)', 'Entrada de línea (USB Audio Device)'],
   get_stats: () => stats(),
@@ -912,6 +912,7 @@ const commands = {
   },
   update_status: () => clone(upd),
   update_check: async () => {
+    upd = { ...upd, dismissed: null };
     await delay(700);
     if (UPD === 'offline') throw 'No se pudo conectar con GitHub: sin conexión';
     const found = UPD === 'available' || UPD === 'event' || UPD === 'error';
@@ -923,6 +924,7 @@ const commands = {
     return clone(upd);
   },
   update_install: () => { fakeUpdateInstall(); },
+  update_dismiss: () => { upd = { ...upd, dismissed: upd.info && upd.info.version }; emit('update://changed', clone(upd)); },
   retry_history: ({ id }) => {
     const h = history.find((x) => x.id === id); if (!h) throw 'No existe';
     if (!h.hasAudio) throw 'El audio ya no está disponible.';

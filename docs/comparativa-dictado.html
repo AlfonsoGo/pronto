@@ -1,0 +1,251 @@
+<title>Pronto frente a Wispr, SuperWhisper y Claude</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@500;600&display=swap">
+<style>
+/* Hoja de comparación: una cabecera con el veredicto, tres bloques (velocidad, privacidad, entender), las cifras medidas de Pronto y las fuentes. */
+:root {
+  --bg: #F5F6F8; --surface: #FFFFFF; --fg: #15181D; --muted: #5A6170; --line: #DDE1E8;
+  --accent: #2B55D9; --accent-soft: #E7EDFD; --good: #17704A; --good-soft: #E3F3EA;
+  --warn: #9A5806; --warn-soft: #FBEFDC; --bad: #A3302A; --bad-soft: #FBE7E5;
+  --display: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  --body: "Inter", "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #0F1216; --surface: #171B21; --fg: #E9ECF1; --muted: #9AA3B3; --line: #2A313B;
+  --accent: #8AA6FF; --accent-soft: #1E2945; --good: #5BC995; --good-soft: #15291F;
+  --warn: #E8AE57; --warn-soft: #2D2312; --bad: #F08A80; --bad-soft: #2F1A18; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #0F1216; --surface: #171B21; --fg: #E9ECF1; --muted: #9AA3B3; --line: #2A313B;
+  --accent: #8AA6FF; --accent-soft: #1E2945; --good: #5BC995; --good-soft: #15291F;
+  --warn: #E8AE57; --warn-soft: #2D2312; --bad: #F08A80; --bad-soft: #2F1A18; color-scheme: dark }
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--body); font-size: 16px; line-height: 1.6; }
+.wrap { max-width: 1040px; margin: 0 auto; padding-block: 40px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 40px; }
+h1, h2, h3 { font-family: var(--display); font-weight: 600; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(28px, 4.5vw, 40px); line-height: 1.15; }
+h2 { font-size: 24px; }
+h3 { font-size: 17px; }
+p { margin: 0; max-width: 68ch; }
+.eyebrow { font-size: 12px; letter-spacing: .08em; text-transform: uppercase; color: var(--muted); font-weight: 500; }
+.lead { color: var(--muted); font-size: 17px; }
+header { display: grid; gap: 14px; }
+.verdict { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.verdict div { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 6px; min-width: 0; }
+.verdict b { font-family: var(--display); font-size: 15px; }
+.verdict span { color: var(--muted); font-size: 14px; }
+section { display: grid; gap: 16px; }
+.table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); }
+table { border-collapse: collapse; width: 100%; min-width: 720px; font-size: 14px; }
+th, td { text-align: left; vertical-align: top; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+tr:last-child td { border-bottom: 0; }
+thead th { font-family: var(--display); font-weight: 500; font-size: 14px; background: var(--bg); }
+tbody th { font-weight: 500; color: var(--muted); width: 150px; }
+td.pronto { background: var(--accent-soft); }
+thead th.pronto { color: var(--accent); }
+.chip { display: inline-block; font-size: 12px; font-weight: 500; padding: 1px 8px; border-radius: 999px; margin-right: 6px; white-space: nowrap; }
+.si { background: var(--good-soft); color: var(--good); }
+.no { background: var(--bad-soft); color: var(--bad); }
+.medio { background: var(--warn-soft); color: var(--warn); }
+.np { color: var(--muted); font-style: italic; }
+sup a { color: var(--accent); text-decoration: none; font-size: 11px; }
+.medidas { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.medida { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 16px; display: grid; gap: 8px; min-width: 0; }
+.medida .num { font-family: var(--display); font-size: 28px; font-variant-numeric: tabular-nums; }
+.medida .antes { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+.bar { height: 8px; border-radius: 4px; background: var(--line); overflow: hidden; }
+.bar i { display: block; height: 100%; background: var(--accent); }
+.nota { border-left: 3px solid var(--warn); padding: 4px 0 4px 14px; color: var(--muted); font-size: 14px; }
+ol.fuentes { margin: 0; padding-left: 20px; display: grid; gap: 4px; font-size: 14px; color: var(--muted); }
+ol.fuentes a { color: var(--accent); word-break: break-all; }
+a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+
+<div class="wrap">
+  <header>
+    <span class="eyebrow">Comparativa · 20 de noviembre de 2026</span>
+    <h1>Pronto 2 frente a Wispr Flow, SuperWhisper y el micrófono de Claude</h1>
+    <p class="lead">Tres preguntas: ¿va rápido?, ¿mi voz sale del ordenador? y ¿entiende lo que digo? Las cifras de Pronto las medimos hoy en tu PC. Las de las otras apps salen de lo que publican ellas mismas o de reseñas, con la fuente al lado.</p>
+    <div class="verdict">
+      <div><b>Privacidad</b><span>Pronto y SuperWhisper (en modo local) son los únicos donde ni la voz ni el texto salen del PC. Wispr siempre usa la nube.</span></div>
+      <div><b>Velocidad</b><span>Pronto escribe en unos 0,3 s una frase corta y, con el pulido de IA encendido, un dictado de 15 s en 1,5 s y uno de 2 minutos en 2,4 s. Wispr promete menos de 0,7 s. SuperWhisper y Claude no publican una cifra.</span></div>
+      <div><b>Entender</b><span>Ninguna de las tres publica cuánto acierta en español. Pronto sí lo mide: 21 de 25 palabras del diccionario bien escritas.</span></div>
+    </div>
+  </header>
+
+  <section>
+    <h2>Las cuatro, lado a lado</h2>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr><th scope="col"></th><th scope="col" class="pronto">Pronto 2</th><th scope="col">Wispr Flow</th><th scope="col">SuperWhisper</th><th scope="col">Micrófono de Claude</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <th scope="row">De soltar a texto</th>
+            <td class="pronto">Frase de 4 s: <b>0,29 s</b>. Dictado de 15 s: entre 0,8 y 1,1 s. Con el pulido de IA, que ahora va mientras hablas: 15 s en <b>1,5 s</b> y 2 min en <b>2,4 s</b> (antes, 12,5 s). Medido en tu PC.</td>
+            <td>Objetivo de la empresa: menos de 0,7 s<sup><a href="#w3">W3</a></sup><sup><a href="#w4">W4</a></sup>. Sin medida independiente.</td>
+            <td><span class="np">No publicado en segundos.</span> Dan la velocidad del motor en veces el tiempo real<sup><a href="#s3">S3</a></sup>.</td>
+            <td><span class="np">No publicado.</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Texto mientras hablas</th>
+            <td class="pronto"><span class="chip si">Sí</span>La barra enseña las palabras. El texto final sale del audio entero, para no inventar.</td>
+            <td><span class="chip no">No</span>Escribe al terminar<sup><a href="#w5">W5</a></sup>.</td>
+            <td><span class="chip medio">Solo Pro</span>En Windows, solo un modelo en pruebas<sup><a href="#s4">S4</a></sup>.</td>
+            <td><span class="chip medio">En parte</span>Sí en Claude Code<sup><a href="#c3">C3</a></sup> y en el acceso rápido de Mac<sup><a href="#c4">C4</a></sup>.</td>
+          </tr>
+          <tr>
+            <th scope="row">¿La voz sale del PC?</th>
+            <td class="pronto"><span class="chip si">No sale</span>Todo se hace en tu ordenador, también el pulido con IA.</td>
+            <td><span class="chip no">Sí sale</span>Siempre se transcribe en la nube<sup><a href="#w2">W2</a></sup>.</td>
+            <td><span class="chip si">Tú eliges</span>Con modelos locales no sale nada<sup><a href="#s5">S5</a></sup>.</td>
+            <td><span class="chip no">Sí sale</span>Claude Code la manda a Anthropic<sup><a href="#c3">C3</a></sup>. El audio se borra tras pasarlo a texto<sup><a href="#c2">C2</a></sup>.</td>
+          </tr>
+          <tr>
+            <th scope="row">¿Entrenan con tu voz?</th>
+            <td class="pronto">No. No hay a dónde mandarla.</td>
+            <td>Sí, si tienes activado compartir datos<sup><a href="#w2">W2</a></sup>.</td>
+            <td>Dicen que no<sup><a href="#s5">S5</a></sup>.</td>
+            <td>Solo si tú lo activas<sup><a href="#c1">C1</a></sup>.</td>
+          </tr>
+          <tr>
+            <th scope="row">Diccionario propio</th>
+            <td class="pronto">Sí: palabras, cambios A→B, grabar cómo suena y huella de voz. Desde hoy también arregla palabras partidas o casi iguales.</td>
+            <td>Sí: palabras y cambios A→B, palabra completa<sup><a href="#w6">W6</a></sup>.</td>
+            <td>Sí, también en el plan gratis<sup><a href="#s2">S2</a></sup>.</td>
+            <td><span class="np">No publicado.</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Cuánto acierta</th>
+            <td class="pronto">Medido hoy: 5,6 % de palabras mal en frases de prueba y 10,4 % con tu voz real.</td>
+            <td><span class="np">No publicado.</span></td>
+            <td>Publican de 6,6 % a 20,3 % de palabras mal según el modelo, sin decir el idioma<sup><a href="#s3">S3</a></sup>.</td>
+            <td><span class="np">No publicado.</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Correos, teléfonos y horas</th>
+            <td class="pronto">Reglas en tu PC, antes del pulido: «ana arroba gmail punto com» → ana@gmail.com, «seis uno ocho…» → 618 785 522, «a las cinco y media» → 5:30, «asterisco 101 almohadilla» → *101#. Medido: 31 de 40 dictados bien escritos (antes, 13). Los 9 que fallan son palabras mal oídas, no formato.</td>
+            <td>Lo hace su IA al dar formato; no publica reglas para el español<sup><a href="#w7">W7</a></sup>.</td>
+            <td>Con IA en los modos Super y Message; los símbolos (@, /, #), con reemplazos que pones tú<sup><a href="#s6">S6</a></sup><sup><a href="#s7">S7</a></sup>.</td>
+            <td><span class="np">No publicado.</span></td>
+          </tr>
+          <tr>
+            <th scope="row">Motor y su acierto publicado en español</th>
+            <td class="pronto">Parakeet TDT 0.6B v3 (NVIDIA): 3,45 % de palabras mal en FLEURS y 4,39 % en MLS, publicado por NVIDIA<sup><a href="#m1">M1</a></sup>. Common Voice: sin cifra publicada. Medido aquí con 30 audios de FLEURS y 10 de MLS: 6,2 % y 5,4 % de palabras mal (contando cifras y signos tal cual; con su norma, NVIDIA da 3,45 % y 4,39 %).</td>
+            <td>Motor propio en la nube (Canto y otros); <span class="np">sin cifra publicada</span><sup><a href="#w8">W8</a></sup>.</td>
+            <td>Varios a elegir. Whisper large-v3: 3,12 % en FLEURS y 4,89 % en MLS<sup><a href="#m1">M1</a></sup>; Whisper medium: 3,6 % en FLEURS y 6,9 % en Common Voice 9<sup><a href="#m2">M2</a></sup>. También ofrece Parakeet.</td>
+            <td>Motor sin nombrar, en la nube; <span class="np">sin cifra publicada</span><sup><a href="#c2">C2</a></sup>.</td>
+          </tr>
+          <tr>
+            <th scope="row">Precio</th>
+            <td class="pronto">App propia de BeltranLabs.</td>
+            <td>Gratis limitado. Pro: 15 $/mes<sup><a href="#w1">W1</a></sup>.</td>
+            <td>Gratis con modelos locales. Pro: 8,49 $/mes<sup><a href="#s2">S2</a></sup>.</td>
+            <td>Incluido en todos los planes<sup><a href="#c1">C1</a></sup>.</td>
+          </tr>
+          <tr>
+            <th scope="row">Windows</th>
+            <td class="pronto"><span class="chip si">Sí</span></td>
+            <td><span class="chip si">Sí</span><sup><a href="#w1">W1</a></sup></td>
+            <td><span class="chip si">Sí</span><sup><a href="#s1">S1</a></sup></td>
+            <td><span class="chip si">Sí</span>El acceso rápido solo en Mac<sup><a href="#c4">C4</a></sup>.</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="nota">«No publicado» quiere decir que no aparece en las páginas que leímos. No quiere decir que no exista. Ninguna de las tres publica una cifra de acierto en español.</p>
+  </section>
+
+  <section>
+    <h2>Lo que medimos en Pronto, antes y después de hoy</h2>
+    <p>Usamos 20 frases con palabras de tu diccionario (BeltranLabs, GitHub, Claqueta, Parakeet, Txonso, Ollama, Supabase, Odoo, Sonnet, Whisper), leídas por la voz de Windows, y tus 13 grabaciones reales. Motor: Parakeet, el que viene de fábrica.</p>
+    <div class="medidas">
+      <div class="medida">
+        <span class="eyebrow">Palabras del diccionario bien escritas</span>
+        <span class="num">21 de 25</span>
+        <div class="bar" aria-hidden="true"><i style="width:84%"></i></div>
+        <span class="antes">Antes: 12 de 25. Whisper, antes: 17.</span>
+      </div>
+      <div class="medida">
+        <span class="eyebrow">Diccionario en la barra en vivo</span>
+        <span class="num">20 de 25</span>
+        <div class="bar" aria-hidden="true"><i style="width:80%"></i></div>
+        <span class="antes">Antes: 6 de 25. Salía «Chonso» y «Oyama».</span>
+      </div>
+      <div class="medida">
+        <span class="eyebrow">Palabras mal (frases de prueba)</span>
+        <span class="num">5,6 %</span>
+        <div class="bar" aria-hidden="true"><i style="width:5.6%"></i></div>
+        <span class="antes">Antes: 12,2 %. Con tu voz real: 10,4 %, igual que antes.</span>
+      </div>
+      <div class="medida">
+        <span class="eyebrow">Palabras inventadas</span>
+        <span class="num">4</span>
+        <div class="bar" aria-hidden="true"><i style="width:2%"></i></div>
+        <span class="antes">Antes: 8. Con tu voz real: 0 antes y 0 ahora.</span>
+      </div>
+    </div>
+    <p class="nota">Las 4 «inventadas» que quedan salen de palabras guardadas que Parakeet parte en varias («Pero aquí te» por «Parakeet», «o dou» por «Odoo»). El arreglo de hoy no las toca a propósito: preferimos dejar una palabra mal antes que cambiar una palabra corriente. Un texto de 62 frases normales con trampas («olla», «sonata», «su pavo», «Beltrán las veces», un correo y un dominio) pasa por el diccionario sin un solo cambio.</p>
+  </section>
+
+  <section>
+    <h2>Pulido en directo, formatos y entender (20 de noviembre, tarde)</h2>
+    <p>Con el pulido de IA encendido (Ollama, qwen3:1.7b). Audios de internet: 30 cortos de FLEURS y 10 largos de 2 minutos de MLS (licencia CC-BY 4.0), y 40 dictados con correos, teléfonos y horas leídos por voces locales.</p>
+    <div class="medidas">
+      <div class="medida">
+        <span class="eyebrow">Dictado de 2 min: de soltar a pegado</span>
+        <span class="num">2,4 s</span>
+        <div class="bar" aria-hidden="true"><i style="width:19%"></i></div>
+        <span class="antes">Antes: 12,5 s. Se pule por trozos mientras hablas.</span>
+      </div>
+      <div class="medida">
+        <span class="eyebrow">Dictado de 15 s: de soltar a pegado</span>
+        <span class="num">1,5 s</span>
+        <div class="bar" aria-hidden="true"><i style="width:87%"></i></div>
+        <span class="antes">Antes: 1,75 s con el texto en vivo puesto (1,2 s sin él). Si paras de hablar antes de soltar, el texto ya está hecho.</span>
+      </div>
+      <div class="medida">
+        <span class="eyebrow">Correos, teléfonos y horas bien escritos</span>
+        <span class="num">31 de 40</span>
+        <div class="bar" aria-hidden="true"><i style="width:77%"></i></div>
+        <span class="antes">Antes: 13 de 40. El pulido de IA no cambiaba ninguno.</span>
+      </div>
+      <div class="medida">
+        <span class="eyebrow">Clics para encender el pulido</span>
+        <span class="num">1</span>
+        <div class="bar" aria-hidden="true"><i style="width:33%"></i></div>
+        <span class="antes">Antes: 3 (Configuración → Limpieza e IA → interruptor). Ahora en Dictado, y la barra lo enseña.</span>
+      </div>
+    </div>
+    <p class="nota">Medido con un juego abierto en el PC (usa CPU): sin él, los tiempos salen algo mejores. Palabras mal: 6,2 % en los cortos de internet y 5,4 % en los largos, igual que antes; 15 s en directo, 7,2 % (antes 8,0 %); tus 13 grabaciones, 10,4 %, igual que antes. Probamos a recortar el silencio de los bordes y a cortar en trozos más cortos: los dos empeoraban y se descartaron. Las cifras de NVIDIA y OpenAI se miden con su propia norma (sin signos, cifras normalizadas) y con miles de frases: no se pueden comparar una a una con las nuestras.</p>
+  </section>
+
+  <section>
+    <h2>Fuentes</h2>
+    <p class="lead">Leídas el 20 de noviembre de 2026. Varias se leyeron con un extractor automático; las marcadas como reseña son de terceros.</p>
+    <ol class="fuentes">
+      <li id="w1">W1 · Wispr, precios: <a href="https://wisprflow.ai/pricing">wisprflow.ai/pricing</a></li>
+      <li id="w2">W2 · Wispr, control de datos: <a href="https://wisprflow.ai/data-controls">wisprflow.ai/data-controls</a></li>
+      <li id="w3">W3 · Wispr, retos técnicos: <a href="https://wisprflow.ai/post/technical-challenges">wisprflow.ai/post/technical-challenges</a></li>
+      <li id="w4">W4 · Baseten, caso Wispr: <a href="https://www.baseten.co/resources/customers/wispr-flow/">baseten.co/resources/customers/wispr-flow</a></li>
+      <li id="w5">W5 · Reseña de tercero (Zack Proser, 1-ago-2026): <a href="https://zackproser.com/blog/wisprflow-review">zackproser.com/blog/wisprflow-review</a></li>
+      <li id="w6">W6 · Wispr, diccionario: <a href="https://docs.wisprflow.ai/articles/4052411709-Teach-Flow-your-words-with-the-dictionary">docs.wisprflow.ai/…/Teach-Flow-your-words-with-the-dictionary</a></li>
+      <li id="s1">S1 · SuperWhisper, portada: <a href="https://superwhisper.com/">superwhisper.com</a></li>
+      <li id="s2">S2 · SuperWhisper, planes: <a href="https://superwhisper.com/docs/billing/plans">superwhisper.com/docs/billing/plans</a></li>
+      <li id="s3">S3 · SuperWhisper, modelos: <a href="https://superwhisper.com/models">superwhisper.com/models</a></li>
+      <li id="s4">S4 · SuperWhisper, tiempo real: <a href="https://superwhisper.com/docs/common-issues/realtime">superwhisper.com/docs/common-issues/realtime</a></li>
+      <li id="s5">S5 · SuperWhisper, datos sensibles: <a href="https://superwhisper.com/docs/security/sensitive-data">superwhisper.com/docs/security/sensitive-data</a></li>
+      <li id="c1">C1 · Claude, modo de voz: <a href="https://support.claude.com/en/articles/11101966-use-voice-mode">support.claude.com/…/use-voice-mode</a></li>
+      <li id="c2">C2 · Claude, dictado en el móvil: <a href="https://support.claude.com/en/articles/10065434-use-dictation-on-claude-mobile">support.claude.com/…/use-dictation-on-claude-mobile</a></li>
+      <li id="c3">C3 · Claude Code, dictado por voz: <a href="https://code.claude.com/docs/en/voice-dictation">code.claude.com/docs/en/voice-dictation</a></li>
+      <li id="w7">W7 · Wispr, formato inteligente: <a href="https://docs.wisprflow.ai/articles/5373093536-how-do-i-use-smart-formatting-and-backtrack">docs.wisprflow.ai/…/smart-formatting-and-backtrack</a></li>
+      <li id="w8">W8 · Wispr, Canto: <a href="https://wisprflow.ai/canto-1-results">wisprflow.ai/canto-1-results</a></li>
+      <li id="s6">S6 · SuperWhisper, modo Super: <a href="https://superwhisper.com/docs/modes/super">superwhisper.com/docs/modes/super</a></li>
+      <li id="s7">S7 · SuperWhisper, vocabulario y reemplazos: <a href="https://superwhisper.com/docs/get-started/interface-vocabulary">superwhisper.com/docs/get-started/interface-vocabulary</a></li>
+      <li id="m1">M1 · NVIDIA, Parakeet TDT 0.6B v3 (tablas 11 y 12, texto sin puntuación ni mayúsculas): <a href="https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3">huggingface.co/nvidia/parakeet-tdt-0.6b-v3</a> y <a href="https://arxiv.org/abs/2509.14128">arxiv.org/abs/2509.14128</a></li>
+      <li id="m2">M2 · OpenAI, Whisper (apéndice D.2, con su normalizador): <a href="https://arxiv.org/abs/2212.04356">arxiv.org/abs/2212.04356</a></li>
+      <li id="c4">C4 · Claude, acceso rápido en Mac: <a href="https://support.claude.com/en/articles/12626668-use-quick-entry-with-claude-desktop-on-mac">support.claude.com/…/use-quick-entry-with-claude-desktop-on-mac</a></li>
+    </ol>
+  </section>
+</div>

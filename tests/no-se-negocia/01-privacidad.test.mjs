@@ -10,7 +10,7 @@ import { RAIZ, SRC_TAURI, cargoTest, exigirCargoVerde, ficheros, rel, rustDeProd
 
 // specs/PRD.md §5.2: huggingface.co (modelos), ollama.com / GitHub (instalador de Ollama),
 // api.github.com + assets de releases de AlfonsoGo/pronto (actualizador), Ollama local.
-const HOSTS_PRD = ['huggingface.co', 'ollama.com', 'github.com', 'api.github.com'];
+const HOSTS_PRD = ['huggingface.co', 'ollama.com', 'github.com', 'api.github.com', 'stats.beltranlabs.com'];
 // Los assets de las releases de GitHub se sirven desde *.githubusercontent.com (redirección).
 const SUFIJOS_PRD = ['.githubusercontent.com'];
 const LOOPBACK = ['127.0.0.1', 'localhost', '[::1]'];
@@ -20,6 +20,7 @@ const MODULOS_DE_RED = {
   'src-tauri/src/aisetup.rs': 'instalador de Ollama (ollama.com) y Ollama local',
   'src-tauri/src/modeldl.rs': 'modelos de voz (huggingface.co)',
   'src-tauri/src/updater.rs': 'actualizador (api.github.com + releases)',
+  'src-tauri/src/uso.rs': 'estadísticas de uso voluntarias (stats.beltranlabs.com)',
 };
 
 // Cadenas con forma de dominio que NO son red (revisadas a mano; cada una con su motivo).
@@ -129,6 +130,10 @@ test('01 privacidad: la interfaz no carga nada de fuera del PC', () => {
 test('01 privacidad: Ollama en loopback por defecto y el actualizador solo baja de GitHub (Rust)', () => {
   const r = cargoTest('nsn_privacidad');
   exigirCargoVerde(assert, r, 'nsn_privacidad');
+  // Las estadísticas de uso son la única excepción de la regla: si desaparece una de estas pruebas, rojo.
+  for (const n of ['solo_sale_la_lista_cerrada', 'programa_principal_solo_de_la_lista', 'sin_si_no_hay_codigo_ni_envio', 'lo_anterior_al_si_no_sale_ni_el_mismo_dia', 'retirar_borra_el_codigo_y_volver_da_otro', 'un_no_con_codigo_viejo_y_un_si_sin_codigo_se_arreglan_al_arrancar', 'las_copias_no_guardan_el_codigo', 'retirar_a_mitad_de_lote_corta_lo_que_falta', 'retirar_con_un_envio_en_vuelo_no_deja_restos', 'una_redireccion_no_se_sigue']) {
+    assert.match(r.salida, new RegExp(`nsn_privacidad_uso_${n} \\.\\.\\. ok`), `falta la prueba de estadísticas «${n}»`);
+  }
 });
 
 // Decisión de Txonso (23-oct-2026): Ollama solo en este PC. Una URL que no sea de este PC (loopback) es un error

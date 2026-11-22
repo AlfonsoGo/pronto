@@ -1,11 +1,13 @@
 /* ───────────────────────────────────────────────────────────────────────────
    Pronto 2 · Flow bar  (ventana «flowbar», 360x300, transparente)
    Eventos: dictation://state · dictation://level · dictation://notice
+            dictation://live (texto en vivo: lo fijado y lo provisional)
             settings://changed · flowbar://hover (opcional)
+            update://changed · update://progress (versión nueva pendiente)
             transform://preview (vista previa de un Transform: nada se pega sin Enter)
    Comandos: start_dictation · stop_dictation · cancel_dictation
              set_flowbar_hitbox · flowbar_context_menu · get_settings
-             list_transforms · run_transform · pin_flowbar
+             list_transforms · run_transform · pin_flowbar · update_status
    Sin window.__TAURI__ (navegador) corre un mock; con ?demo añade un panel
    de depuración fuera de la píldora.
    ─────────────────────────────────────────────────────────────────────────── */
@@ -26,6 +28,7 @@
     listening: [73, 30],
     handsfree: [102.5, 30],
     processing: [98, 30],
+    transcribing: [150, 30],                // «Transcribiendo…»: el final tarda (PC cargado), que se vea que sigue
     polishing: [136, 30],
     polished: [96, 30],
     preview: [118, 30],                     // vista previa de un Transform (esperando Enter / Esc)
@@ -69,6 +72,7 @@
       if (cmd === 'get_settings') return JSON.parse(JSON.stringify(mockSettings));
       if (cmd === 'meeting_status') return { active: mockMeeting.active, elapsedMs: mockMeeting.active ? Date.now() - mockMeeting.start : 0 };
       if (cmd === 'list_transforms') return [{ id: 1, name: 'Polish', prompt: '', builtin: true, hotkeyIndex: 1 }];
+      if (cmd === 'update_status') return params.has('update') ? { state: 'available', dismissed: null, info: { version: '2.4.0' } } : null;
       if (cmd === 'pin_flowbar') {
         mockSettings.flowBarMonitor = args && args.pinned ? '\\\\.\\DISPLAY1' : null;
         mockEmit('settings://changed', JSON.parse(JSON.stringify(mockSettings)));
@@ -94,9 +98,10 @@
         spinnerEl = $('spinner'), labelEl = $('label'), fillEl = $('fill'), tip = $('tip'),
         card = $('card'), cardTitle = $('card-title'), cardBody = $('card-body'),
         cardAct = $('card-act'), cardIco = $('card-ico'), liveEl = $('live'),
-        hitDbg = $('hitdbg'), btnStop = $('btn-stop'), satNotes = $('sat-notes'), satLock = $('sat-lock'),
+        hitDbg = $('hitdbg'), btnStop = $('btn-stop'), satNotes = $('sat-notes'), satLock = $('sat-lock'), satUpdate = $('sat-update'),
         pvEl = $('preview'), pvTitle = $('pv-title'), pvWarn = $('pv-warn'), pvWarnText = $('pv-warn-text'),
-        pvText = $('pv-text'), pvNote = $('pv-note'), pvHint = $('pv-hint'), pvPaste = $('pv-paste'), pvDiscard = $('pv-discard');
+        pvText = $('pv-text'), pvNote = $('pv-note'), pvHint = $('pv-hint'), pvPaste = $('pv-paste'), pvDiscard = $('pv-discard'),
+        vivoEl = $('vivo'), vivoFijo = $('vivo-fijo'), vivoProv = $('vivo-prov');
 
   for (let i = 0; i < BAR_COUNT; i++) {
     const b = document.createElement('i');
@@ -115,6 +120,8 @@
   // ── Estado ────────────────────────────────────────────────────────────────
   let ui = 'idle';              // estado del dictado que pinta la barra
   let hover = false;
+  let lento = false, lentoTimer = 0;
+  const LENTO_MS = 900;
   let settings = null;
   let level = 0, audioScale = 1, raf = 0;
   let backTimer = 0, hoverTimer = 0, cardTimer = 0, hiddenTimer = 0, cardHideTimer = 0;
@@ -122,8 +129,12 @@
   let tipEl = null;
   // Vista previa de un Transform: último `transform://preview` y si se está enseñando
   let pvData = null, pvOn = false;
+  // Texto en vivo (BELTR-PRT-10): último `dictation://live` del dictado en curso
+  let vivo = { fixed: '', partial: '' };
   // Notetaker
   let meetingActive = false, meetingStart = 0, meetingLevel = 0, trans = '', transTimer = 0, clockTimer = 0;
+  // Actualizador: último `UpdateStatus`
+  let upd = null;
 
   const reduceMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
@@ -166,13 +177,13 @@
 
   // ── Render principal ──────────────────────────────────────────────────────
   // prioridad: dictado > aviso transitorio de notas > reunión en curso > reposo/hover
-  const key = () => (ui !== 'idle' ? ui : trans ? trans : meetingActive ? 'meeting' : (hover ? 'ready' : 'rest'));
+  const key = () => (ui !== 'idle' ? (ui === 'processing' && lento ? 'transcribing' : ui) : trans ? trans : meetingActive ? 'meeting' : (hover ? 'ready' : 'rest'));
   const isRest = () => { const k = key(); return k === 'rest' || k === 'ready'; };
-  const LABELS = { polishing: 'Polish', polished: 'Listo', preview: 'Vista previa', cancelled: 'Cancelado', error: 'Error',
+  const LABELS = { transcribing: 'Transcribiendo…', polishing: 'Polish', polished: 'Listo', preview: 'Vista previa', cancelled: 'Cancelado', error: 'Error',
     summarizing: 'Generando notas…', notesdone: 'Notas listas' };
   const ARIA = {
     rest: 'Pronto: reposo', meeting: 'Grabando la reunión', summarizing: 'Generando notas', notesdone: 'Notas listas', ready: 'Dictar', listening: 'Escuchando', handsfree: 'Dictado en manos libres',
-    processing: 'Transcribiendo', polishing: 'Puliendo el texto', polished: 'Listo', done: 'Pegado',
+    processing: 'Transcribiendo', transcribing: 'Transcribiendo: sigue procesando', polishing: 'Puliendo el texto', polished: 'Listo', done: 'Pegado',
     preview: 'Vista previa del resultado: Enter para pegar, Esc para descartar',
     cancelled: 'Cancelado', error: 'Error',
   };
@@ -186,13 +197,16 @@
     pill.dataset.s = k;
     hot.dataset.s = k;
     hot.dataset.hidden = hidden ? 'true' : 'false';
+    hot.dataset.upd = updPending() && isRest() ? 'true' : 'false';
+    satUpdate.hidden = !updPending();
     labelEl.textContent = LABELS[k] || '';
-    pill.setAttribute('aria-label', ARIA[k] || 'Dictar');
+    pill.setAttribute('aria-label', (hot.dataset.upd === 'true' ? updTxt().ready(updVersion()) : ARIA[k] || 'Dictar') + (settings && settings.aiPolish ? ' · pulido con IA activado' : ''));
     wavesEl.classList.toggle('live', live());
     btnStop.dataset.tip = k === 'meeting' ? 'Detener el Meet' : 'Finalizar y pegar';
     btnStop.setAttribute('aria-label', btnStop.dataset.tip);
     syncLock();
     syncClock();
+    renderVivo();
     ensureLoop();
     refreshTip();
     scheduleHitbox();
@@ -222,11 +236,40 @@
   // ── Eventos de dictado ────────────────────────────────────────────────────
   function announce(s) { liveEl.textContent = ''; if (s) setTimeout(() => { liveEl.textContent = s; }, 30); }
 
+  // ── Texto en vivo (BELTR-PRT-10) ──────────────────────────────────────────
+  // Mientras se habla, encima de la píldora: lo fijado en tinta y lo provisional en gris. Sigue a la
+  // vista mientras se transcribe el final; se borra al pegar, al cancelar, con un error o en reposo.
+  // «polishing» no cuenta: solo lo emite un Transform, que no es un dictado (enseñaría el anterior).
+  // Todo con textContent: lo dictado nunca se interpreta como HTML.
+  const VIVO_GRABANDO = new Set(['listening', 'handsfree']);
+  const VIVO_VISIBLE = new Set(['listening', 'handsfree', 'processing']);
+  const VIVO_FIN = new Set(['done', 'cancelled', 'error', 'idle']);
+  function renderVivo() {
+    const fixed = vivo.fixed.trim(), partial = vivo.partial.trim();
+    const on = !!(fixed || partial) && VIVO_VISIBLE.has(ui) && !cardOn && !pvOn && !(settings && settings.liveText === false);
+    vivoEl.hidden = !on;
+    if (!on) return;
+    vivoFijo.textContent = fixed;
+    vivoProv.textContent = (fixed && partial ? ' ' : '') + partial;
+  }
+  function onLive(p) {
+    if (!p || !VIVO_GRABANDO.has(ui)) return;   // un tick que llega tras soltar no cambia nada
+    vivo = { fixed: String(p.fixed || ''), partial: String(p.partial || '') };
+    renderVivo();
+  }
+
   function onState(p) {
     if (!p || !STATES.has(p.state)) return;
     clearTimeout(backTimer);
     const st = p.state;
+    // Un dictado nuevo empieza sin texto (pasar de «mantener» a manos libres no lo borra).
+    if ((VIVO_GRABANDO.has(st) && !VIVO_GRABANDO.has(ui)) || VIVO_FIN.has(st)) vivo = { fixed: '', partial: '' };
     ui = st;
+    // Si el final tarda más de LENTO_MS (PC cargado, audio largo), la píldora lo dice con letras (BELTR-PRT-30:
+    // Txonso soltaba y no sabía si seguía procesando).
+    clearTimeout(lentoTimer);
+    lento = false;
+    if (st === 'processing') lentoTimer = setTimeout(() => { if (ui === 'processing') { lento = true; announce('Sigue transcribiendo'); render(); } }, LENTO_MS);
     if (st === 'polishing') startProgress(); else stopProgress();
     if (st === 'listening' || st === 'handsfree') { if (st === 'listening') level = 0; hideCard(true); }
     if (st === 'preview') { hideCard(true); showPreview(); } else hidePreview();
@@ -360,6 +403,7 @@
     card.style.animation = 'none'; void card.offsetWidth; card.style.animation = '';
     armCardTimer(a && a[1] ? 6000 : CARD_MS);
     refreshTip();
+    renderVivo();   // la tarjeta va en el mismo sitio que el texto en vivo: manda la tarjeta
     scheduleHitbox();
   }
   function armCardTimer(ms) { clearTimeout(cardTimer); if (HOLD) return; cardTimer = setTimeout(() => hideCard(), ms); }
@@ -368,6 +412,7 @@
     if (!cardOn) return;
     cardOn = false;
     scheduleHitbox();
+    renderVivo();
     if (immediate) { card.hidden = true; refreshTip(); return; }
     card.classList.add('out');
     clearTimeout(cardHideTimer);
@@ -387,7 +432,8 @@
   function tipNodes(el) {
     const t = el.dataset.tip;
     if (t === 'dyn') {
-      if (key() === 'ready') return [txt('Dictar'), keysNode(holdKeys())];
+      if (key() === 'ready' && updPending()) return [txt(updTxt().ready(updVersion()))];
+      if (key() === 'ready') return [txt('Dictar'), keysNode(holdKeys()), ...(settings && settings.aiPolish ? [txt('· pulido con IA')] : [])];
       if (ui === 'handsfree') return [txt('Pulsa'), keysNode(holdKeys()), txt('para finalizar y pegar')];
       if (key() === 'meeting') return [txt('Reunión · grabando'), keysNode([fmtElapsed()])];
       return null;
@@ -428,8 +474,17 @@
 
   // ── Hover / clic ──────────────────────────────────────────────────────────
   function setHover(v) { if (hover === v) return; hover = v; render(); }
+  // Lo último que dijo el sondeo del cursor de `flowbar.rs` (null: no hay backend, p. ej. la maqueta). Si dice
+  // que el ratón está dentro del rectángulo pulsable, un `mouseleave` del DOM (un hueco entre satélites) no
+  // esconde la barra (BELTR-PRT-30: se escondía antes de llegar al candado).
+  let hoverBackend = null;
+  const HOVER_SALIDA_MS = 300;              // margen al salir de la zona antes de volver a reposo
   hot.addEventListener('mouseenter', () => { clearTimeout(hoverTimer); setHover(true); });
-  hot.addEventListener('mouseleave', () => { clearTimeout(hoverTimer); hoverTimer = setTimeout(() => setHover(false), 60); });
+  hot.addEventListener('mouseleave', () => {
+    clearTimeout(hoverTimer);
+    if (hoverBackend === true) return;
+    hoverTimer = setTimeout(() => setHover(false), HOVER_SALIDA_MS);
+  });
   document.documentElement.addEventListener('mouseleave', () => { clearTimeout(hoverTimer); setHover(false); tipEl = null; refreshTip(); });
   window.addEventListener('blur', () => { setHover(false); });
 
@@ -483,6 +538,29 @@
     else showCard({ kind: 'error', title: lockTxt().fail, body: '' });
   });
 
+  // ── Actualización pendiente: la barra en reposo respira hasta instalar o pulsar «Más tarde» ──
+  // Mismo criterio que la tarjeta del hub y el menú de la bandeja (`updater::pending_version`).
+  const UPD_TXT = {
+    es: { ready: (v) => `Actualización lista: Pronto ${v}`, open: 'Ver la actualización' },
+    en: { ready: (v) => `Update ready: Pronto ${v}`, open: 'See the update' },
+  };
+  const updTxt = () => UPD_TXT[settings && settings.appLanguage === 'en' ? 'en' : 'es'];
+  const updVersion = () => String(upd.info.version);
+  const updPending = () => !!(upd && upd.info && (upd.state === 'available' || upd.state === 'error') && upd.dismissed !== upd.info.version);
+  function syncUpdate() {
+    satUpdate.dataset.tip = updTxt().open;
+    satUpdate.setAttribute('aria-label', updTxt().open);
+    render();
+  }
+  function applyUpdate(s) {
+    if (!s) return;
+    const was = updPending();
+    upd = s;
+    if (updPending() && !was) announce(updTxt().ready(updVersion()));
+    syncUpdate();
+  }
+  satUpdate.addEventListener('click', (e) => { e.stopPropagation(); safe('open_hub', {}); });
+
   // ── Click-through: rectángulo pulsable ────────────────────────────────────
   let hitRaf = 0, lastHit = '';
   function scheduleHitbox() { if (!hitRaf) hitRaf = setTimeout(sendHitbox, 0); }   // no rAF: se pausa en ventanas ocultas
@@ -503,6 +581,7 @@
         rects.push(grow([nx, sy, nx + 30, sy + 30], m));
         const lx = sx + 30 + 6, ly = sy + 3;        // candado (24x24, a la derecha de Polish)
         rects.push(grow([lx, ly, lx + 24, ly + 24], m));
+        if (updPending()) rects.push(grow([nx - 36, sy, nx - 6, sy + 30], m));   // satélite Actualización (izquierda de notas)
       }
     }
     if (cardOn && !card.hidden) {
@@ -535,11 +614,15 @@
   function applySettings(s) {
     if (!s) return;
     settings = s;
+    // Pulido con IA (BELTR-PRT-17): su estado se ve en la barra (un punto violeta y el aviso al pasar el ratón).
+    hot.dataset.polish = s.aiPolish ? 'on' : 'off';
+    render();
     armHiddenTimer();
     if (pvOn) fillPreview();
-    render();
+    syncUpdate();
   }
   safe('get_settings').then(applySettings);
+  safe('update_status').then(applyUpdate);
   setTimeout(() => syncMeeting(), 0);
 
   // ── Notetaker (meeting://…) ───────────────────────────────────────────────
@@ -598,6 +681,7 @@
   const on = (name, fn) => bridge.listen(name, (e) => fn(e && e.payload)).catch((err) => console.warn('[flowbar] listen', name, err));
   on('dictation://state', onState);
   on('dictation://level', (p) => { if (p && typeof p.level === 'number') level = p.level; });
+  on('dictation://live', onLive);
   on('dictation://notice', (p) => {
     if (!p || !p.title) return;
     if (pvOn) { onPreview(Object.assign({}, pvData, { notice: p.body ? p.title + ' · ' + p.body : p.title })); return; }
@@ -607,7 +691,9 @@
   on('meeting://state', onMeeting);
   on('meeting://level', (p) => { if (p) meetingLevel = Math.max(Number(p.mic) || 0, Number(p.system) || 0); });
   on('settings://changed', applySettings);
-  on('flowbar://hover', (p) => setHover(!!(p && p.hover)));   // opcional: lo puede emitir el backend si la ventana no recibe mouseleave
+  on('update://changed', applyUpdate);
+  on('update://progress', (p) => { if (p && upd) applyUpdate(Object.assign({}, upd, { state: p.state })); });
+  on('flowbar://hover', (p) => { hoverBackend = !!(p && p.hover); clearTimeout(hoverTimer); setHover(hoverBackend); });   // opcional: lo puede emitir el backend si la ventana no recibe mouseleave
 
   reduceMotion.addEventListener && reduceMotion.addEventListener('change', render);
   render();
@@ -654,6 +740,16 @@
     mk('d-states', 'preview', () => sendPv({}));
     mk('d-states', 'preview + aviso', () => sendPv({ warning: 'Ojo: la IA añadió enlaces que no estaban en el texto seleccionado.' }));
     mk('d-states', 'preview <b>', () => sendPv({ text: '<b>no es HTML</b> <img src=x onerror=alert(1)> ' + 'texto largo '.repeat(80) }));
+    // Texto en vivo: las palabras llegan cada 0,7 s y se fijan en las pausas.
+    const VIVO_DEMO = [
+      { fixed: '', partial: 'Hola equipo' },
+      { fixed: 'Hola equipo.', partial: 'La reunión del jueves' },
+      { fixed: 'Hola equipo.', partial: 'La reunión del jueves se mueve al viernes' },
+      { fixed: 'Hola equipo. La reunión del jueves se mueve al viernes a las diez.', partial: 'Por favor, revisad' },
+      { fixed: 'Hola equipo. La reunión del jueves se mueve al viernes a las diez.', partial: 'Por favor, revisad el presupuesto antes de entonces' },
+    ];
+    const sendVivo = () => { send('listening'); VIVO_DEMO.forEach((v, i) => setTimeout(() => mockEmit('dictation://live', v), 700 * (i + 1))); };
+    mk('d-states', 'texto en vivo', sendVivo);
     mk('d-notices', 'Aviso', () => mockEmit('dictation://notice', { title: 'Texto copiado', body: 'Tu última transcripción está en el portapapeles.' }));
     mk('d-notices', 'Aviso + acción', () => mockEmit('dictation://notice', { title: 'No se pudo pegar', body: 'Haz clic en un cuadro de texto y pega con Ctrl + V.', action: 'paste_last' }));
     mk('d-notices', 'Error: tap', () => send('error', { kind: 'tap', message: 'No lo toques. Mantén pulsado Win + Alt.' }));
@@ -699,7 +795,8 @@
     if (ms0) setTimeout(() => sendM(ms0, params.get('elapsed') ? { elapsedMs: Number(params.get('elapsed')) } : (ms0 === 'done' ? { message: 'Reunión de equipo · 3 tareas' } : undefined)), 60);
     if (params.get('level')) { setLv(params.get('level')); mockEmit('meeting://level', { mic: Number(params.get('level')), system: 0 }); }
     if (params.get('sim')) { $('d-sim').checked = true; $('d-sim').dispatchEvent(new Event('change')); }
-    if (st0 === 'preview') setTimeout(() => sendPv(params.get('warn') ? { warning: 'Ojo: la IA añadió importes que no estaban en el texto seleccionado.' } : {}), 80);
+    if (params.has('vivo')) setTimeout(sendVivo, 80);
+    else if (st0 === 'preview') setTimeout(() => sendPv(params.get('warn') ? { warning: 'Ojo: la IA añadió importes que no estaban en el texto seleccionado.' } : {}), 80);
     else if (st0) setTimeout(() => {
       const kind = params.get('kind');
       send(st0, kind ? { kind, message: params.get('msg') || 'Mensaje de ejemplo.' } : (st0 === 'error' ? { message: 'Algo ha fallado.' } : {}));

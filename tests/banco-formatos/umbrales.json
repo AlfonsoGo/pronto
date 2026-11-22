@@ -1,0 +1,5 @@
+{
+  "_nota": "Peor resultado admitido por tests/banco-formatos.test.mjs (casos bien escritos de 40). Solo se sube con medida nueva, nunca a peor para que pase. Línea base 13/40 sin y con pulido (tests/banco-pulido/linea-base-2026-11-20.md); tras las reglas de BELTR-PRT-15, 31/40 y 31/40. Los 9 que fallan son palabras mal oídas por el motor con voces sintéticas, no formato.",
+  "sinPulidoMin": 31,
+  "conPulidoMin": 31
+}

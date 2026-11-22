@@ -87,8 +87,11 @@ button { font: inherit; color: inherit; }
   transition: opacity .12s ease;
 }
 .hot[data-hidden="true"] { opacity: 0; visibility: hidden; pointer-events: none; }
-/* zona anti-parpadeo: ensancha el hover 12 px solo cuando la barra está en «ready» */
-.hot[data-s="ready"]::before { content: ""; position: absolute; inset: -12px; }
+/* zona anti-parpadeo: ensancha el hover 12 px solo cuando la barra está en «ready», y a los lados hasta
+   cubrir todos los satélites con sus huecos (BELTR-PRT-30: en el hueco de 6 px entre Polish y el candado el
+   ratón salía de la zona y la barra se escondía antes de llegar al candado). Candado: 36 + 24 px a la
+   derecha de la caja; Actualización: 36 + 30 px a la izquierda. */
+.hot[data-s="ready"]::before { content: ""; position: absolute; inset: -12px -72px -12px -78px; }
 
 /* ── La píldora ────────────────────────────────────────────────────────────── */
 .pill {
@@ -114,6 +117,33 @@ button { font: inherit; color: inherit; }
 }
 .pill[data-s="ready"]:hover { background: rgba(34, 27, 50, .95); border-color: var(--hilo-fuerte); }
 
+/* pulido con IA encendido (BELTR-PRT-17): un punto violeta en la punta derecha, en reposo y al dictar */
+.hot[data-polish="on"] .pill::before {
+  content: ""; position: absolute; right: 3px; top: 50%; width: 4px; height: 4px; margin-top: -2px;
+  border-radius: 50%; background: var(--violeta-suave, #b59cff); pointer-events: none; z-index: 2;
+}
+
+/* actualización pendiente: la barra en reposo se vuelve violeta y respira despacio.
+   Solo transform y opacidad: lo mueve el compositor y no repinta la ventana. */
+.hot[data-upd="true"] .pill[data-s="rest"] {
+  background: var(--violeta);
+  border-color: var(--violeta-suave);
+  animation: respira 4s ease-in-out infinite;
+}
+.hot[data-upd="true"]::after {
+  content: ""; position: absolute; inset: 6px; border-radius: 999px; pointer-events: none;
+  box-shadow: 0 0 12px 2px rgba(139, 92, 246, .75);
+  animation: respira-halo 4s ease-in-out infinite;
+}
+@keyframes respira {
+  0%, 100% { transform: scale(1); opacity: .8; }
+  50%      { transform: scale(1.14, 1.3); opacity: 1; }
+}
+@keyframes respira-halo {
+  0%, 100% { opacity: .2; }
+  50%      { opacity: 1; }
+}
+
 /* grabando: halo violeta de Pronto */
 .pill[data-s="listening"],
 .pill[data-s="handsfree"] {
@@ -121,6 +151,7 @@ button { font: inherit; color: inherit; }
   box-shadow: var(--brillo), 0 0 0 1px rgba(139, 92, 246, .14), 0 0 14px rgba(139, 92, 246, .38), var(--sombra);
 }
 .pill[data-s="processing"],
+.pill[data-s="transcribing"],
 .pill[data-s="polishing"] {
   border-color: rgba(167, 139, 250, .38);
   box-shadow: var(--brillo), 0 0 10px rgba(139, 92, 246, .16), var(--sombra);
@@ -170,6 +201,8 @@ button { font: inherit; color: inherit; }
 .pill[data-s="handsfree"]  .row { justify-content: space-between; padding: 0 5px; }
 .pill[data-s="processing"] :is(.waves, .spinner) { display: flex; }
 .pill[data-s="processing"] .row { justify-content: space-between; padding: 0 12px; }
+.pill[data-s="transcribing"] :is(.label, .spinner) { display: flex; }
+.pill[data-s="transcribing"] .row { justify-content: space-between; padding: 0 14px 0 16px; }
 .pill[data-s="polishing"]  :is(.label, .spinner) { display: flex; }
 .pill[data-s="polishing"]  .row { justify-content: space-between; padding: 0 14px 0 16px; }
 .pill[data-s="polished"]   .ico-spark { display: block; }
@@ -307,6 +340,9 @@ button { font: inherit; color: inherit; }
 }
 .sat svg { width: 15px; height: 15px; fill: none; stroke: var(--tinta); stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; }
 .sat-notes { left: auto; right: 100%; transform-origin: right center; }
+/* actualización: a la izquierda de Grabar Meet */
+.sat-update { left: auto; right: calc(100% + 36px); transform-origin: right center; border-color: rgba(167, 139, 250, .55); }
+.sat-update svg { stroke: var(--violeta-suave); }
 .hot[data-s="ready"] .sat { opacity: 1; transform: none; pointer-events: auto; }
 .sat:hover { background: rgba(34, 27, 50, .95); }
 .sat:hover svg { stroke: var(--violeta-suave); }
@@ -401,6 +437,30 @@ kbd {
 }
 .card-act:hover { background: rgba(139, 92, 246, .3); border-color: rgba(167, 139, 250, .5); }
 
+/* ── Texto en vivo (BELTR-PRT-10) ──────────────────────────────────────────────
+   Encima de la píldora mientras se habla: lo fijado en tinta y lo provisional en gris. Dos líneas como
+   mucho; si no cabe, se ve el final (lo último dicho) y lo de arriba se corta. No se pulsa (click-through). */
+.vivo {
+  position: absolute;
+  left: 50%;
+  bottom: 44px;                /* como la tarjeta: 8 de margen + 30 de píldora + 6 de aire */
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: 340px;
+  padding: 9px 13px;
+  border-radius: 16px;
+  background: var(--cristal);
+  border: 1px solid var(--hilo);
+  box-shadow: var(--brillo), 0 6px 18px rgba(0, 0, 0, .38);
+  pointer-events: none;
+}
+.vivo[hidden] { display: none; }
+/* ventana de 2 líneas pegada al final: lo que no cabe se sale por arriba y se corta */
+.vv-ventana { max-height: 38px; overflow: hidden; display: flex; flex-direction: column; justify-content: flex-end; }
+.vivo p { margin: 0; font-size: 13px; line-height: 19px; font-weight: 600; overflow-wrap: anywhere; }
+.vv-fijo { color: var(--tinta); }
+.vv-prov { color: var(--apagado); font-weight: 400; }
+
 /* ── Vista previa de un Transform (decisión A de Txonso, 23-oct) ───────────────
    El resultado de la IA se lee aquí y solo se pega con Enter; Esc lo descarta.
    La ventana no toma el foco: Enter y Esc los recoge el gancho de teclado. */
@@ -466,6 +526,7 @@ button:focus-visible { outline: 2px solid var(--violeta-suave); outline-offset: 
   .card.out { transition: none; }
   .fill.go { transition: none; width: 100%; opacity: .6; }
   .pill[data-s="polished"] .shine { animation: none; }
+  .hot[data-upd="true"] .pill[data-s="rest"], .hot[data-upd="true"]::after { animation: none; }
 }
 
 /* ───────────────────────────────────────────────────────────────────────────

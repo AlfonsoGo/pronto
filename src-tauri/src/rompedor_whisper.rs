@@ -1,7 +1,7 @@
 //! Sondas del rompedor (2026-10-24): Whisper rápido (cd7c772) y arreglos del 24-oct (b58f74a, 9d7cc34).
 //! Solo se compilan en pruebas. Usan la GPU y el modelo Whisper por defecto (turbo) de
 //! `%APPDATA%\Pronto2\models\whisper` en **solo lectura** (en pruebas `verify` no escribe `.verificado`).
-//! Audio: los WAV de `PRONTO_ROMPEDOR_JUEZ` (carpeta; por defecto `C:\Users\usuario\dev\pronto-juez`).
+//! Audio: los WAV de `PRONTO_ROMPEDOR_JUEZ` (carpeta; por defecto `C:\Users\Txonso\dev\pronto-juez`).
 //! Sin modelo o sin audio, no miden nada.
 //! `CARGO_TARGET_DIR=… cargo test --release rompedor_whisper_ -- --ignored --test-threads=1 --nocapture`
 #![allow(dead_code, unused_imports)]
@@ -16,7 +16,7 @@ use whisper_rs::{DtwMode, DtwModelPreset, DtwParameters, FullParams, SamplingStr
 // ------------------------------------------------------------------ utilidades
 
 fn juez() -> Vec<(String, Vec<f32>)> {
-    let dir = std::env::var("PRONTO_ROMPEDOR_JUEZ").unwrap_or_else(|_| r"C:\Users\usuario\dev\pronto-juez".into());
+    let dir = std::env::var("PRONTO_ROMPEDOR_JUEZ").unwrap_or_else(|_| r"C:\Users\Txonso\dev\pronto-juez".into());
     let mut v: Vec<_> = std::fs::read_dir(&dir)
         .map(|d| d.flatten().map(|e| e.path()).filter(|p| p.extension().is_some_and(|x| x == "wav")).collect())
         .unwrap_or_else(|_| Vec::new());

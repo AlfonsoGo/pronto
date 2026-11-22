@@ -2,7 +2,7 @@ Rompedor · 2026-10-22 · dictado · 1 altas, 3 medias, 6 bajas · Arreglado: to
 Datos: solo bases en memoria y carpetas temporales propias (borradas al salir); `%APPDATA%\Pronto2\pronto2.db` 270 336 B, mtime 2026-10-15 21:29:15 antes y después → restaurados ✅
 
 Sondas: `src-tauri/src/rompedor_dictado.rs`. Lanzar con
-`cargo test rompedor_dictado_ -- --include-ignored --nocapture --test-threads=1` (`CARGO_TARGET_DIR=C:/Users/usuario/dev/pt-b`).
+`cargo test rompedor_dictado_ -- --include-ignored --nocapture --test-threads=1` (`CARGO_TARGET_DIR=C:/Users/Txonso/dev/pt-b`).
 Sin `--include-ignored`: 7 pasan, 8 ignoradas (las roturas). La de 1 M de filas pide `PRONTO_ROMPEDOR_DICTADO_1M=1`.
 Medidas en perfil `test` (debug).
 
