@@ -764,7 +764,35 @@ fn hash_file(path: &Path) -> std::io::Result<String> {
     Ok(hasher.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
-/// Tamaño publicado, firma «MZ» de ejecutable y SHA-256 (si la API lo dio).
+/// Marca que lleva todo instalador hecho con Inno Setup (`installer/pronto2.iss`).
+pub const INNO_MARKER: &[u8] = b"Inno Setup Setup Data (";
+
+/// ¿Lleva el fichero la marca de Inno Setup? Se lee por trozos, con solape para no partir la marca.
+fn is_inno_installer(path: &Path) -> std::io::Result<bool> {
+    let mut f = File::open(path)?;
+    let keep = INNO_MARKER.len() - 1;
+    let mut buf = vec![0u8; (1 << 20) + keep];
+    let mut have = 0usize;
+    loop {
+        let n = f.read(&mut buf[have..])?;
+        if n == 0 {
+            return Ok(false);
+        }
+        have += n;
+        if buf[..have].windows(INNO_MARKER.len()).any(|w| w == INNO_MARKER) {
+            return Ok(true);
+        }
+        if have > keep {
+            buf.copy_within(have - keep..have, 0);
+            have = keep;
+        }
+    }
+}
+
+/// Tamaño publicado, firma «MZ» de ejecutable, instalador de Inno Setup y SHA-256 (si la API lo dio).
+/// Solo se acepta el instalador de Inno (`installer/pronto2.iss`): el NSIS de `tauri build` instala en
+/// otra carpeta (`%LOCALAPPDATA%\Pronto`), no entiende `/VERYSILENT` y Pronto reabría la copia vieja,
+/// así que el aviso de la misma versión volvía en cada arranque (2.3.2, BELTR-PRT-41).
 pub fn verify_file(path: &Path, size: u64, sha256: Option<&str>) -> Result<(), String> {
     let len = fs::metadata(path).map_err(|e| format!("No se pudo leer el instalador descargado: {e}"))?.len();
     if size > 0 && len != size {
@@ -780,6 +808,9 @@ pub fn verify_file(path: &Path, size: u64, sha256: Option<&str>) -> Result<(), S
         if !got.eq_ignore_ascii_case(expected) {
             return Err("El instalador descargado está dañado (el SHA-256 no coincide con el de GitHub). Inténtalo de nuevo.".into());
         }
+    }
+    if !is_inno_installer(path).map_err(|e| format!("No se pudo verificar el instalador: {e}"))? {
+        return Err("Esta versión no se puede instalar desde Pronto. Descárgala de la web de Pronto e instálala a mano.".into());
     }
     Ok(())
 }
@@ -1342,7 +1373,7 @@ mod tests {
     fn verificacion_de_tamano_firma_y_sha256() {
         let dir = tmp("verify");
         // "MZabc" no es "abc"; usamos un contenido propio y calculamos su hash
-        let body = b"MZ-instalador-de-prueba";
+        let body = b"MZ-instalador-de-prueba Inno Setup Setup Data (6.7.0)";
         let f = write_exe(&dir, "ok.exe", body);
         let sha = hash_file(&f).unwrap();
         assert_eq!(sha.len(), 64);
@@ -1359,6 +1390,28 @@ mod tests {
         let e = verify_file(&txt, 10, None).unwrap_err();
         assert!(e.contains("no es un instalador"), "{e}");
         assert!(verify_file(&dir.join("no-existe.exe"), 1, None).is_err());
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    /// BELTR-PRT-41: la 2.3.2 se publicó con el instalador NSIS de `tauri build`. Instalaba en otra
+    /// carpeta y Pronto reabría la copia vieja: el aviso de la misma versión volvía siempre. Solo se
+    /// acepta el instalador de Inno (`installer/pronto2.iss`).
+    #[test]
+    fn solo_acepta_el_instalador_de_inno() {
+        let dir = tmp("inno");
+        let nsis = write_exe(&dir, "nsis.exe", b"MZ-instalador-NSIS Nullsoft Install System v3.10");
+        let e = verify_file(&nsis, 0, None).unwrap_err();
+        assert!(e.contains("Descárgala de la web"), "{e}");
+        // La marca a caballo entre dos trozos de lectura (1 MiB) también cuenta.
+        let mut body = b"MZ".to_vec();
+        body.resize((1 << 20) - 5, 0x41);
+        body.extend_from_slice(b"Inno Setup Setup Data (6.7.0)");
+        body.extend(std::iter::repeat_n(0x42u8, 1000));
+        let inno = write_exe(&dir, "inno.exe", &body);
+        verify_file(&inno, body.len() as u64, None).unwrap();
+        // Y al final del fichero.
+        let fin = write_exe(&dir, "fin.exe", b"MZ....Inno Setup Setup Data (");
+        verify_file(&fin, 0, None).unwrap();
         let _ = fs::remove_dir_all(dir);
     }
 
@@ -1427,6 +1480,7 @@ mod tests {
         let dir = tmp("dl-ok");
         let mut body = b"MZ".to_vec();
         body.extend((0..900_000u32).map(|i| (i % 251) as u8));
+        body.extend_from_slice(INNO_MARKER);
         let (url, hits) = serve(vec![("/setup.exe", body.clone())]);
         let asset = asset_for(&url, &body, true);
         let mut events: Vec<(&str, u64, u64)> = Vec::new();
@@ -1447,7 +1501,7 @@ mod tests {
     #[test]
     fn descarga_con_hash_o_tamano_malos_no_deja_nada() {
         let dir = tmp("dl-bad");
-        let body = b"MZ-contenido-de-prueba".to_vec();
+        let body = b"MZ-contenido-de-prueba Inno Setup Setup Data (6.7.0)".to_vec();
         let (url, _) = serve(vec![("/setup.exe", body.clone())]);
 
         let mut asset = asset_for(&url, &body, true);
@@ -1510,7 +1564,7 @@ mod tests {
     #[test]
     fn redirecciones_a_mano_validadas_en_cada_salto() {
         let dir = tmp("redir");
-        let body = b"MZ-instalador-redirigido".to_vec();
+        let body = b"MZ-instalador-redirigido Inno Setup Setup Data (6.7.0)".to_vec();
         let b2 = body.clone();
         let (url, hits) = serve_raw(move |path, conn| {
             let r = match path {
@@ -1780,7 +1834,8 @@ mod tests {
     #[test]
     fn el_ayudante_hace_lo_prometido() {
         let s = HELPER_SCRIPT;
-        for needle in ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "Wait-Process", "helper-started", "result.txt", "[System.Diagnostics.Process]::Start($psi)"] {
+        // /DIR con la carpeta de -Exe: se instala donde está el Pronto que se reabre (BELTR-PRT-41).
+        for needle in ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "Wait-Process", "helper-started", "result.txt", "[System.Diagnostics.Process]::Start($psi)", "GetDirectoryName($Exe)", "('/DIR=\"' + $appDir + '\"')"] {
             assert!(s.contains(needle), "falta {needle}");
         }
         assert!(s.is_ascii(), "ASCII puro: PowerShell 5.1 lee el script sin sorpresas");

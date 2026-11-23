@@ -38,7 +38,10 @@ $code = -1
 try {
     Unblock-File -LiteralPath $Installer -ErrorAction SilentlyContinue
     $setupLog = Join-Path $WorkDir 'setup.log'
-    $setupArgs = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/NOCANCEL', '/SP-', ('/LOG="' + $setupLog + '"'))
+    # /DIR: se instala en la carpeta del Pronto que se esta actualizando, la misma que se reabre en el
+    # paso 5. Sin ella, si el instalador elige otra carpeta, se reabre la version vieja (BELTR-PRT-41).
+    $appDir = [System.IO.Path]::GetDirectoryName($Exe)
+    $setupArgs = @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/NOCANCEL', '/SP-', ('/DIR="' + $appDir + '"'), ('/LOG="' + $setupLog + '"'))
     $p = Start-Process -FilePath $Installer -ArgumentList $setupArgs -PassThru -Wait
     $code = $p.ExitCode
 } catch {

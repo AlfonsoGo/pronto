@@ -16,7 +16,7 @@
 #define AppName "Pronto"
 ; build_installer.ps1 inyecta /DAppVersion=x.y.z leido de src-tauri\tauri.conf.json.
 #ifndef AppVersion
-  #define AppVersion "2.3.1"
+  #define AppVersion "2.3.3"
 #endif
 #define AppPublisher "Pronto"
 #define AppExe "pronto.exe"
@@ -36,6 +36,7 @@
     #error TestSandbox necesita /DTestDir=<carpeta de pruebas>
   #endif
   #define MyDefaultDir TestDir + "\default-dir"
+  #define NsisKeyName "ProntoTestNsis"
 #else
   ; MISMO AppId y nombre que Pronto 1 (ver pronto.iss de Pronto 1). Ojo: alli es
   ; "{{...F40}}", con DOS llaves de cierre, y el registro guarda "{...F40}}_is1". Hay que
@@ -46,7 +47,11 @@
   #define MyAppName AppName
   #define MyOutName "Pronto-Setup-" + AppVersion
   #define MyDefaultDir "{autopf}\Pronto"
+  ; Entrada de desinstalacion que dejo el instalador NSIS de `tauri build`, publicado por error
+  ; como 2.3.2 (instala en %LOCALAPPDATA%\Pronto). Ver [Code]: CopiasNsis (BELTR-PRT-41).
+  #define NsisKeyName "Pronto"
 #endif
+#define NsisKey "Software\Microsoft\Windows\CurrentVersion\Uninstall\" + NsisKeyName
 
 [Setup]
 AppId={#MyAppId}
@@ -54,7 +59,7 @@ AppName={#MyAppName}
 AppVersion={#AppVersion}
 AppVerName={#MyAppName} {#AppVersion}
 AppPublisher={#AppPublisher}
-DefaultDirName={#MyDefaultDir}
+DefaultDirName={code:DirPorDefecto}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
@@ -213,6 +218,100 @@ begin
   Result := Pronto1Found;
 end;
 
+{ --- Copia instalada por el NSIS de la 2.3.2 (BELTR-PRT-41) ---
+  La 2.3.2 se publico por error con el instalador NSIS de `tauri build`: instala en
+  %LOCALAPPDATA%\Pronto con su propia entrada de desinstalacion ("Pronto"), y el ayudante
+  de Pronto reabria la copia vieja de la carpeta de Inno. Este instalador:
+    - si solo existe esa copia, instala encima (DirPorDefecto);
+    - si existen las dos, instala en la de Inno y deja tambien al dia el pronto.exe de la
+      otra, para que el Pronto que reabre el ayudante sea siempre el nuevo (CopiasAlDia). }
+function NsisDir: String;
+var
+  Loc: String;
+begin
+  Result := '';
+  if RegQueryStringValue(HKCU, '{#NsisKey}', 'InstallLocation', Loc) then
+  begin
+    Loc := RemoveBackslashUnlessRoot(RemoveQuotes(Trim(Loc)));
+    if (Loc <> '') and FileExists(AddBackslash(Loc) + '{#AppExe}') then Result := Loc;
+  end;
+end;
+
+function DirPorDefecto(Param: String): String;
+begin
+  Result := NsisDir;
+  if Result = '' then Result := ExpandConstant('{#MyDefaultDir}');
+end;
+
+function MismaCarpeta(A, B: String): Boolean;
+begin
+  Result := CompareText(RemoveBackslashUnlessRoot(A), RemoveBackslashUnlessRoot(B)) = 0;
+end;
+
+{ La otra copia (NSIS) tambien tiene que estar cerrada para poder ponerla al dia. }
+function OtraCopiaEnUso: Boolean;
+var
+  Dir: String;
+begin
+  Dir := NsisDir;
+  Result := (Dir <> '') and (not MismaCarpeta(Dir, ExpandConstant('{app}')))
+    and IsFileInUse(AddBackslash(Dir) + '{#AppExe}');
+end;
+
+procedure CopiaAlDia(Dir: String);
+var
+  Src, Dst: String;
+  I: Integer;
+begin
+  if (Dir = '') or MismaCarpeta(Dir, ExpandConstant('{app}')) then Exit;
+  Dst := AddBackslash(RemoveBackslashUnlessRoot(Dir)) + '{#AppExe}';
+  if not FileExists(Dst) then Exit;
+  Src := ExpandConstant('{app}\{#AppExe}');
+  for I := 1 to 20 do
+  begin
+    if FileCopy(Src, Dst, False) then
+    begin
+      Log('Copia al dia: ' + Dst);
+      Exit;
+    end;
+    Sleep(500);
+  end;
+  Log('No se pudo poner al dia la otra copia: ' + Dst);
+end;
+
+procedure CopiasNsis;
+var
+  Dir, Unins: String;
+begin
+  Dir := NsisDir;
+  if Dir = '' then Exit;
+  if MismaCarpeta(Dir, ExpandConstant('{app}')) then
+  begin
+    { Instalado encima de la copia NSIS: su desinstalador borraria nuestro pronto.exe y
+      Windows mostraria dos "Pronto". Se quitan los dos. }
+    if RegQueryStringValue(HKCU, '{#NsisKey}', 'UninstallString', Unins) then
+    begin
+      Unins := RemoveQuotes(Trim(Unins));
+      if (Unins <> '') and (CompareText(Unins, ExpandConstant('{uninstallexe}')) <> 0) then
+        DeleteFile(Unins);
+    end;
+    if RegDeleteKeyIncludingSubkeys(HKCU, '{#NsisKey}') then
+      Log('Entrada de desinstalacion NSIS eliminada: {#NsisKey}');
+  end
+  else
+  begin
+    CopiaAlDia(Dir);
+    RegWriteStringValue(HKCU, '{#NsisKey}', 'DisplayVersion', '{#AppVersion}');
+  end;
+end;
+
+{ Tras instalar: la carpeta de Inno anterior (si /DIR llevo a otra) y la NSIS quedan al dia. }
+procedure CopiasAlDia;
+begin
+  CopiaAlDia(WizardForm.PrevAppDir);
+  CopiasNsis;
+end;
+
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   Exe: String;
@@ -221,7 +320,7 @@ begin
   Result := '';
   Exe := ExpandConstant('{app}\{#AppExe}');
   Tries := 0;
-  while IsFileInUse(Exe) do
+  while IsFileInUse(Exe) or OtraCopiaEnUso do
   begin
     if WizardSilent then
     begin
@@ -259,11 +358,10 @@ end;
 #ifdef StaleAppId
 { La 2.0.0 se instalo con otro AppId: Windows mostraria dos "Pronto". Se quita esa entrada
   y su desinstalador (si no es el nuestro). }
-procedure CurStepChanged(CurStep: TSetupStep);
+procedure QuitarEntrada200;
 var
   Key, Unins: String;
 begin
-  if CurStep <> ssPostInstall then Exit;
   Key := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#StaleAppId}_is1';
   if not RegKeyExists(HKCU, Key) then Exit;
   if RegQueryStringValue(HKCU, Key, 'UninstallString', Unins) then
@@ -279,3 +377,12 @@ begin
     Log('Entrada de desinstalacion de la 2.0.0 eliminada: ' + Key);
 end;
 #endif
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep <> ssPostInstall then Exit;
+  CopiasAlDia;
+#ifdef StaleAppId
+  QuitarEntrada200;
+#endif
+end;

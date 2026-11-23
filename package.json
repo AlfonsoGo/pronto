@@ -6,7 +6,7 @@
   "scripts": {
     "ui": "node scripts/servir-ui.mjs",
     "e2e": "node e2e/correr.mjs",
-    "test": "node --test --test-concurrency=1 \"tests/no-se-negocia/*.test.mjs\" tests/novedades.test.mjs tests/retencion.test.mjs tests/uso.test.mjs tests/flowbar-actualizacion.test.mjs tests/flowbar-vivo.test.mjs tests/vivo-whisper.test.mjs tests/banco-entender.test.mjs tests/banco-formatos.test.mjs tests/banco-internet.test.mjs tests/velocidad-pulido.test.mjs tests/pulido-interruptor.test.mjs tests/interfaz-prt30.test.mjs && cd src-tauri && cargo test --quiet",
+    "test": "node --test --test-concurrency=1 \"tests/no-se-negocia/*.test.mjs\" tests/novedades.test.mjs tests/instalador-inno.test.mjs tests/retencion.test.mjs tests/uso.test.mjs tests/flowbar-actualizacion.test.mjs tests/flowbar-vivo.test.mjs tests/vivo-whisper.test.mjs tests/banco-entender.test.mjs tests/banco-formatos.test.mjs tests/banco-internet.test.mjs tests/velocidad-pulido.test.mjs tests/pulido-interruptor.test.mjs tests/interfaz-prt30.test.mjs && cd src-tauri && cargo test --quiet",
     "test:lento": "node --test --test-concurrency=1 \"tests/lento/*.test.mjs\""
   },
   "devDependencies": {

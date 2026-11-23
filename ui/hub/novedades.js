@@ -11,6 +11,18 @@ export const WEB = 'pronto.beltranlabs.com';
 
 export const RELEASES = [
   {
+    version: '2.3.3', month: '2026-11',
+    es: { title: 'Actualizar vuelve a funcionar' },
+    en: { title: 'Updating works again' },
+    highlights: [
+      { icon: 'shield-check',
+        es: { t: 'Actualizar vuelve a funcionar', d: 'Al actualizar desde la 2.3.2, Pronto seguía en la versión anterior y el aviso volvía. Ahora se instala la versión nueva.', breve: 'actualizar ya instala la versión nueva' },
+        en: { t: 'Updating works again', d: 'When updating from 2.3.2, Pronto stayed on the previous version and the notice came back. Now the new version is installed.', breve: 'updating now installs the new version' } },
+    ],
+    improved: [],
+    fixed: [],
+  },
+  {
     version: '2.3.2', month: '2026-11',
     es: { title: 'Ningún dictado perdido', intro: 'Arreglos tras probar Pronto con el ordenador muy cargado: lo que dices ya no se pierde, y los correos salen mejor escritos.' },
     en: { title: 'No dictation lost', intro: 'Fixes after testing Pronto on a very busy computer: what you say is no longer lost, and email addresses come out better.' },

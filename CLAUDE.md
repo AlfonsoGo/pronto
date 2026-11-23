@@ -11,6 +11,9 @@ fases: `specs/FASES.md`. Tests: `npm test` (reglas de abajo + `cargo test` en `s
 - Al subir de versión: entrada nueva arriba en `ui/hub/novedades.js` (página «Novedades» y tarjeta «Lo nuevo», que sale
   una vez tras actualizar; en la maqueta, `hub.html?novedades`). El texto de la release sale de ahí:
   `node scripts/notas-release.mjs`. `tests/novedades.test.mjs` falla si la versión no tiene su entrada.
+- Instalador: SOLO `installer/build_installer.ps1` (Inno Setup). Nunca el de `tauri build` (NSIS): instala en otra
+  carpeta y el actualizador reabre la copia vieja (pasó con la 2.3.2, BELTR-PRT-41). Antes de subirlo a la release:
+  `node scripts/comprobar-instalador.mjs installer/dist/Pronto-Setup-<versión>.exe` (tiene que decir OK).
 
 ## NO SE NEGOCIA
 
