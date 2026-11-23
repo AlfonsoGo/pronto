@@ -12,12 +12,12 @@ export const WEB = 'pronto.beltranlabs.com';
 export const RELEASES = [
   {
     version: '2.3.3', month: '2026-11',
-    es: { title: 'Actualizar vuelve a funcionar' },
-    en: { title: 'Updating works again' },
+    es: { title: 'Arreglos' },
+    en: { title: 'Fixes' },
     highlights: [
       { icon: 'shield-check',
-        es: { t: 'Actualizar vuelve a funcionar', d: 'Al actualizar desde la 2.3.2, Pronto seguía en la versión anterior y el aviso volvía. Ahora se instala la versión nueva.', breve: 'actualizar ya instala la versión nueva' },
-        en: { t: 'Updating works again', d: 'When updating from 2.3.2, Pronto stayed on the previous version and the notice came back. Now the new version is installed.', breve: 'updating now installs the new version' } },
+        es: { t: 'Arreglos', d: 'Pequeños arreglos para que Pronto funcione mejor.', breve: 'pequeños arreglos' },
+        en: { t: 'Fixes', d: 'Small fixes so Pronto works better.', breve: 'small fixes' } },
     ],
     improved: [],
     fixed: [],
